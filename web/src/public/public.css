@@ -1,0 +1,137 @@
+/* 公开页在共用 token（../styles.css）之上的布局。站点设置的自定义 CSS 排在这之后。 */
+.public-layout { min-height: 100dvh; }
+.public-header { position: sticky; top: 0; z-index: 20; height: 48px; display: flex; align-items: center; gap: 16px; padding: 0 clamp(12px, 2vw, 24px); background: var(--card); border-bottom: 1px solid var(--line); }
+.public-header .brand { color: var(--fg); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-header .brand .logo, .public-header .heron-mark { height: 24px; width: auto; }
+.public-header .live { font-size: 12px; white-space: nowrap; }
+.public-header .github-link { margin-left: auto; }
+.public-header .admin { color: var(--muted); font-size: 13px; }
+.public-layout .main { max-width: 1680px; padding: 16px clamp(12px, 2vw, 24px); }
+/* 汇总条（StatusSummary.tsx）。 */
+.summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0 12px; font-size: 13px; }
+.summary-count { font-size: 16px; }
+.segments { display: flex; height: 6px; width: min(320px, 100%); border-radius: 999px; overflow: hidden; background: var(--line); }
+.segments > span { height: 100%; }
+.segments > [data-status="online"] { background: var(--status-online); }
+.segments > [data-status="maintenance"] { background: var(--status-maintenance); }
+.segments > [data-status="rented"] { background: var(--status-rented); }
+.segments > [data-status="never"] { background: var(--status-never); }
+.segments > [data-status="offline"] { background: var(--status-offline); }
+.summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
+
+/* 卡片视图（NodeCard.tsx）：宽屏五列，1px 边框分层，不用阴影与渐变。 */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(240px, (100% - 40px) / 5)), 1fr)); gap: 10px; }
+.node-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }
+.node-card:hover { border-color: var(--line-strong); }
+.node-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.node-card h2 { flex: 1; min-width: 0; margin: 0; font-size: 14px; }
+.node-card h2 a { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg); }
+.node-card .country-badge, .node-card .country-flag { flex: none; }
+
+/* 国旗 emoji（components/CountryFlag.tsx）：emoji 字形自带行高，line-height: 1 避免撑高标题行。 */
+.country-flag { line-height: 1; }
+
+/* 系统图标（components/OsIcon.tsx）：跟随系统行文字大小，基线对齐文字；颜色按 data-os 取各发行版的品牌色。 */
+.os-icon { width: 1em; height: 1em; fill: currentColor; vertical-align: -0.125em; }
+/* 品牌色取 simple-icons v13 的 hex。图形元素对卡片底色（--card）的对比度不低于 3:1，品牌色达不到的那一侧按同色相
+   改明度到刚过线，另一侧保持原色：浅底下 Fedora、Rocky、openSUSE 太浅、Tux 的黄几乎看不见，深底下 Debian、Alpine、
+   CentOS 太暗。Apple 与 AlmaLinux 的品牌色是黑、通用主机图标是自绘，都跟随文字色，不在这里登记。
+   osIconColors.test 按 OS_ICON_KINDS 核对每个 kind 的规则与两侧对比度。 */
+.os-icon[data-os="debian"] { color: light-dark(#a81d33, #c2223b); }
+.os-icon[data-os="ubuntu"] { color: #e95420; }
+.os-icon[data-os="alpine"] { color: light-dark(#0d597f, #106c9b); }
+.os-icon[data-os="fedora"] { color: light-dark(#4099d6, #51a2da); }
+.os-icon[data-os="centos"] { color: light-dark(#262577, #5856ca); }
+.os-icon[data-os="rocky"] { color: light-dark(#0ea674, #10b981); }
+.os-icon[data-os="arch"] { color: #1793d1; }
+.os-icon[data-os="opensuse"] { color: light-dark(#63a020, #73ba25); }
+.os-icon[data-os="linux"] { color: light-dark(#b78a03, #fcc624); }
+.node-card-meta { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.node-remark { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.node-meters { display: grid; gap: 4px; }
+/* 百分比列定宽（最长 "100%"）：三条进度条等长对齐。用量 / 总量另起一行跨条与百分比两列，
+   与条同排时，按 .cards 的 240px 列宽下限排出的卡片放不下长读数，会把条挤到 0 宽。 */
+.node-meter { display: grid; grid-template-columns: 2.5em minmax(0, 1fr) 3em; align-items: center; gap: 0 8px; font-size: 12px; }
+.node-meter > .num { text-align: right; }
+.node-meter-detail { grid-column: 2 / -1; justify-self: end; font-size: 11px; }
+.meter-missing { height: 4px; border-radius: 999px; background: repeating-linear-gradient(90deg, var(--line) 0 4px, transparent 4px 8px); }
+.node-network { margin: 0; font-size: 12px; }
+/* 页脚是标签 / 值两列：标签列按最长标签定宽，值再长也只在自己那一格里折行，不把下一个标签挤到行尾。 */
+.node-card-foot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: auto 0 0; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12px; }
+.node-card-foot dt { color: var(--muted); }
+.node-card-foot dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; margin: 0; }
+.folded-nodes { margin-top: 16px; }
+.folded-nodes > summary { cursor: pointer; color: var(--muted); font-size: 13px; height: 32px; display: flex; align-items: center; gap: 8px; list-style: none; }
+.compact-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
+.compact-table th { height: 32px; text-align: left; padding: 0 10px; color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); }
+.compact-table td { height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.compact-table td:first-child { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* 列表视图（NodeList.tsx → components/ReadingsTable.tsx）：外框与表头和上面的紧凑表一致；列内排版与手机卡片布局在
+   styles.css 的 .readings-table。这里的单元格规则保持比 styles.css 手机断点里的 table.readings-table td 低的优先级，
+   手机上由那条规则去掉行高、内边距与底边框。 */
+.readings-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
+.readings-table th { height: 32px; text-align: left; padding: 0 10px; color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.readings-table td { height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.readings-table tbody tr:last-child td { border-bottom: 0; }
+.readings-table tbody tr:hover { background: var(--card-hover); }
+.readings-table td[data-label="节点"] :is(.country-badge, .address-families) { margin-left: 6px; }
+
+/* 状态墙（StatusWall.tsx）+ 详情面板（DetailPanel.tsx）：左 2/3 右 1/3，面板随滚动固定。 */
+.wall-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
+/* 地区组按内容宽度横向流式排布：节点少的组并排放，不再一组独占一行、右侧大片空白；组内方块定宽，多的组在整行宽度内折行。 */
+.wall { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 28px; }
+.wall-group { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 12px; }
+.wall-group > summary { display: flex; align-items: center; gap: 8px; height: 32px; font-weight: 600; font-size: 13px; cursor: pointer; list-style: none; }
+/* 可折叠的分组标题（状态墙分组、卡片下方的离线、从未上报与已出租）是 flex 布局，箭头（styles.css 的 summary::before）与文字的
+   间距由 gap 给出，这里只留两侧的细边距。 */
+:is(.wall-group, .folded-nodes) > summary::before { margin: 0 2px; }
+.tiles { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.tile { width: 132px; }
+.tile > a { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 2px 6px; min-height: 56px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); color: var(--fg); font-size: 12px; }
+.tile > a:hover { background: var(--card-hover); border-color: var(--line-strong); }
+.tile[aria-current] > a { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.tile .status-dot { align-self: center; }
+.tile-note, .tile-meters { grid-column: 1 / -1; color: var(--muted); }
+.tile-meters { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 6px; align-items: center; font-size: 11px; }
+.tile-meters .bar { min-width: 0; }
+.tile-chevron { display: none; }
+.tile[data-status="offline"] > a, .tile[data-status="never"] > a, .tile[data-status="rented"] > a { opacity: .6; }
+.tile[data-status="maintenance"] > a { border-color: color-mix(in srgb, var(--status-maintenance) 50%, var(--line)); }
+.tile[data-level="attention"] > a { background: color-mix(in srgb, var(--status-attention) 12%, var(--card)); }
+.tile[data-level="critical"] > a { background: color-mix(in srgb, var(--status-offline) 14%, var(--card)); }
+.detail-panel { position: sticky; top: 64px; max-height: calc(100dvh - 80px); overflow: auto; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }
+.detail-panel > header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.detail-panel h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.tag-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; padding: 0; }
+.detail-list { margin: 0; display: grid; gap: 6px; }
+.detail-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: center; }
+.detail-row dt { color: var(--muted); }
+.detail-row dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.detail-meter { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.detail-meter .bar { min-width: 0; }
+.detail-row .sparkline { margin-top: 4px; width: 100%; }
+.detail-more { display: inline-block; margin-top: 12px; }
+/* 手机版：墙降级为单列列表，组头吸顶；详情面板不渲染（StatusWall 按同一断点判断）。 */
+@media (max-width: 900px) {
+  .wall-layout { grid-template-columns: minmax(0, 1fr); }
+  .wall-group > summary { position: sticky; top: 48px; z-index: 5; background: var(--bg); }
+  .wall { display: block; }
+  .tiles { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .tile { width: auto; }
+  .tile > a { grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-rows: auto; align-items: center; min-height: 44px; border-radius: 0; border-width: 0 0 1px; }
+  .tile-name { display: flex; align-items: center; gap: 4px; }
+  .tile-attention { color: var(--status-attention); font-size: 10px; }
+  .tile-status { font-size: 10px; }
+  .tile[data-status="maintenance"] .tile-status { color: var(--status-maintenance); }
+  .tile[data-status="rented"] .tile-status { color: var(--status-rented); }
+  .tile .status-dot { order: -1; }
+  .tile-note, .tile-meters { grid-column: auto; }
+  .tile-meters { display: flex; flex-wrap: wrap; justify-content: end; max-width: 170px; }
+  .tile-meters .bar { display: none; }
+  .tile-chevron { display: inline; color: var(--faint); }
+  /* 宽屏上名称列靠 max-width: 0 吃掉其余列（不换行）剩下的宽度、放不下就截断；窄屏上剩下的只够几个字，改为折行显示全名。 */
+  .compact-table :is(th, td) { padding-inline: 6px; }
+  .compact-table td:first-child { max-width: none; white-space: normal; overflow-wrap: anywhere; padding-block: 6px; }
+}

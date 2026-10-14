@@ -1,0 +1,114 @@
+== ts ==
+1791262461.358803906
+== memory.current ==
+27807744
+== memory.stat ==
+anon 10293248
+file 14761984
+kernel 0
+kernel_stack 0
+pagetables 0
+sec_pagetables 0
+percpu 0
+sock 0
+vmalloc 0
+shmem 86016
+file_mapped 12738560
+file_dirty 0
+file_writeback 0
+swapcached 0
+anon_thp 0
+file_thp 0
+shmem_thp 0
+inactive_anon 10522624
+active_anon 237568
+inactive_file 11386880
+active_file 3289088
+unevictable 0
+slab_reclaimable 0
+slab_unreclaimable 0
+slab 0
+workingset_refault_anon 0
+workingset_refault_file 1253
+workingset_activate_anon 0
+workingset_activate_file 1044
+workingset_restore_anon 0
+workingset_restore_file 15
+workingset_nodereclaim 0
+pgdemote_kswapd 0
+pgdemote_direct 0
+pgdemote_khugepaged 0
+pgdemote_proactive 0
+pgscan 8649
+pgsteal 7112
+pswpin 0
+pswpout 0
+pgscan_kswapd 0
+pgscan_direct 0
+pgscan_khugepaged 0
+pgscan_proactive 8649
+pgsteal_kswapd 0
+pgsteal_direct 0
+pgsteal_khugepaged 0
+pgsteal_proactive 7112
+pgfault 49966
+pgmajfault 105
+pgrefill 104391
+pgactivate 263
+pgdeactivate 0
+pglazyfree 0
+pglazyfreed 0
+swpin_zero 0
+swpout_zero 0
+thp_fault_alloc 0
+thp_collapse_alloc 0
+thp_swpout 0
+thp_swpout_fallback 0
+== memory.swap.max ==
+0
+== memory.swap.current ==
+0
+== /proc/meminfo ==
+MemTotal:         524288 kB
+MemFree:          497316 kB
+MemAvailable:     511648 kB
+Buffers:               0 kB
+Cached:            14416 kB
+SwapCached:            0 kB
+Active:             3576 kB
+Inactive:          21396 kB
+Active(anon):        364 kB
+Inactive(anon):    10276 kB
+Active(file):       3212 kB
+Inactive(file):    11120 kB
+Unevictable:           0 kB
+Mlocked:               0 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+Dirty:                 0 kB
+Writeback:             0 kB
+AnonPages:         10556 kB
+Mapped:                0 kB
+Shmem:                84 kB
+KReclaimable:     460240 kB
+Slab:                  0 kB
+SReclaimable:          0 kB
+SUnreclaim:            0 kB
+KernelStack:       13952 kB
+PageTables:        24712 kB
+SecPageTables:         0 kB
+NFS_Unstable:          0 kB
+Bounce:                0 kB
+WritebackTmp:          0 kB
+CommitLimit:    25685280 kB
+Committed_AS:   26979188 kB
+VmallocTotal:   135288315904 kB
+VmallocUsed:       87612 kB
+VmallocChunk:          0 kB
+Percpu:            17152 kB
+AnonHugePages:         0 kB
+ShmemHugePages:        0 kB
+ShmemPmdMapped:        0 kB
+FileHugePages:         0 kB
+FilePmdMapped:         0 kB
+Balloon:               0 kB

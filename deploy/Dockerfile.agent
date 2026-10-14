@@ -1,0 +1,49 @@
+# check=skip=InvalidDefaultArgInFrom
+# agent 镜像：FROM scratch，只含静态二进制（带 cap_net_raw 文件能力）、CA 证书、非 root 用户与它拥有的
+# 空配置目录。
+# 镜像里不编译 Go：make docker-agent 用与发布包同一组参数把二进制产出到 build/image/linux/<arch>/，这里按
+# TARGETARCH 取用。根文件系统由 scripts/checkimage 的 agent 清单逐条目核对，改这里须同步改那份清单。
+# 不放 /etc/os-release：agent 报告的系统名必须来自被观测的主机，镜像自带一份就会把镜像的系统名报成节点的。
+# 不设 HEALTHCHECK：没有能证明"agent 在上报"的本地命令，进程活着不等于在上报，假的健康检查不如没有。
+
+# 基础镜像由 make 经 --build-arg 传入（deploy/image.mk 的 ALPINE_IMAGE，按 digest 固定）；没有传入时 FROM 为空、
+# 构建失败，不会退回浮动的 tag。故意不给默认值，首行的 check 指令关掉的正是"ARG 默认值使 FROM 为空"这条告警；
+# 它是解析器指令，必须在文件第一行。
+ARG ALPINE_IMAGE
+
+# 这一阶段固定在构建节点的本机平台上运行：它只复制文件、写 xattr，从不执行目标架构的二进制；最终阶段没有 RUN，
+# 所以多平台构建不在目标架构上执行任何程序。
+FROM --platform=$BUILDPLATFORM ${ALPINE_IMAGE} AS rootfs
+ARG TARGETARCH
+# CA 证书供 agent 以 https 连 hub（Go 在 Linux 上先读 /etc/ssl/certs/ca-certificates.crt）；
+# --upgrade 取 3.21 仓库里当前的证书包，而不是基础镜像构建时的那份。
+# /etc/heron-agent 交给运行用户、只许它自己进入：register 在这里以运行用户写 0600 的配置（含节点 token），空的命名卷
+# 挂到这里时 Docker 把镜像里这个目录的属主与权限带到卷上。
+RUN apk add --no-cache --upgrade ca-certificates-bundle libcap-utils \
+ && mkdir -p /rootfs/etc/ssl/certs /rootfs/usr/local/bin \
+ && mkdir -m 0700 /rootfs/etc/heron-agent \
+ && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ \
+ && printf 'heron-agent:x:65532:65532:heron-agent:/nonexistent:/sbin/nologin\n' > /rootfs/etc/passwd \
+ && printf 'heron-agent:x:65532:\n' > /rootfs/etc/group \
+ && chown 65532:65532 /rootfs/etc/heron-agent
+# 放在容器的默认 PATH 里，ENTRYPOINT 与 docker exec 都按名字执行。权限位由这里的 --chmod 指定，不随构建机的
+# umask：COPY 否则沿用构建上下文里文件的权限位，而 go build 产出的文件是 0777 去掉构建者的 umask。
+COPY --chmod=0755 build/image/linux/${TARGETARCH}/heron-agent /rootfs/usr/local/bin/heron-agent
+# 文件能力 cap_net_raw+ep：agent 以 65532 运行，宿主的 ping_group_range 不放行它时 ICMP 的数据报 socket 不可用，
+# agent 退到 raw socket（internal/agent/prober/icmp.go），后者要 CAP_NET_RAW。能力进 permitted 且置 effective 位：
+# agent 不自己调整能力集，exec 时就得生效。代价是 exec 要求容器的能力边界集含 NET_RAW——Docker 默认包含；
+# --cap-drop ALL / --cap-drop NET_RAW 时内核拒绝 exec（exec … operation not permitted，容器退出 255）。docs/install.md「安装 agent → Docker」写明
+# 加固时要 --cap-add NET_RAW。xattr 随 COPY --from 进入最终阶段的层，scripts/checkimage 的 agent 清单逐字节核对它。
+RUN setcap cap_net_raw+ep /rootfs/usr/local/bin/heron-agent
+
+FROM scratch
+LABEL org.opencontainers.image.source="https://github.com/xjetry/heron"
+# COPY --from 保留源阶段的属主（/etc/heron-agent 为 65532）与 xattr（二进制的 security.capability）。
+COPY --from=rootfs /rootfs/ /
+# 数字形式，与 /etc/heron-agent 的属主、/etc/passwd 里的账户是同一个 uid，不经名字解析。
+USER 65532:65532
+VOLUME /etc/heron-agent
+ENTRYPOINT ["heron-agent"]
+# 宿主根以 -v /:/hostfs:ro 挂进来，agent 的宿主口径读数都经它。注册是另一次一次性运行，
+# 覆写这里的参数：docker run --rm … <镜像> register --hub … --key …。
+CMD ["run", "--host-root", "/hostfs"]

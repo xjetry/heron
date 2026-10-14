@@ -1,0 +1,29 @@
+[Unit]
+Description=Heron hub official release updater
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=root
+# Current 以服务用户查询版本；显式保留切换 UID 的能力，避免 systemd 的 seccomp 初始化将其移除。
+AmbientCapabilities=CAP_SETUID
+ExecStart=/usr/local/bin/heron-updater-hub --role hub
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/usr/local/bin /var/lib/heron /var/lib/heron-update-hub /run/heron-update-hub
+RuntimeDirectory=heron-update-hub
+RuntimeDirectoryMode=0755
+StateDirectory=heron-update-hub
+StateDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target

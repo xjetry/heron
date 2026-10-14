@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+// 更新器只接受官方正式版本，不接受 URL、仓库、摘要或命令。
+message UpdateTask {
+  // 16..64 个 ASCII 字母、数字、下划线或连字符。
+  string id = 1;
+  // 规范的 vMAJOR.MINOR.PATCH，至多 34 字节。
+  string version = 2;
+  // Unix 秒；创建后最多 24 小时，过期任务不得开始安装。
+  int64 expires_at = 3;
+  // queued、dispatched、downloading、stopping、installing、verifying、rolling_back、succeeded、failed、rolled_back、cancelled、expired、unconfirmed（等待超时或本机记录缺失，尚无执行结果）。
+  string state = 4;
+  // 最多 2048 UTF-8 字节，不含凭据。
+  string error = 5;
+  int64 updated_at = 6;
+}
+
+message UpdateStatus {
+  bool supported = 1;
+  // 不支持或不可用的原因，最多 2048 UTF-8 字节。
+  string reason = 2;
+  // 实际运行版本，最多 64 UTF-8 字节。
+  string version = 3;
+  UpdateTask task = 4;
+  // 本机更新器取产物的来源：github 或 hub。不认识来源字段的旧更新器为空。
+  string source = 5;
+}
+
+message UpdateTarget {
+  // 0 表示 hub；正数表示节点。
+  int64 node_id = 1;
+  UpdateStatus status = 2;
+}

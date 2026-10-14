@@ -1,0 +1,141 @@
+name: measure-store
+# 存储规模测量：GitHub 托管 runner（ubuntu-24.04，Go 1.27.2，modernc.org/sqlite v1.59.0 / SQLite 3.53.4）上 500 节点、默认保留期、无探测任务的库约 3.26 GB；上卷空闲约 95 ms（0 任务）与 364 ms（4 任务），分块清理空闲约 3.7 s 与 13.5 s。在 runner 上生成目标规模的库，量库大小与上卷、窗口查询、分块清理的
+# 耗时。耗时只在这里作结论——开发机的异构核与降频让同一配置的耗时相差数倍，runner 是固定规格的同构核环境。
+# 只手动触发：一次运行要数十分钟、占数 GB 磁盘，结果作为 artifact 下载后由人核对，不进任何门禁。
+on:
+  workflow_dispatch:
+    inputs:
+      nodes:
+        description: 节点数
+        default: "500"
+        required: true
+        type: string
+      size_tasks:
+        description: 量库大小的每节点探测任务数（JSON 数组，每项一个 job；两项以上给出每节点每任务的增量与线性核对）
+        default: "[0, 1, 4]"
+        required: true
+        type: string
+      time_tasks:
+        description: 同时量耗时的任务数（JSON 数组，须是 size_tasks 的子集）
+        default: "[0, 4]"
+        required: true
+        type: string
+      reps:
+        description: 每个操作每种条件的重复次数
+        default: "5"
+        required: true
+        type: string
+      seed:
+        description: 生成用的随机种子
+        default: "1"
+        required: true
+        type: string
+# 只读检出代码；不推送、不发布，artifact 上传用的是 runner 自带的令牌，不需要额外权限。
+permissions:
+  contents: read
+jobs:
+  measure:
+    # 固定镜像版本而不是 ubuntu-latest：耗时结论对应特定的 runner 规格，latest 换代后同一工作流量的是另一台机器。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        tasks: ${{ fromJSON(inputs.size_tasks) }}
+    env:
+      NODES: ${{ inputs.nodes }}
+      TASKS: ${{ matrix.tasks }}
+      REPS: ${{ inputs.reps }}
+      SEED: ${{ inputs.seed }}
+      # 库放在 /mnt（托管 runner 的第二块盘）：根盘可用空间文档只承诺 14 GB，T=4 的库加 time 的一份副本会逼近它。
+      # 两块盘的挂载与类型都记进 env.txt，耗时结论要注明库在哪块盘上。
+      DATA: /mnt/storebench
+      OUT: out
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: prepare
+        env:
+          SIZE_TASKS: ${{ inputs.size_tasks }}
+          TIME_TASKS: ${{ inputs.time_tasks }}
+        run: |
+          set -eu
+          # time 只在 size 的 job 里跑；不在 size_tasks 里的任务数会被静默跳过，所以先拒绝。
+          jq -en --argjson s "$SIZE_TASKS" --argjson t "$TIME_TASKS" '$t | all(. as $x | $s | index($x) != null)' > /dev/null || {
+            echo "time_tasks $TIME_TASKS must be a subset of size_tasks $SIZE_TASKS" >&2; exit 1; }
+          mkdir -p "$OUT"
+          sudo mkdir -p "$DATA"
+          sudo chown "$(id -u):$(id -g)" "$DATA"
+          go build -o storebench ./scripts/storebench
+      - name: environment facts
+        run: |
+          set -eu
+          {
+            echo "## date"; date -u +%Y-%m-%dT%H:%M:%SZ
+            echo "## nproc"; nproc
+            echo "## lscpu"; lscpu
+            echo "## uname -a"; uname -a
+            echo "## go version"; go version
+            echo "## free -m"; free -m
+            echo "## df -h"; df -h
+            echo "## data directory mount"; findmnt -T "$DATA"
+            echo "## lsblk (ROTA 0 = non-rotational)"; lsblk -o NAME,ROTA,SIZE,MODEL,TYPE,MOUNTPOINT
+            echo "## GITHUB_SHA"; echo "$GITHUB_SHA"
+          } > "$OUT/env.txt" 2>&1
+          cat "$OUT/env.txt"
+      - name: gen
+        run: |
+          set -eu
+          ./storebench gen -db "$DATA/n${NODES}t${TASKS}.db" -nodes "$NODES" -tasks "$TASKS" -seed "$SEED" > "$OUT/gen.txt" 2>&1 || { cat "$OUT/gen.txt"; exit 1; }
+          cat "$OUT/gen.txt"
+          cp "$DATA/n${NODES}t${TASKS}.db.manifest.json" "$OUT/"
+          df -h "$DATA" >> "$OUT/env.txt"
+      - name: size
+        run: ./storebench size -db "$DATA/n${NODES}t${TASKS}.db" -json "$OUT/size.json" -text "$OUT/size.txt"
+      - name: time
+        if: contains(fromJSON(inputs.time_tasks), matrix.tasks)
+        run: |
+          set -eu
+          mkdir -p "$DATA/work"
+          ./storebench time -db "$DATA/n${NODES}t${TASKS}.db" -work "$DATA/work" -reps "$REPS" -json "$OUT/time.json" -text "$OUT/time.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: measure-store-n${{ inputs.nodes }}-t${{ matrix.tasks }}
+          path: out/
+          if-no-files-found: error
+  # 各任务数的库在不同 job 里量出，库大小不依赖机器，汇总成每节点每任务的增量与线性核对。
+  increments:
+    needs: measure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: measure-store-*
+          path: in
+      - name: merge size reports
+        run: |
+          set -eu
+          mkdir -p out
+          set --
+          for f in in/*/size.json; do set -- "$@" -merge "$f"; done
+          [ "$#" -gt 0 ] || { echo "no size reports downloaded" >&2; exit 1; }
+          go run ./scripts/storebench size "$@" -json out/increments.json -text out/increments.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: measure-store-increments
+          path: out/
+          if-no-files-found: error

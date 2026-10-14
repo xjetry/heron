@@ -1,0 +1,136 @@
+== ts ==
+1791267784.341886018
+== memory.current ==
+490340352
+== memory.stat ==
+anon 241664
+file 84189184
+kernel 405626880
+kernel_stack 16384
+pagetables 1720320
+sec_pagetables 0
+percpu 288
+sock 0
+vmalloc 0
+shmem 0
+zswap 0
+zswapped 0
+file_mapped 0
+file_dirty 79851520
+file_writeback 0
+swapcached 0
+anon_thp 0
+file_thp 0
+shmem_thp 0
+inactive_anon 0
+active_anon 180224
+inactive_file 83894272
+active_file 163840
+unevictable 0
+slab_reclaimable 403325640
+slab_unreclaimable 577432
+slab 403903072
+workingset_refault_anon 0
+workingset_refault_file 0
+workingset_activate_anon 0
+workingset_activate_file 0
+workingset_restore_anon 0
+workingset_restore_file 0
+workingset_nodereclaim 0
+pgdemote_kswapd 0
+pgdemote_direct 0
+pgdemote_khugepaged 0
+pgdemote_proactive 0
+pgpromote_success 0
+pgscan 0
+pgsteal 0
+pswpin 0
+pswpout 0
+pgscan_kswapd 0
+pgscan_direct 0
+pgscan_khugepaged 0
+pgscan_proactive 0
+pgsteal_kswapd 0
+pgsteal_direct 0
+pgsteal_khugepaged 0
+pgsteal_proactive 0
+pgfault 186281
+pgmajfault 4
+pgrefill 0
+pgactivate 0
+pgdeactivate 0
+pglazyfree 0
+pglazyfreed 0
+swpin_zero 0
+swpout_zero 0
+zswpin 0
+zswpout 0
+zswpwb 0
+thp_fault_alloc 100
+thp_collapse_alloc 0
+thp_swpout 0
+thp_swpout_fallback 0
+numa_pages_migrated 0
+numa_pte_updates 0
+numa_hint_faults 0
+== memory.max ==
+536870912
+== /proc/meminfo ==
+MemTotal:       16373452 kB
+MemFree:        12652004 kB
+MemAvailable:   15285936 kB
+Buffers:          167316 kB
+Cached:          2363128 kB
+SwapCached:            0 kB
+Active:           673880 kB
+Inactive:        2111516 kB
+Active(anon):     307012 kB
+Inactive(anon):        0 kB
+Active(file):     366868 kB
+Inactive(file):  2111516 kB
+Unevictable:       46892 kB
+Mlocked:           43820 kB
+SwapTotal:       3145724 kB
+SwapFree:        3145724 kB
+Zswap:                 0 kB
+Zswapped:              0 kB
+Dirty:             87908 kB
+Writeback:             0 kB
+AnonPages:        292948 kB
+Mapped:           317512 kB
+Shmem:             43152 kB
+KReclaimable:     501500 kB
+Slab:             627076 kB
+SReclaimable:     501500 kB
+SUnreclaim:       125576 kB
+KernelStack:        4060 kB
+PageTables:         8000 kB
+SecPageTables:         0 kB
+NFS_Unstable:          0 kB
+Bounce:                0 kB
+WritebackTmp:          0 kB
+CommitLimit:    11332448 kB
+Committed_AS:    1919528 kB
+VmallocTotal:   34359738367 kB
+VmallocUsed:       39440 kB
+VmallocChunk:          0 kB
+Percpu:             2224 kB
+HardwareCorrupted:     0 kB
+AnonHugePages:     77824 kB
+ShmemHugePages:        0 kB
+ShmemPmdMapped:        0 kB
+FileHugePages:         0 kB
+FilePmdMapped:         0 kB
+CmaTotal:              0 kB
+CmaFree:               0 kB
+Unaccepted:            0 kB
+Balloon:               0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+DirectMap4k:      138368 kB
+DirectMap2M:     6148096 kB
+DirectMap1G:    12582912 kB

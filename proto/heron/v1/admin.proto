@@ -1,0 +1,1780 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+import "heron/v1/types.proto";
+import "heron/v1/access.proto";
+import "heron/v1/query.proto";
+import "heron/v1/update.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+
+// 管理面板与 agent → hub。每个方法以 heron.v1.access 声明准入口径（见 access.proto），
+// 由挂载时绑定的拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
+// 这是抵御跨站请求伪造的几条各自独立的事实之一。
+service AdminService {
+  // 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
+  // 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
+  rpc ExecuteChange(ExecuteChangeRequest) returns (ExecuteChangeResponse) {
+    option (heron.v1.access) = ACCESS_CHANGE;
+  }
+  // API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
+  rpc ListNotifyChannelRefs(ListNotifyChannelRefsRequest) returns (ListNotifyChannelRefsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
+  rpc GetUpdates(GetUpdatesRequest) returns (GetUpdatesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 创建单目标更新。node_id=0 为 hub，目标须是比 hub 当前版本新的官方正式版；节点的目标须等于
+  // GetUpdatesResponse.bound_agent_version 且比节点当前版本新；已出租的节点不能更新。
+  // 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
+  rpc StartUpdate(StartUpdateRequest) returns (StartUpdateResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
+  rpc CancelUpdate(CancelUpdateRequest) returns (CancelUpdateResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
+  rpc Login(LoginRequest) returns (LoginResponse) {
+    option (heron.v1.access) = ACCESS_LOGIN;
+  }
+  // 发起无密码 Passkey 登录；挑战只可消费一次。
+  rpc BeginPasskeyLogin(BeginPasskeyLoginRequest) returns (BeginPasskeyLoginResponse) {
+    option (heron.v1.access) = ACCESS_LOGIN;
+  }
+  rpc FinishPasskeyLogin(FinishPasskeyLoginRequest) returns (FinishPasskeyLoginResponse) {
+    option (heron.v1.access) = ACCESS_LOGIN;
+  }
+  // 安全凭据仅允许会话访问，不返回 TOTP 密钥或恢复码。
+  rpc GetSecurity(GetSecurityRequest) returns (GetSecurityResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 修改凭据需要重新认证；挑战绑定当前会话与凭据版本。修改成功撤销现有会话。
+  rpc SecurityAction(SecurityActionRequest) returns (SecurityActionResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 作废当前会话并清除 cookie。
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
+  // API token 不能管理其它凭据，因此不能列出或撤销会话。
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
+  // 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+  // 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
+  // 会话已不存在，结果仍安全。
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+
+  // 列出节点；可按标签过滤（ListNodesRequest.tags），或只列无标签节点（ListNodesRequest.untagged）。
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 建节点（默认公开，可带 rented）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
+  // 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 返回 ResourceExhausted 并说明，节点不建。
+  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态、已出租状态）。计费字段有变化时，
+  // 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
+  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（见 store.Billing）——先推后一个周期，仍早于 hub 时区
+  // （--timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
+  // 保留账单日，过期多个周期的一次跳过；日号超过目标月天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
+  // 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
+  // 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
+  rpc RenewNodeBilling(RenewNodeBillingRequest) returns (RenewNodeBillingResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
+  // 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
+  rpc BatchUpdateNodeTags(BatchUpdateNodeTagsRequest) returns (BatchUpdateNodeTagsResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 删除节点及其全部历史；进程内的实时状态同步清理。
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
+  // 已安装主机用安装脚本的 --re-register 显式替换注册，普通升级不消费此凭据。
+  rpc RotateNodeToken(RotateNodeTokenRequest) returns (RotateNodeTokenResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
+  rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 把一组节点按它们现有的先后整体移到全序第 position 位起的连续位置，其余节点相对顺序不变。全序按
+  // (sort_order, id) 升序，与列表、总览、公开页同一顺序；Node.position 是节点在这条全序里的名次（从 1 起，
+  // 不随标签过滤、搜索或调用方可见的节点范围变化），position 与它同一编号。ids 里的节点按现有先后占据
+  // 第 position..position+k-1 位（k 为去重后的节点数），原第 position 位起的其余节点依次后移；被选节点
+  // 原本就排在目标位置之前的同样适用。ids 至少一个（空列表返回 InvalidArgument）；重复 id 去重；请求里
+  // id 的先后不影响结果；任一 id 不存在返回 NotFound 并给出该 id，整批不改。position 合法区间
+  // 1..N-k+1（N 为节点总数），越界返回 InvalidArgument 并写明区间，不截断——截断会让写错的位置静默落到首尾。
+  rpc MoveNodes(MoveNodesRequest) returns (MoveNodesResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
+  rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
+  rpc DeleteTag(DeleteTagRequest) returns (DeleteTagResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+
+  // 开启（或替换）注册窗口，返回一次性 key。
+  rpc OpenRegisterWindow(OpenRegisterWindowRequest) returns (OpenRegisterWindowResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  rpc CloseRegisterWindow(CloseRegisterWindowRequest) returns (CloseRegisterWindowResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  rpc GetRegisterWindow(GetRegisterWindowRequest) returns (GetRegisterWindowResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+
+  // 全部节点的实时状态，供轮询；轮询间隔不必短于 report_interval_ms。
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 某节点一段时间的历史；级别与步长由 hub 按窗口选定并随数据返回。
+  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 全部节点的流量：hub 累计的总量、当前周期用量、周期起点与下次重置时刻。
+  rpc GetTraffic(GetTrafficRequest) returns (GetTrafficResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
+  rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+
+  // 按展示顺序列出全部探测任务及其分配。
+  rpc ListProbeTasks(ListProbeTasksRequest) returns (ListProbeTasksResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 保存探测任务：id 为 0 即创建，提交整份分配列表。
+  rpc SaveProbeTask(SaveProbeTaskRequest) returns (SaveProbeTaskResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 删除探测任务：不删历史，到期由清理删除。
+  rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 整体重排探测任务的展示顺序，不改变 agent 执行清单或任务版本。
+  rpc ReorderProbeTasks(ReorderProbeTasksRequest) returns (ReorderProbeTasksResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
+  rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 跨节点对比的第一步：当前分配了该任务、且调用方可见的节点与任务标注。节点范围与标注规则同 QueryProbes。
+  rpc ListProbeComparisonNodes(ListProbeComparisonNodesRequest) returns (ListProbeComparisonNodesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 跨节点对比的第二步：一个任务在一组节点上的探测历史，节点按 ListProbeComparisonNodes 给出的上限分块。
+  rpc QueryProbeComparison(QueryProbeComparisonRequest) returns (QueryProbeComparisonResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 一个探测任务在各节点上的证书观测：当前配置身份下的成功证书与信任候选，以及各节点钉指纹的能力状态。
+  // 受限 token 只看其范围内的节点，且任务须是它可标注的任务，否则与任务不存在同一 NotFound。
+  rpc ListProbeCertificates(ListProbeCertificatesRequest) returns (ListProbeCertificatesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+
+  // 列出规则及其当前节点状态。
+  rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
+  rpc SaveAlertRule(SaveAlertRuleRequest) returns (SaveAlertRuleResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
+  rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 列出全部静默（含保留期内已过期的一次性静默），每条带此刻是否在窗口内与展开后的节点覆盖。
+  rpc ListSilences(ListSilencesRequest) returns (ListSilencesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // id 为 0 时创建，否则整体替换静默与作用域。
+  rpc SaveSilence(SaveSilenceRequest) returns (SaveSilenceResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  rpc DeleteSilence(DeleteSilenceRequest) returns (DeleteSilenceResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
+  rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本。hub 不把 URL
+  // 写进原文，但响应体由接收方决定：接收方若回显请求路径或头值，这些只写不读的配置也会出现在这里，
+  // 这在会话的权限之内。
+  // 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
+  // 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
+  rpc GetAlertDeliveryError(GetAlertDeliveryErrorRequest) returns (GetAlertDeliveryErrorResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
+  // agent 不需要渠道配置，所以只对会话开放。
+  rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
+  rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 被告警规则引用的渠道不可删除，错误列出引用规则。
+  rpc DeleteNotifyChannel(DeleteNotifyChannelRequest) returns (DeleteNotifyChannelResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
+  rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
+  rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
+  rpc GetBackupStatus(GetBackupStatusRequest) returns (GetBackupStatusResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 离线恢复（heron-hub restore）写下的恢复记录，按恢复时刻倒序、同刻按 id 升序；恢复只在停机时发生，
+  // 记录随配置层备份并按 id 与目标库已有的取并集，没有删除路径，是审计历史而非状态。
+  rpc ListRestoreRecords(ListRestoreRecordsRequest) returns (ListRestoreRecordsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // hub 心跳外推的当前状态：是否已配置、上次成功与上次失败的时刻与类别、下次外呼时刻。
+  // 状态只在进程内存里，重启后"从未跑过"的两者都为 0；目标地址是只写设置，不在这里也不在 GetSettings 回显。
+  rpc GetHeartbeatStatus(GetHeartbeatStatusRequest) returns (GetHeartbeatStatusResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
+  // 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
+  // 期望取值，什么都不写入。
+  rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 主题在同域的受限沙箱运行，安装与启用分离。
+  // 上传一个主题包（zip，至多 8 MiB）并安装不可变版本，不改变当前公开页。
+  // 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
+  // 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
+  rpc UploadTheme(UploadThemeRequest) returns (UploadThemeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 已安装的主题，按 id 升序。
+  rpc ListThemes(ListThemesRequest) returns (ListThemesResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 启用指定摘要的主题版本；id 为空即切回内置公开页。
+  // 没有这个主题时 NotFound，启用状态不变。
+  rpc EnableTheme(EnableThemeRequest) returns (EnableThemeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 删除主题及其全部文件；删的是启用中的主题时回落到内置公开页。没有这个主题时 NotFound。
+  rpc DeleteTheme(DeleteThemeRequest) returns (DeleteThemeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
+  rpc GetThemePreview(GetThemePreviewRequest) returns (GetThemePreviewResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 删除未使用版本，不允许删除当前或上一回滚版本。
+  rpc DeleteThemeVersion(DeleteThemeVersionRequest) returns (DeleteThemeVersionResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 读取公开 GitHub 仓库的 Release 列表，不安装任何内容。
+  rpc ListThemeReleases(ListThemeReleasesRequest) returns (ListThemeReleasesResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 安装明确选定的 Release ZIP 资产；不执行源码构建，不自动启用。
+  rpc InstallThemeRelease(InstallThemeReleaseRequest) returns (InstallThemeReleaseResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 为当前会话创建短期交互预览；不会公开或启用该版本。
+  rpc PreviewTheme(PreviewThemeRequest) returns (PreviewThemeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 下载保留的原始 ZIP；旧 SDK 归档也可下载，但不因此取得执行权限。
+  rpc GetThemePackage(GetThemePackageRequest) returns (GetThemePackageResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 库的逻辑大小、每张表的行数与存储健康读数，与 heron-hub stats 同一来源。
+  rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
+  rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
+  rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
+  rpc DeleteApiToken(DeleteApiTokenRequest) returns (DeleteApiTokenResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+  rpc GetApiReference(GetApiReferenceRequest) returns (GetApiReferenceResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+}
+
+message GetUpdatesRequest { bool check_latest = 1; }
+message GetUpdatesResponse {
+  repeated UpdateTarget targets = 1;
+  // 官方最新正式版，只在 check_latest 时查询：hub 自身更新的目标。
+  string latest_version = 2;
+  string check_error = 3;
+  // hub 绑定的 agent 版本：节点 StartUpdate 唯一接受的 version，不需要 check_latest。空串表示这个
+  // hub 没有绑定（没有注入的构建），节点在线更新不可用；是预发布时同样不可用（更新器只接受正式版）。
+  string bound_agent_version = 4;
+  // 官方最新正式版绑定的 agent 版本，只在 check_latest 且 latest_version 取到时查询：来自目标 release 的
+  // AGENT_VERSION 资产（那次构建注入 hub 的绑定值）。资产不存在或读取失败时为空，表示未知，不表示"没有绑定"，
+  // 也不表示与 bound_agent_version 相同；读取失败不写 check_error。
+  string latest_bound_agent_version = 5;
+}
+message StartUpdateRequest { int64 node_id = 1; string version = 2; }
+message StartUpdateResponse { UpdateTask task = 1; }
+message CancelUpdateRequest { int64 node_id = 1; string id = 2; }
+message CancelUpdateResponse {}
+
+message LoginRequest {
+  string password = 1;
+  string otp = 2;
+  string recovery_code = 3;
+}
+message LoginResponse {}
+message BeginPasskeyLoginRequest {}
+message BeginPasskeyLoginResponse {
+  string challenge_id = 1;
+  string options_json = 2;
+}
+message FinishPasskeyLoginRequest {
+  string challenge_id = 1;
+  string credential_json = 2;
+}
+message FinishPasskeyLoginResponse {}
+message GetSecurityRequest {}
+message SecurityCredential {
+  string id = 1;
+  string name = 2;
+}
+message GetSecurityResponse {
+  bool totp_enabled = 1;
+  // 服务端允许在当前来源使用 Passkey；客户端仍须检查 HTTPS 安全上下文及 WebAuthn 支持。
+  bool passkey_available = 2;
+  repeated SecurityCredential passkeys = 3;
+  uint32 recovery_codes_remaining = 4;
+  // 已持久绑定的规范 Origin，首次注册成功后保存；空表示未绑定或旧凭据尚未迁移，不授权任意域名。
+  string origin = 5;
+  // 从 Host、可信协议及 Origin 检查得到的当前候选来源；无法确定时为空。不会自行覆盖已存绑定。
+  string current_origin = 6;
+  // 不可用原因标识，空表示服务端未发现不可用条件；非空时客户端应禁用普通 Passkey 操作并展示原因。
+  string unavailable_reason = 7;
+}
+enum SecurityActionKind {
+  SECURITY_ACTION_KIND_UNSPECIFIED = 0;
+  SECURITY_ACTION_KIND_TOTP_BEGIN = 1;
+  SECURITY_ACTION_KIND_TOTP_ENABLE = 2;
+  SECURITY_ACTION_KIND_TOTP_DISABLE = 3;
+  SECURITY_ACTION_KIND_PASSKEY_BEGIN = 4;
+  SECURITY_ACTION_KIND_PASSKEY_REGISTER = 5;
+  SECURITY_ACTION_KIND_PASSKEY_DELETE = 6;
+  SECURITY_ACTION_KIND_REAUTH_BEGIN = 7;
+  SECURITY_ACTION_KIND_REAUTH_FINISH = 8;
+  SECURITY_ACTION_KIND_RECOVERY_REGENERATE = 9;
+  // 用密码及已启用的第二因素开始换域注册，不接受 proof_token。完成 PASSKEY_REGISTER 才替换绑定及旧凭据。
+  SECURITY_ACTION_KIND_PASSKEY_REBIND_BEGIN = 10;
+}
+message SecurityActionRequest {
+  SecurityActionKind action = 1;
+  string password = 2;
+  string otp = 3;
+  string recovery_code = 4;
+  string challenge_id = 5;
+  string credential_json = 6;
+  string name = 7;
+  string credential_id = 8;
+  string proof_token = 9;
+}
+message SecurityActionResponse {
+  string challenge_id = 1;
+  string options_json = 2;
+  string totp_secret = 3;
+  string totp_uri = 4;
+  repeated string recovery_codes = 5;
+  string proof_token = 6;
+}
+
+message LogoutRequest {}
+message LogoutResponse {}
+
+message Session {
+  // token_hash 的 64 位小写十六进制，不是 cookie 明文；知道此 id 不能冒用会话。
+  string id = 1;
+  // 创建时刻，Unix 秒。
+  int64 created_at = 2;
+  // 最近使用时刻，Unix 秒；鉴权路径按节流策略异步记录。
+  int64 last_used_at = 3;
+  // 是否本次请求所使用的会话。
+  bool current = 4;
+  // 签发该会话的登录请求的来源地址（auth.SourceText 规范文本，与节点 last_source、登录通知同一口径）；
+  // 空串 = 未知：迁移前已存在的会话，或没有请求的签发路径。
+  string source = 5;
+}
+message ListSessionsRequest {}
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+  // 本次请求 hub 按 --trusted-proxies 认出的来源（auth.SourceText 形式）；它是本次请求的属性，
+  // 与 Session.source（签发时）是两个事实，不混在一列。登录锁定与登录通知看到的也是这个值。
+  string request_source = 2;
+}
+message RevokeSessionRequest {
+  // ListSessions 返回的 id，必须为 64 位十六进制；格式不合法返回 InvalidArgument。
+  string id = 1;
+}
+message RevokeSessionResponse {}
+
+message Node {
+  int64 id = 1;
+  string name = 2;
+  // 公开节点出现在 PublicService：实时状态、历史指标与探测（含任务的种类与目标）对匿名访客可见。
+  bool public = 3;
+  string note = 4;
+  int32 sort_order = 5;
+  // Unix 秒。
+  int64 created_at = 6;
+  // 最近一次上报的墙钟 Unix 秒；从未上报则缺失。
+  optional int64 last_seen_at = 7;
+  // 主机静态信息；从未上报则缺失。
+  Facts facts = 8;
+  optional int64 facts_updated_at = 9;
+  // 周期重置日 1–28：周期在 hub 时区的该日零点重置。
+  uint32 traffic_reset_day = 10;
+  // 离线告警宽限期（秒）；缺失表示取 HERON_OFFLINE_AFTER。
+  // HERON_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
+  optional uint32 offline_grace_s = 11;
+  // 计费与到期；五项都没填时缺失。days_left 由 hub 按 --timezone 的今天算出。
+  Billing billing = 12;
+  // 最近一次上报的来源地址：hub 在 Report 上看到的对端，按 --trusted-proxies 解析 X-Forwarded-For，不读其它旁路头，
+  // 也不采信 agent 自报。IPv4 点分、IPv6 压缩形式、不带区域标识；空串表示 hub 没有记录到来源：从未上报，或最近一次
+  // 上报早于 hub 开始记录来源的版本（此时 last_seen_at 有值）。只留最后一次，与 last_seen_at
+  // 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址；
+  // hub 在反代之后而未把反代列进 --trusted-proxies 时，这里是反代地址。只在管理端可见：公开节点（PublicNode）没有这个字段。
+  string last_source = 13;
+  // 国家 / 地区的显示值，ISO 3166-1 alpha-2（两个大写字母）：country_pin 非空取它，否则取查得值；空串表示没有。判定在 store.Node.DisplayCountry，管理端与公开端共用。
+  // 公开节点的 PublicNode.country 是同一个值。
+  string country = 14;
+  CountrySource country_source = 15;
+  // 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
+  // 来源地址，查得值随即清空，再按新地址取答案（hub 记得的直接写回，否则外呼，见 Settings.geo_enabled）。手动指定时
+  // 也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+  string country_ip = 16;
+  // 管理员手动指定的国家，空串表示不指定。
+  string country_pin = 17;
+  // 运维自定义的标签，按名字大小写不敏感排序；同一个标签无论当初写成什么大小写，都回显它第一次出现时的写法。
+  // 标签用于展示、筛选，并可作为探测任务与告警规则的动态作用域（selector_tags，按标签交集展开）：改节点的标签会改变
+  // 它落在哪些任务与规则里；被选择器引用的标签不能删除（DeleteTag 拒绝），删标签不会静默缩小作用域。公开节点的标签随
+  // PublicNode.tags 对匿名访客可见（标签常写用途与归属，挂在公开节点上即对外可见；节点转为私有后随之不再出现）。
+  repeated string tags = 18;
+  // 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
+  // 这里，清空 country_pin 即回落到它。
+  string country_lookup = 19;
+  // 维护状态：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。
+  // 随 UpdateNode 整体替换；CreateNode 不接受（新节点恒为 false）。
+  bool maintenance = 20;
+  // 节点在全部节点里按全序 (sort_order, id) 升序的名次，从 1 起，随读按当前全序计算：标签过滤（tags、
+  // untagged）、搜索与调用方可见的节点范围只筛行，不改变名次。面板序号列显示它；MoveNodesRequest.position
+  // 与它同一编号。
+  uint32 position = 21;
+  // 公开备注：站长写给访客的一行说明（如线路类型），与私有备注 note 并列；公开节点的 PublicNode.public_remark
+  // 是同一个值，私有节点只有这里可见。随 UpdateNode 整体替换；CreateNode 不接受（与 note 同口径，新节点为空串）。
+  // 单行、至多 100 个 Unicode 码点、不含控制字符（含换行）。
+  string public_remark = 22;
+  // 周期流量配额，范围 [0, 2^62) 字节；0 表示未设配额。
+  uint64 traffic_quota_bytes = 23;
+  TrafficQuotaMode traffic_quota_mode = 24;
+  // 管理员手填的出口地址，空串表示未填。存的是规范形（IPv4 点分、IPv6 压缩形式），取值约束见
+  // UpdateNodeRequest.ipv4_pin。
+  string ipv4_pin = 25;
+  string ipv6_pin = 26;
+  // 每族出口地址的显示值，按序取第一条成立的规则：手填非空取手填；agent 原报该族（facts.network 的 AVAILABLE /
+  // UNSUPPORTED / FAILED / DISABLED）取原报；agent 没报到该族或只报了 FAILED、而 hub 在上报上记到该族公网来源
+  // （last_source）时取来源（HUB_SEEN、AVAILABLE）。facts.network 始终是 agent 原报，不被手填或来源覆盖；与显示值
+  // 对照可看出 agent 是否已按手填停止探测。两族恒有值（缺失的族是 source 为 UNSPECIFIED 的空值）。
+  NodeNetwork network = 27;
+  // 已出租：出租出去的机器不装 agent，所有权仍在站长手里。为真时节点只属于"已出租"一种状态、不参与
+  // agent 在线更新、离线与到期规则都不评估；与 maintenance 互斥（同真 → InvalidArgument）。随 UpdateNode 整体替换，
+  // CreateNode 也接受：买来就租出去的机器要能直接登记。
+  bool rented = 28;
+}
+
+// 出口地址的显示值，与 NetworkInfo 同字段号。
+message NodeNetwork {
+  NodeAddress ipv4 = 1;
+  NodeAddress ipv6 = 2;
+}
+
+// 一个地址族的出口地址显示值。
+message NodeAddress {
+  // state 为 AVAILABLE 时是该族的公网地址（规范形），否则为空串。
+  string address = 1;
+  AddressSource source = 2;
+  // MANUAL 与 HUB_SEEN 恒为 AVAILABLE；DETECTED 原样取 agent 报的状态（AVAILABLE、UNSUPPORTED、FAILED 或 DISABLED
+  // ——DISABLED 而 source 不是 MANUAL，说明手填已清空、agent 还没收到恢复探测的应答）；UNSPECIFIED 时为 UNSPECIFIED。
+  AddressDetectionState state = 3;
+}
+
+// 出口地址显示值的来源。
+enum AddressSource {
+  // 手填、agent 原报与 hub 来源三者都没有（从未上报、版本早于双栈探测，或首轮探测尚未完成）。
+  ADDRESS_SOURCE_UNSPECIFIED = 0;
+  // agent 探测：取自 facts.network。
+  ADDRESS_SOURCE_DETECTED = 1;
+  // 管理员手填（Node.ipv4_pin / ipv6_pin）。
+  ADDRESS_SOURCE_MANUAL = 2;
+  // hub 在 Report 上看到的来源地址（Node.last_source，经 --trusted-proxies 解析的对端）：该族没有手填、agent 原报
+  // 缺该族或只报了 FAILED，且来源是该族公网单播地址时取来源（AVAILABLE）。它不是 agent 的自述，也不是运维的断言，
+  // 是 hub 在 Report 上看到的对端；与 last_source 同一刷新路径（随分钟行刷出），没有自己的 checked_at。
+  ADDRESS_SOURCE_HUB_SEEN = 3;
+}
+
+// 国家显示值的来源。
+enum CountrySource {
+  // 没有国家：未手动指定，也没有查得值。
+  COUNTRY_SOURCE_UNSPECIFIED = 0;
+  // 管理员手动指定（Node.country_pin）。
+  COUNTRY_SOURCE_MANUAL = 1;
+  // 国家查询按来源地址查得（Node.country_ip）。
+  COUNTRY_SOURCE_LOOKUP = 2;
+}
+
+message ListNodesRequest {
+  // 只返回同时挂着这里全部标签的节点（交集：多选是逐步收窄，再选一个结果只会变少）。名字按 UpdateNodeRequest.tags
+  // 的规则校验，大小写不敏感，折叠后重复的算一个；有不存在的标签时结果为空。空列表不过滤：untagged 为假时返回
+  // 全部节点，untagged 为真时返回全部无标签节点（见下）。非空时与 untagged 同时为真会被拒绝（空列表不构成组合）。
+  // 至多 16 个不同的标签：每个节点至多挂 16 个，更多的交集不可能匹配任何节点，按参数错误拒绝。
+  repeated string tags = 1;
+  // 为真时只返回没有任何标签的节点（仍限于调用方可见的节点范围）。为假时不按此过滤。
+  // 与非空 tags 互斥，同时给出返回 InvalidArgument：带有所选全部标签与没有标签的交集必然为空，空结果会把写错的
+  // 条件伪装成"没有这样的节点"——与超过 16 个标签按参数错误拒绝同一理由。
+  bool untagged = 2;
+}
+message ListNodesResponse {
+  repeated Node nodes = 1;
+}
+
+message CreateNodeRequest {
+  // 去首尾空白后 1–64 个字符，控制字符被剔除。
+  string name = 1;
+  // 计费与到期，选填：缺失等于不填。取值约束与 UpdateNodeRequest.billing 相同，同一处校验；days_left 由 hub 计算，这里的值忽略。
+  Billing billing = 2;
+  // 已出租，缺失即 false。与 UpdateNodeRequest.rented 同一语义；CreateNodeRequest 没有 maintenance，
+  // 新建节点不会同时落入两种状态。
+  bool rented = 3;
+  // 公开备注与私有备注都不在创建时接受（CreateNodeRequest 没有 note，也没有 public_remark）：
+  // 建节点后经 UpdateNode 补写，与 UpdateNode 的整体替换口径衔接。
+}
+message CreateNodeResponse {
+  Node node = 1;
+  // 一次性安装凭据（heron_install_ 前缀），只在此处返回；完整前缀参与哈希。只能用于 Register，不能用于 Report。
+  string token = 2;
+}
+
+message UpdateNodeRequest {
+  int64 id = 1;
+  string name = 2;
+  bool public = 3;
+  // 最长 1024 个字符。
+  string note = 4;
+  // 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
+  uint32 traffic_reset_day = 5;
+  // 必填，缺失拒绝；0 表示清除（取 HERON_OFFLINE_AFTER），非 0 须 ≥ HERON_OFFLINE_AFTER 的秒数。
+  optional uint32 offline_grace_s = 6;
+  // 计费与到期，整体替换：缺失等于五项全清，空串、未指定与 false 也是清除，没有"不改"的取值。
+  // 取值约束见 Billing 各字段；days_left 由 hub 计算，这里的值忽略。
+  Billing billing = 7;
+  // 手动指定的国家：两个大写字母（ISO 3166-1 alpha-2）或空串。整体替换：缺失即空串，清除手动值、回落到查得值。
+  string country_pin = 8;
+  // 标签集合，整体替换：不带与带空列表相同，都是清空节点的全部标签（repeated 没有"缺失"与"空"之分，所以也没有
+  // "不改"的取法，要保留就原样带回 Node.tags）。每个名字去掉首尾空白后 1–64 个字符、不含控制字符，允许空格与
+  // 大小写混写；大小写不敏感（Unicode 简单折叠），折叠后重复的只留第一个；已存在的标签沿用它先建的写法，不存在的
+  // 随之新建。去重后至多 16 个。
+  repeated string tags = 9;
+  // 维护状态，整体替换：缺失即 false。
+  bool maintenance = 10;
+  // 公开备注，整体替换：缺失即空串（清除）。单行、至多 100 个 Unicode 码点、不含控制字符（含换行）；
+  // 超长返回 InvalidArgument，不截断。
+  string public_remark = 11;
+  // 整体替换，缺省的 0 停用配额；范围 [0, 2^62) 字节。
+  uint64 traffic_quota_bytes = 12;
+  // 配额非 0 时必须指定 sum、rx、tx 或 max；配额为 0 时忽略并存 sum。
+  TrafficQuotaMode traffic_quota_mode = 13;
+  // 手填的 IPv4 出口地址，整体替换：缺失即空串，清除手填、回落到 agent 探测。非空时必须是
+  // IPv4 公网单播地址（如 8.8.8.8），与 agent 自报出口同一个判定：私网、CGNAT、回环、链路本地、文档等非公网段，
+  // IPv6 文本与 IPv4 映射写法（::ffff:a.b.c.d）都返回 InvalidArgument；存规范形。填入后 hub 在下一次 Report 应答里
+  // 让该节点的 agent 停止 IPv4 探测（ReportResponse.detection），清空即恢复探测。只决定显示值与公开页的 IPv4 标记，
+  // 不参与国家查询：国家查询按 hub 在 Report 上看到的来源地址查。
+  string ipv4_pin = 14;
+  // 手填的 IPv6 出口地址，规则同 ipv4_pin：非空时必须是 IPv6 公网单播地址（如 2606:4700::1111），不带区域标识
+  // （%eth0）、不是 IPv4 映射写法；IPv4 文本返回 InvalidArgument。
+  string ipv6_pin = 15;
+  // 已出租，整体替换：缺失即 false。与 maintenance 同真被拒绝（InvalidArgument，点名两个字段）。
+  bool rented = 16;
+}
+message UpdateNodeResponse {
+  Node node = 1;
+}
+
+message RenewNodeBillingRequest {
+  int64 node_id = 1;
+}
+message RenewNodeBillingResponse {
+  // 推后并扫描之后的节点。
+  Node node = 1;
+}
+
+message BatchUpdateNodeTagsRequest {
+  // 非空、全部为正数；重复 id 只处理一次。空列表拒绝，绝不表示全部节点。
+  repeated int64 node_ids = 1;
+  // 向每个节点添加这些标签，已有则保留。名字规则与 UpdateNodeRequest.tags 相同。
+  repeated string add_tags = 2;
+  // 从每个节点移除这些标签，不删除标签本身；不存在的关联不产生变化。
+  // 与 add_tags 按 Unicode 简单折叠比较后不能重叠；未提及的标签保持原样。
+  // 两组均可为空；移除列表不受每节点 16 个上限限制，最终每个节点仍须至多 16 个标签。
+  repeated string remove_tags = 3;
+}
+message BatchUpdateNodeTagsResponse {}
+
+message DeleteNodeRequest {
+  int64 id = 1;
+}
+message DeleteNodeResponse {}
+
+message RotateNodeTokenRequest {
+  int64 id = 1;
+}
+message RotateNodeTokenResponse {
+  // 一次性安装凭据（heron_install_ 前缀），只能用于 Register；旧凭据已撤销。
+  string token = 1;
+}
+
+message ReorderNodesRequest {
+  // 全部节点 id 按新顺序排列；缺一个或多一个都被拒绝。
+  repeated int64 ids = 1;
+}
+message ReorderNodesResponse {}
+
+message MoveNodesRequest {
+  // 要移动的节点 id：至少一个（空列表返回 InvalidArgument），重复 id 去重，请求里的先后不影响结果
+  // （被选节点按它们现有的先后排列）。任一 id 不存在返回 NotFound 并给出该 id，整批不改。
+  repeated int64 ids = 1;
+  // 目标位置：全序名次（Node.position 同一编号），被选节点按现有先后占据第 position..position+k-1 位。
+  // 合法区间 1..N-k+1（N 为节点总数，k 为去重后的节点数），越界返回 InvalidArgument 并写明区间，不截断。
+  uint32 position = 2;
+}
+message MoveNodesResponse {}
+
+message Tag {
+  // 标签第一次出现时的写法。
+  string name = 1;
+  // 挂着它的节点数。
+  uint32 node_count = 2;
+}
+message ListTagsRequest {}
+message ListTagsResponse {
+  repeated Tag tags = 1;
+}
+message DeleteTagRequest {
+  // 按 UpdateNodeRequest.tags 的规则校验，大小写不敏感。
+  string name = 1;
+}
+message DeleteTagResponse {}
+
+message OpenRegisterWindowRequest {
+  // 窗口有效期，60–604800 秒。
+  uint32 ttl_s = 1;
+  // 可注册节点数，1–1000。
+  uint32 max_nodes = 2;
+}
+message OpenRegisterWindowResponse {
+  // 一次性 key 明文，只在此处返回一次。
+  string key = 1;
+  // 截止时刻，Unix 秒。
+  int64 expires_at = 2;
+  uint32 max_nodes = 3;
+}
+
+message CloseRegisterWindowRequest {}
+message CloseRegisterWindowResponse {}
+
+message GetRegisterWindowRequest {}
+message GetRegisterWindowResponse {
+  // false 时其余字段无意义。
+  bool open = 1;
+  int64 expires_at = 2;
+  uint32 remaining = 3;
+}
+
+message GetSnapshotRequest {}
+message GetSnapshotResponse {
+  // hub 墙钟，Unix 秒；客户端据此显示"多久之前"而不依赖自己的时钟。
+  int64 now = 1;
+  // hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
+  uint32 report_interval_ms = 2;
+  repeated NodeStatus nodes = 3;
+  // hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成该版本 release 的安装命令。
+  string hub_version = 4;
+  // hub 绑定的 agent 版本：构建时取自仓库根 AGENT_VERSION，未注入为空串，表示没有绑定。节点在线更新
+  // 只能以它为目标，面板据此标出 agent 版本低于它的节点；该版本 release 的 install.sh 装的也是它。与
+  // GetUpdatesResponse.bound_agent_version 同值。
+  string bound_agent_version = 5;
+}
+
+message NodeStatus {
+  int64 id = 1;
+  string name = 2;
+  // 在线 ⇔ 距最近一次上报不足 TTL，hub 是唯一裁决者。
+  bool online = 3;
+  // 最近一次上报的墙钟 Unix 秒；从未上报则缺失。
+  optional int64 last_seen_at = 4;
+  // 最近一次上报的读数；从未上报则缺失。离线节点仍带最后一次读数。
+  Metrics metrics = 5;
+  // hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
+  Traffic traffic = 6;
+}
+
+message GetTrafficRequest {}
+message GetTrafficResponse {
+  // hub 墙钟，Unix 秒。
+  int64 now = 1;
+  repeated NodeTraffic nodes = 2;
+  // hub 的 --timezone（IANA 名）：reset_day 与周期零点都按此时区判定；
+  // period_start / next_reset_at 是 Unix 秒，本身无歧义。
+  string timezone = 3;
+}
+message NodeTraffic {
+  int64 node_id = 1;
+  string name = 2;
+  Traffic traffic = 3;
+}
+
+message AdjustTrafficRequest {
+  int64 node_id = 1;
+  // 当前周期的下行 / 上行字节数，覆盖写入。
+  uint64 period_rx = 2;
+  uint64 period_tx = 3;
+}
+message AdjustTrafficResponse {
+  // 校正后的状态。
+  Traffic traffic = 1;
+}
+
+message ProbeTaskDetail {
+  ProbeTask task = 1;
+  // 任务当前覆盖的节点，升序去重。all_nodes 为真时是 hub 展开的全部现有节点，随建删节点变化；
+  // 为假时就是显式分配，空表示不覆盖任何节点（删掉最后一个分配不会变成全部节点）。
+  repeated int64 node_ids = 2;
+  // 为真表示全部节点，之后新建的节点自动纳入；agent 只拿到展开后的清单，看不到这个开关。
+  bool all_nodes = 3;
+  // 动态作用域：匹配同时拥有全部标签的节点。非空时 node_ids 是当前展开值。
+  repeated string selector_tags = 4;
+}
+message ListProbeTasksRequest {}
+message ListProbeTasksResponse {
+  // 任务与分配的全局版本；保存、删除任务和更新节点覆盖时变为更大的新值（不小于修改时刻的 Unix 秒），建节点（含 agent 自助注册）
+  // 也是一次修改，因为新节点继承全部 all_nodes 任务；删除节点清理分配和纯展示重排不改；agent 用它对账。
+  uint64 version = 1;
+  repeated ProbeTaskDetail tasks = 2;
+}
+message SaveProbeTaskRequest {
+  // task.id 为 0 时创建，否则整体替换该任务的字段；all_nodes 为假时 node_ids 是保存后的完整分配列表，可以为空。
+  // 只做证书指纹动作时 task 只给 id（kind、target、interval_s、timeout_ms、dns_server 都留零值）并带 cert_pin：
+  // 保存沿用库里的任务字段与节点选择，这次请求的 node_ids、all_nodes、selector_tags 不生效。合法任务的这几项
+  // 不会全是零值，所以这个形状与整体替换不会混淆。
+  // 约束：interval_s 5–3600，timeout_ms 100–5000，
+  // ICMP 目标为 IP 或主机名；每节点至多 64 个任务（all_nodes 任务计入每个节点）；target 不超过 253 字节；
+  // TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
+  // 端口 1–65535；IP 字面量不带 zone。
+  ProbeTask task = 1;
+  repeated int64 node_ids = 2;
+  // 为真表示全部节点（含以后新建的），不得同时给 node_ids 或 selector_tags。新节点也会继承这些任务，all_nodes 任务超过 64 个时
+  // 建节点与注册会被拒绝。
+  bool all_nodes = 3;
+  // 动态标签交集，与 all_nodes 和非空 node_ids 互斥；标签必须已存在。
+  repeated string selector_tags = 4;
+  // 证书指纹的显式动作；缺席即保持原值（新建任务即不钉）。task.cert_spki_sha256 与 task.config_id 是只输出字段，
+  // 输入时忽略：钉与不钉只由这里决定，整体保存不会顺带清掉 pin。
+  CertPinChange cert_pin = 5;
+  // 前置条件：给出时必须等于任务当前的 config_id，否则 FailedPrecondition。对既有任务做 cert_pin.set 时必填
+  // （信任针对的是调用方看过的那份配置）；新建任务不得给出。
+  bytes expected_config_id = 6;
+}
+
+// 钉证书指纹的动作。清除是放宽校验，只能经 clear 显式表达；set 的空 bytes 不等于清除，会被拒绝。
+message CertPinChange {
+  oneof action {
+    // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+    bytes set_spki_sha256 = 1;
+    google.protobuf.Empty clear = 2;
+  }
+}
+message SaveProbeTaskResponse {
+  ProbeTaskDetail task = 1;
+  uint64 version = 2;
+}
+
+message ListProbeCertificatesRequest {
+  uint64 task_id = 1;
+}
+
+message ListProbeCertificatesResponse {
+  // 任务当前的配置身份；信任候选时作为 SaveProbeTaskRequest.expected_config_id 交回。
+  bytes config_id = 1;
+  // 任务当前钉住的叶证书 SPKI SHA-256；空表示不钉。
+  bytes cert_spki_sha256 = 2;
+  // 当前分配了该任务、且调用方可见的节点，按节点全序。
+  repeated NodeProbeCertificate nodes = 3;
+}
+
+message NodeProbeCertificate {
+  int64 node_id = 1;
+  reserved 2;
+  reserved "pin_capability";
+  // 当前配置身份下最近一次成功握手的证书观测；缺失表示没有。
+  ProbeCertificateObservation current = 3;
+  reserved 4;
+  reserved "unbound";
+  // 当前配置身份下的信任候选；缺失表示没有。从不自动生效。
+  ProbeCertificateCandidate candidate = 5;
+}
+
+message ProbeCertificateObservation {
+  // 叶证书 NotAfter，Unix 秒。
+  int64 not_after_s = 1;
+  // 观测时刻，Unix 秒；与 probe_cert 现有时刻列同义。
+  int64 observed_at = 2;
+}
+
+message ProbeCertificateCandidate {
+  // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+  bytes spki_sha256 = 1;
+  int64 not_after_s = 2;
+  PresentedReason reason = 3;
+  int64 observed_at = 4;
+}
+message DeleteProbeTaskRequest { uint64 id = 1; }
+message DeleteProbeTaskResponse { uint64 version = 1; }
+
+message ReorderProbeTasksRequest {
+  // 必须恰好包含全部现有任务 id 各一次；遗漏、重复或未知 id 整体拒绝。
+  repeated uint64 ids = 1;
+}
+message ReorderProbeTasksResponse {}
+
+enum AlertKind {
+  ALERT_KIND_UNSPECIFIED = 0;
+  ALERT_KIND_OFFLINE = 1;
+  ALERT_KIND_PROBE = 2;
+  // 节点到期日距今不超过 days_before 天（含已过期）即触发，数据源是节点的到期日。
+  ALERT_KIND_EXPIRY = 3;
+  ALERT_KIND_RESOURCE = 4;
+  // 任务（必须是 https:// 的 HTTP 任务）观测到的证书到期日距今不超过 days_before 天
+  // （含已过期）即触发，数据源是 probe_cert 里该节点该任务的最新观测。
+  ALERT_KIND_CERT_EXPIRY = 5;
+  // 已提交周期用量达到配额的 threshold 百分比即触发；threshold 范围 (0, 100]。
+  ALERT_KIND_TRAFFIC = 6;
+}
+enum ResourceMetric {
+  RESOURCE_METRIC_UNSPECIFIED = 0;
+  RESOURCE_METRIC_MEMORY_USED_PCT = 1;
+  RESOURCE_METRIC_DISK_USED_PCT = 2;
+  // cpu 列分钟均值（cpu_sum / cpu_n），阈值 (0, 100]。
+  RESOURCE_METRIC_CPU_PCT = 3;
+  // load1 列分钟均值除以 node_facts.cpu_cores，阈值 (0, 64]；节点无 facts 或核数为 0 时该分钟无读数。
+  RESOURCE_METRIC_LOAD1_PER_CORE = 4;
+  // net_rx_bps 列分钟均值，阈值 (0, 2^40]，单位 bytes/s。
+  RESOURCE_METRIC_NET_RX_BPS = 5;
+  // net_tx_bps 列分钟均值，阈值 (0, 2^40]，单位 bytes/s。
+  RESOURCE_METRIC_NET_TX_BPS = 6;
+}
+enum ProbeMetric {
+  PROBE_METRIC_UNSPECIFIED = 0;
+  PROBE_METRIC_LOSS_PCT = 1;
+  PROBE_METRIC_RTT_MS = 2;
+}
+// 往返时延规则（metric 为 PROBE_METRIC_RTT_MS）的判定方式。
+enum RttMode {
+  // 只对 rtt 规则有含义：保存时按 RTT_MODE_THRESHOLD 收，回显为 RTT_MODE_THRESHOLD（不带这个字段的旧客户端
+  // 保存的就是固定阈值规则）。其余规则必须是它。
+  RTT_MODE_UNSPECIFIED = 0;
+  // 逐分钟均值 ≥ threshold 即越限。
+  RTT_MODE_THRESHOLD = 1;
+  // 逐分钟均值落在基线带 [基线×(1−lower_deviation_pct/100), 基线×(1+upper_deviation_pct/100)] 之外（含边界）即越限。
+  RTT_MODE_RELATIVE = 2;
+}
+// 相对判定的基线来源。
+enum BaselineMode {
+  // 只允许出现在非相对判定的规则上；相对判定必须显式选择。
+  BASELINE_MODE_UNSPECIFIED = 0;
+  // 基线窗口内（不含判定窗口）各个有 rtt 样本的 5 分钟桶的桶均值，取中位数，桶等权；hub 每小时重算一次并缓存。
+  BASELINE_MODE_ADAPTIVE = 1;
+  // 基线就是 fixed_baseline_ms。
+  BASELINE_MODE_FIXED = 2;
+}
+message AlertRule {
+  // 0 表示创建。
+  int64 id = 1;
+  // 1–64 个字符。
+  string name = 2;
+  // 必须为离线、探测、到期、资源、证书到期或流量，未指定值不允许保存。
+  AlertKind kind = 3;
+  bool enabled = 4;
+  // 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
+  repeated int64 node_ids = 5;
+  // 已保存渠道的 id，升序去重；空表示只记事件不投递。
+  repeated int64 channel_ids = 6;
+  // task_id 用于探测与证书到期规则，必须是已存在的非零任务 id；其它种类必须为 0。
+  // metric 只用于探测；threshold 用于探测、资源与流量；for_minutes 只用于探测和资源，其它种类必须为零值。
+  uint64 task_id = 7;
+  // 探测规则必须选择丢包百分比或往返毫秒数。
+  ProbeMetric metric = 8;
+  // 丢包百分比 0–100；往返毫秒数在 RTT_MODE_THRESHOLD 下 > 0、RTT_MODE_RELATIVE 下必须为 0；流量为配额百分比 (0,100]；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
+  double threshold = 9;
+  // 1–60：连续多少个已闭合分钟达到阈值（相对判定时为越出基线带）才触发；也是相对判定的判定窗口长度。
+  uint32 for_minutes = 10;
+  // 创建墙钟，Unix 秒；保存请求中的值忽略。
+  int64 created_at = 11;
+  // 为真表示全部节点，新建节点自动纳入，不得同时提交 node_ids 或 selector_tags；
+  // 为假时 node_ids 是显式作用域，删除节点后空集不等于全部。
+  bool all_nodes = 12;
+  // 仅用于到期规则：1–365，节点到期日减今天（hub 时区）不超过它即触发，已过期的也算；其余种类必须为 0。
+  // 保存启用的到期规则后立即评估一次，此后在 hub 启动、每个日界（零点不存在的日子取新一天的第一个时刻）与节点
+  // 计费字段变化时评估。
+  uint32 days_before = 13;
+  // 仅资源规则：指标为内存、磁盘、CPU 百分比，按核负载，或网卡收发速率；数据源为 metric_1m 的分钟均值（按核负载另除以节点核数）。
+  ResourceMetric resource_metric = 14;
+  // 仅资源规则：连续 for_minutes 个完整分钟不高于此阈值才恢复，必须小于触发阈值；缺失读数不能恢复。
+  double recovery_threshold = 15;
+  // 动态标签交集，与 all_nodes 和显式 node_ids 互斥。
+  repeated string selector_tags = 16;
+  // 以下八个字段只属于 rtt 规则（kind 为探测、metric 为 PROBE_METRIC_RTT_MS），其余规则必须全部为零值；rtt 规则在
+  // RTT_MODE_THRESHOLD 下除 rtt_mode 外的七个也必须为零值。RTT_MODE_RELATIVE 下 threshold 必须为 0，
+  // upper_deviation_pct、lower_deviation_pct、cooldown_s 与 baseline_mode 必填。
+  RttMode rtt_mode = 17;
+  BaselineMode baseline_mode = 18;
+  // 仅 BASELINE_MODE_ADAPTIVE：基线窗口秒数，不小于 for_minutes×60、不大于 2592000（30 天）；固定基线时必须为 0。
+  // 5 分钟级的保留期短于窗口时，基线只覆盖保留期内的部分。
+  uint32 baseline_window_s = 19;
+  // 仅 BASELINE_MODE_ADAPTIVE：至少 1；基线所用的桶数少于它时基线无效，规则既不触发也不恢复。固定基线时必须为 0。
+  uint32 baseline_min_samples = 20;
+  // 上偏差百分比，(0, 1000]。
+  double upper_deviation_pct = 21;
+  // 下偏差百分比，(0, 100]。取 100 即正常带下界为 0 ms，正的 rtt 均值不会落到带下，等于只按上偏差判定。
+  double lower_deviation_pct = 22;
+  // 进入 firing 之后这么多秒内不再产生新的 firing 转换（恢复照常），[60, 604800]。
+  uint32 cooldown_s = 23;
+  // 仅 BASELINE_MODE_FIXED：基线毫秒数，(0, 60000]，与 threshold 无关；自适应基线时必须为 0。
+  double fixed_baseline_ms = 24;
+}
+message ListAlertRulesRequest {}
+message ListAlertRulesResponse {
+  repeated AlertRule rules = 1;
+  // 只含已有记录的组合；缺失表示尚无状态记录，按 ok 显示。
+  // 探测规则候选节点是作用域与任务分配节点的交集。
+  repeated AlertStateEntry states = 2;
+}
+message AlertStateEntry {
+  int64 rule_id = 1;
+  int64 node_id = 2;
+  // 取值为 ok、pending 或 firing。
+  string state = 3;
+  // 进入此状态的墙钟，Unix 秒。
+  int64 since_at = 4;
+  // 仅离线规则：pending 且只因抖动抑制而尚未触发，即不做抖动抑制时这一轮巡检本会触发。抖动抑制：上次从 firing
+  // 恢复后一小时内再次开始的离线（离线开始即最后一次上报），要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。
+  // 由 hub 的离线巡检算出，不落库，hub 重启后第一轮巡检之前为 false。
+  bool flapping = 5;
+  // 仅 firing：这次触发进入 firing 时处于维护静默覆盖内、没有投递，恢复也将不投递；其余状态恒为 false。
+  bool silenced = 6;
+}
+message SaveAlertRuleRequest { AlertRule rule = 1; }
+message SaveAlertRuleResponse { AlertRule rule = 1; }
+message DeleteAlertRuleRequest { int64 id = 1; }
+message DeleteAlertRuleResponse {}
+
+enum SilenceKind {
+  SILENCE_KIND_UNSPECIFIED = 0;
+  // 每日重复：start_hhmm–end_hhmm（HH:MM，hub 的 --timezone），允许跨午夜（如 22:00–06:00）。
+  SILENCE_KIND_DAILY = 1;
+  // 一次性：from_at–until_at（Unix 秒）。到期后保留供审计，随告警事件的保留期清理。
+  SILENCE_KIND_ONCE = 2;
+}
+// 维护静默：覆盖内的节点在窗口内产生的告警事件照常生成但不投递。作用域与 AlertRule 同一形状：
+// all_nodes / 显式 node_ids / selector_tags 三选一，语义逐字相同。
+message Silence {
+  // 0 表示创建。
+  int64 id = 1;
+  // 1–64 个字符。
+  string name = 2;
+  // 关闭的静默保留配置但不抑制任何投递。
+  bool enabled = 3;
+  // 为真表示全部节点（含以后新建的），不得同时提交 node_ids 或 selector_tags。
+  bool all_nodes = 4;
+  // 显式作用域，升序去重；ListSilences 里 selector_tags 非空时是当前标签交集的展开结果。
+  repeated int64 node_ids = 5;
+  // 动态标签交集，与 all_nodes 和显式 node_ids 互斥；标签必须已存在，被引用的标签不能删除。
+  repeated string selector_tags = 6;
+  SilenceKind kind = 7;
+  // DAILY 必填：HH:MM，按 hub 的 --timezone 判定，start 与 end 不得相同；ONCE 必须为空。
+  string start_hhmm = 8;
+  string end_hhmm = 9;
+  // ONCE 必填：Unix 秒，from_at < until_at，含 from_at、不含 until_at；DAILY 必须为 0。
+  int64 from_at = 10;
+  int64 until_at = 11;
+  // 至多 256 个字符。
+  string reason = 12;
+  // 创建墙钟，Unix 秒；保存请求中的值忽略。
+  int64 created_at = 13;
+}
+message ListSilencesRequest {}
+message ListSilencesResponse {
+  repeated SilenceEntry silences = 1;
+}
+message SilenceEntry {
+  Silence silence = 1;
+  // 此刻该静默是否生效（enabled 且当前时刻在窗口内）；节点是否被抑制还要看它的 maintenance 与覆盖。
+  bool active = 2;
+}
+message SaveSilenceRequest { Silence silence = 1; }
+message SaveSilenceResponse { Silence silence = 1; }
+message DeleteSilenceRequest { int64 id = 1; }
+message DeleteSilenceResponse {}
+
+enum ChannelKind {
+  CHANNEL_KIND_UNSPECIFIED = 0;
+  CHANNEL_KIND_TELEGRAM = 1;
+  CHANNEL_KIND_WEBHOOK = 2;
+}
+message NotifyChannel {
+  // 0 表示创建。
+  int64 id = 1;
+  // 1–64 个字符。
+  string name = 2;
+  // 必须选择 Telegram 或自定义 HTTP 通知。
+  ChannelKind kind = 3;
+  // 选择 Telegram 时必填。
+  TelegramConfig telegram = 4;
+  // 选择自定义 HTTP 通知时必填。
+  WebhookConfig webhook = 5;
+  // 创建墙钟，Unix 秒；保存请求中的值忽略。
+  int64 created_at = 6;
+  // 出站节奏上限：告警与恢复通知在任意一分钟内至多向这个渠道发出的请求数，含重试；0 表示不限。超出上限的消息
+  // 排队到下一个空位发出，不丢弃。计数只在 hub 进程内：TestNotifyChannel 的测试消息不计入，hub 重启后从零计起，
+  // 一分钟内重启会让这一分钟的请求超过上限。上限属于接收方：Telegram 群聊文档值为每分钟 20 条。保存请求省略时取
+  // 该种类的默认值——Telegram 20，Webhook 0；响应里恒有值。
+  optional uint32 rate_per_minute = 7;
+}
+message TelegramConfig {
+  // 列表与保存响应里恒为空；保存时为空表示保留已存的 token（新建时必填）。与 BackupSettings.secret 方向不同：那里显式空串表示清除。
+  string bot_token = 1;
+  // 只在响应里有意义，表示已保存非空 token。
+  bool has_bot_token = 2;
+  // 非空的接收会话标识。
+  string chat_id = 3;
+}
+message WebhookConfig {
+  // 新建必填，必须为绝对 http 或 https 地址；保存为空保留旧值，响应恒为空。与 BackupSettings.secret 方向不同：那里显式空串表示清除。
+  string url = 1;
+  // POST、PUT、PATCH；空取 POST。
+  string method = 2;
+  // 合并后至多 16 个；键为合法 HTTP 标记，值不含控制字符；响应不返回值。
+  // 保存时省略的键保留，显式给出的键覆盖；头名不区分大小写并规范化。
+  map<string, string> headers = 3;
+  // Go 文本模板；字段 Rule、Node、Kind、Transition、Value、At、Summary，
+  // 函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板。
+  string body_template = 4;
+  // 只在响应有意义，表示已保存 URL。
+  bool has_url = 5;
+  // 只在响应有意义，只回显 scheme://host，不含用户信息、路径或查询串。
+  string url_host = 6;
+  // 只在响应有意义，已保存头名按升序排列。
+  repeated string header_names = 7;
+  // 本次要删除的头名；先删除再覆盖，同名显式新值优先，不落库。
+  repeated string remove_headers = 8;
+}
+message ListNotifyChannelsRequest {}
+message ListNotifyChannelsResponse { repeated NotifyChannel channels = 1; }
+message SaveNotifyChannelRequest { NotifyChannel channel = 1; }
+message SaveNotifyChannelResponse { NotifyChannel channel = 1; }
+message DeleteNotifyChannelRequest { int64 id = 1; }
+message DeleteNotifyChannelResponse {}
+message TestNotifyChannelRequest { int64 id = 1; }
+message TestNotifyChannelResponse {}
+
+enum GeoBackend {
+  GEO_BACKEND_UNSPECIFIED = 0;
+  GEO_BACKEND_HTTP = 1;
+  GEO_BACKEND_MMDB = 2;
+}
+
+// 公开页设置、国家查询与备份。UpdateSettings 按组判定、各组彼此独立。外观五项（1–5）是一组：proto3
+// 的 string 没有 presence，所以任一项非空即视为给出，给出就整体替换并按整体校验（theme 必填，其余为空即清空）；只带
+// title 不带 theme 的请求因此得到点名 theme 的错误，而不是被静默丢弃。公开页总闸、国家查询两项与 backup 是 presence
+// 字段，给出即改、缺席即不变：关站是对外可见的中断，HTTP 后端下国家查询两项决定 hub 是否、向谁发送节点地址，备份承载
+// 目标、凭据与失败通知渠道，登录通知（login_notify）选定密码泄漏当下唯一的信号发往哪里，只改外观的旧客户端与脚本都
+// 不得顺手改掉它们；只改它们的客户端也不必重发外观。login_notify 同样是 presence 字段，自成一组。国家查询的两项是一组，
+// 逐项 presence，任一项给出即算这一组给出。geo_backend、geo_mmdb_path 是只读回显，UpdateSettings 中缺席或给出均忽略，
+// 也不算给出任何一组。一次请求至少给出一组，否则 InvalidArgument 点名各组。GetSettings 与 UpdateSettings 的响应总带
+// 外观、总闸、国家查询两项、hub 实际选定的国家查询后端（geo_backend、geo_mmdb_path）、backup 与 login_notify。字段号
+// 按本消息注释登记的号分配，不各自挑号：6 属公开页总闸，7–10 属国家查询，11 属备份，12 属登录通知。
+message Settings {
+  // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
+  // 空串表示公开页用内置标题。
+  string title = 1;
+  // auto（跟随访客的系统设置）、light 或 dark。
+  string theme = 2;
+  // 主色 #rrggbb，hub 保存为小写；空串表示内置配色。
+  string accent_color = 3;
+  // data:<type>;base64,<data>：type 为 image/png、image/jpeg、image/webp、image/svg+xml 之一（全小写、不带参数），
+  // data 为带填充的标准 base64，整串不超过 131072 字节；空串表示没有 logo。
+  string logo = 4;
+  // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
+  string custom_css = 5;
+  // 公开页与 PublicService 的总闸。GetSettings 总是带值，从未保存过时为 true。
+  // UpdateSettings 缺席表示不变，显式 true/false 才修改；关闭公开页会中断对外服务，
+  // 不认识此字段的旧客户端修改外观时不得顺带关站，因此它有别于外观字段的整体替换语义。
+  // 关闭不修改节点的 public 标记，重新打开后恢复原来的公开范围。
+  optional bool public_enabled = 6;
+  // 国家查询开关，从未保存过时为开，保存过的开或关照旧生效，两个后端共用。开启即按每个节点的来源地址
+  // （Node.last_source）查国家，只查公网地址：HTTP 后端把地址逐个发给 geo_url，MMDB 后端只查本地文件、不出网。
+  // 节点停在同一地址时查得一次即止；hub 在内存里记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换
+  // 不再重查，超过 4 个地址轮换时被挤出的地址会再查，hub 重启后节点换到的地址各再查一次。失败按小时退避。
+  optional bool geo_enabled = 7;
+  // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。{ip} 不得
+  // 在主机或端口位置，含 [{ip}] 写法：hub 连到哪里只由这项决定，不随节点地址变化；{ip} 必须在路径或查询串里，# 后的片段不随请求发出。
+  // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
+  // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
+  optional string geo_url = 8;
+  // 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
+  GeoBackend geo_backend = 9;
+  // --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。部署路径只能在启动时指定；hub 启动时把
+  // 该文件整读进内存并做结构校验（库文件不带校验和，合法值换成另一个合法值查不出；非法 UTF-8 这类结构损坏才会被拒），
+  // 运行期不再读它，原地覆盖或截断都不影响运行中的答案，替换文件后重启才生效。只读，UpdateSettings 中缺席或给出均
+  // 忽略，不校验、不保存。
+  string geo_mmdb_path = 10;
+  // 备份设置。缺席即不变：只改外观的请求不带它，备份配置与渠道都不动。不下发到公开页。
+  BackupSettings backup = 11;
+  // 登录通知的渠道（键 notify.login_channels）。请求里缺席即不变，显式给出空集合即关闭；响应里总带它，
+  // channel_ids 为空表示关闭，把读到的整份设置原样写回不改变它。不会下发到公开页。
+  optional LoginNotify login_notify = 12;
+  // hub 心跳外推。presence 组语义与总闸、login_notify 相同：缺席即不变，给出即整体替换这一组。
+  // 目标地址是只写设置（ping 地址本身就是密钥），不会下发到公开页，也不经 GetSettings 回显原文。
+  optional Heartbeat heartbeat = 13;
+  // 周期流量报告。presence 组语义与 login_notify 相同：缺席即不变，给出即整体替换这一组；响应里总带它，
+  // 把读到的整份设置原样写回不改变它。默认关闭。不会下发到公开页。
+  optional TrafficReport traffic_report = 14;
+}
+
+// 周期流量报告：按 hub 的 --timezone 日历，在选定的周期把全部节点当前计费周期的已提交用量、配额占比与距下次重置的
+// 天数汇成一条消息，投递到选定的渠道。
+message TrafficReport {
+  // 总开关。为 true 时 daily、weekly、monthly 至少一项为 true，否则 InvalidArgument 点名 settings.traffic_report。
+  // 关闭时保留三种周期与时刻的选择。
+  bool enabled = 1;
+  // 日报：每天一次。
+  bool daily = 2;
+  // 周报：每周一一次。
+  bool weekly = 3;
+  // 月报：每月 1 日一次。
+  bool monthly = 4;
+  // 投递时刻（hub 时区的整点）0–23，越界返回 InvalidArgument 点名字段与范围。当天这一时刻因夏令时拨快而不存在时，
+  // 取当天本地时间不小于它的第一个存在时刻。库里没有这个键时为 0。
+  uint32 hour = 5;
+  // 接收渠道（键 notify.traffic_report_channels），约束与 LoginNotify.channel_ids 相同：最多 16 个（按请求里的原始
+  // 条数计，含重复），每个 ID 必须对应存在的渠道，重复 ID 合并。为空时报告照常记为事件，不投递。
+  repeated int64 channel_ids = 6;
+}
+
+// hub 心跳外推的目标与节奏。默认关闭：url 为空即停用。
+message Heartbeat {
+  // 写入时为完整地址：绝对 http(s) URL，主机非空，不超过 2048 字节。空串表示清空并停用这一组。
+  // 读侧恒为空（只写不读）：ping 地址本身就是密钥，与通知渠道的 WebhookConfig.url 同一做法。
+  string url = 1;
+  // 60–3600 秒。越界返回 InvalidArgument 并点名字段与范围；0 不是"取默认"：0 会空转。
+  // 库里没有这个键时默认 60。
+  uint32 interval_s = 2;
+  // 保存时必须选择 GET、POST 或 HEAD；UNSPECIFIED 拒绝，不取默认。库里没有这个键时默认 POST。
+  HeartbeatMethod method = 3;
+  // 只在响应里有意义：按库中 url 非空计算。
+  bool has_url = 4;
+  // 只在响应里有意义：库中 url 经 url.Parse 得到的主机（仅主机，含端口；不含 scheme、路径与查询串）；url 为空时为 ""。
+  string url_host = 5;
+}
+
+enum HeartbeatMethod {
+  HEARTBEAT_METHOD_UNSPECIFIED = 0;
+  HEARTBEAT_METHOD_GET = 1;
+  HEARTBEAT_METHOD_POST = 2;
+  HEARTBEAT_METHOD_HEAD = 3;
+}
+
+message GetHeartbeatStatusRequest {}
+// 响应消息名按仓库的 buf lint 约定（RPC 的响应是 <方法名>Response）；字段就是心跳循环持有的进程内状态，平铺不加包装层。
+message GetHeartbeatStatusResponse {
+  // 库中 url 非空；为假时其余字段无意义。
+  bool enabled = 1;
+  // 上次成功的墙钟 Unix 秒；从未成功时为 0。
+  int64 last_success_at = 2;
+  // 上次失败的墙钟 Unix 秒；从未失败时为 0。成功不清除它：两者分别是最近一次成功与最近一次失败。
+  int64 last_failure_at = 3;
+  // 上次失败的类别，复用出站失败的词汇：transport / http_status / request；从未失败时为空。
+  string failure_category = 4;
+  // 上次失败收到的 HTTP 状态码；类别不是 http_status 时为 0。
+  int32 failure_http_status = 5;
+  // 下次外呼的墙钟 Unix 秒，只供展示；从未跑过时为 0。
+  int64 next_at = 6;
+}
+
+// 备份目标、两层周期与份数、失败通知渠道。endpoint、bucket、access_key、secret 任一为空即整体关闭；
+// has_secret 与其余三项一起就能从读侧判断是否已配置。提交 backup 时 endpoint、bucket、region、access_key、prefix
+// 整体替换；secret、四个数值与 notify 缺席即不变。
+message BackupSettings {
+  // http(s) URL，最多 2048 字节，不含 userinfo、query、fragment；主机只含 ASCII、不带 IPv6 zone，国际化域名写
+  // punycode 形式（xn--…）：签名覆盖 host，而 HTTP 客户端在线上发的是 punycode、去掉了 zone。空串关闭备份。
+  // 面板使用 path-style（兼容 R2），endpoint 可含路径前缀。
+  string endpoint = 1;
+  // 非空时为 S3 bucket 名：3-63 个小写字母、数字、点或连字符，首尾为字母或数字，无连续点。
+  string bucket = 2;
+  // 签名区域，最多 64 字节，不含斜杠或空白；空串保存为 auto（R2）。
+  string region = 3;
+  // 最多 128 字节，不含斜杠或空白；空串关闭备份。回显：它是标识而不是凭据，每个请求的 Authorization 头里都以明文出现，
+  // 签名的保密性只由 secret 承载。
+  string access_key = 4;
+  // 只写不读，最多 4096 字节；读侧看 has_secret。缺席保留旧值，显式空串清除凭据并关闭备份。
+  // 与渠道凭据（TelegramConfig.bot_token、WebhookConfig.url）方向不同：那两处空串表示保留旧值。
+  optional string secret = 5;
+  // 对象键前缀，最多 512 字节，不以 / 开头或结尾、不含控制字符。对象键为 <prefix>/config/…、<prefix>/metrics/…、
+  // <prefix>/theme/…；空串时直接以 config/ 等开头。
+  string prefix = 6;
+  // 60-86400 秒；缺席不变，无存储键时默认 300；显式 0 非法。
+  optional uint32 config_interval_s = 7;
+  // 3600-604800 秒；缺席不变，无存储键时默认 86400；显式 0 非法。
+  optional uint32 metrics_interval_s = 8;
+  // 1-1000 份；缺席不变，无存储键时默认 48；显式 0 非法。
+  optional uint32 config_keep = 9;
+  // 1-1000 份；缺席不变，无存储键时默认 14；显式 0 非法。
+  optional uint32 metrics_keep = 10;
+  // 备份失败与恢复的通知渠道（键 notify.backup_channels）。缺席即不变，显式给出空集合即关闭；响应里恒给出。
+  // proto3 的裸 repeated 字段缺席与空列表在线上不可区分，所以包一层 message 承载 presence。
+  optional BackupNotify notify = 11;
+  // 只在响应里有意义，表示已保存非空 secret；请求里的值被忽略。
+  bool has_secret = 12;
+}
+message BackupNotify {
+  // 最多 16 个（按请求里的原始条数计，含重复）；每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名
+  // ID；重复 ID 合并。
+  repeated int64 channel_ids = 1;
+}
+message LoginNotify {
+  // 与 BackupNotify 同一约束：最多 16 个（按请求里的原始条数计，含重复），超出返回 InvalidArgument 并点名字段与上限；
+  // 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+  repeated int64 channel_ids = 1;
+}
+message GetSettingsRequest {}
+message GetSettingsResponse { Settings settings = 1; }
+message GetBackupStatusRequest {}
+message GetBackupStatusResponse {
+  // endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的
+  // 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 backup_disabled 的事件收尾并清除
+  // 未恢复标记。两层都观察到之后，设置可读且未启用时 failure 都缺席。设置读不出时这里同样为 false，配置层报 settings 故障。
+  bool enabled = 1;
+  BackupLayerStatus config = 2;
+  BackupLayerStatus metrics = 3;
+  // 没有原始包的主题不算配置层故障；重新上传原包后才参与主题备份。
+  repeated string themes_without_package = 4;
+}
+message BackupLayerStatus {
+  // UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
+  optional int64 last_success_at = 1;
+  // 无当前故障或备份已停用时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+  // 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
+  BackupFailure failure = 2;
+}
+message BackupFailure {
+  // snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered，
+  // 以及主题同步的 theme_list（列举主题目录）、theme_read（读取数据库中的主题清单或原包）、theme_upload（上传主题包）、
+  // theme_record（保存数据库中的上传标记）、theme_delete（删除主题对象）。
+  // S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+  // theme_list、theme_upload、theme_delete 是远端阶段，与 upload 一样带上述后缀；
+  // theme_read、theme_record 是数据库读写失败，不带后缀。
+  // settings 与 startup 是两层共用的前提失败（设置读不出；启动时读回成功时刻或清理本库残留暂存目录失败），
+  // 只由配置层报告，其间指标层暂停。marker 是库里的配置层未恢复标记读不出（只有 hub 写它）：此前是否通知过无从知道，
+  // 按首次失败通知一次并以本次首次失败时刻覆盖坏值，下一轮照常执行；指标层不读它，不受影响。
+  string category = 1;
+  // 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
+  int64 since_at = 2;
+  // 远端 HTTP 状态码；未收到 HTTP 错误应答或重启后尚未观察时为 0，不返回远端原文。
+  int32 status_code = 3;
+}
+message ListRestoreRecordsRequest {
+  // 返回的最新条数。0 取默认 20；超过 100 返回 InvalidArgument 并点名 limit，不截断——截断会让调用方
+  // 误以为已经拿全，而恢复记录没有翻页游标。
+  uint32 limit = 1;
+}
+message ListRestoreRecordsResponse {
+  // 恢复时刻倒序。列表为空时字段缺席（proto3 空列表不出现）。
+  repeated RestoreRecord records = 1;
+}
+// restore_record 表的一行。写入方只有离线恢复（Restore），读侧没有别的；字段是恢复那一刻的事实快照，
+// 不随之后的变化改写。
+message RestoreRecord {
+  // 恢复时随机生成的 32 位十六进制标识（restore_record 的主键）。不是自增序号，不编码顺序；
+  // 同一秒的两次恢复靠它区分，排序只在同刻时用它打破平局。
+  string id = 1;
+  // 恢复事务提交的时刻，UTC Unix 秒。
+  int64 restored_at = 2;
+  // 使用的配置层快照的时刻，UTC Unix 秒。配置层必有：恢复以它为准，不允许只恢复指标层。
+  int64 config_taken_at = 3;
+  // 使用的指标层快照的时刻，UTC Unix 秒；恢复命令没有带指标层快照时缺席——这是"只回退了配置、
+  // 指标历史停在恢复前"，不是"指标层与配置层同时刻"。
+  optional int64 metrics_taken_at = 4;
+  // 恢复时指向不存在节点的历史行，逐表记数，按表名排序。清单与删节点的节点从属表清单一致，
+  // 零计数的表也在内（恢复按清单全表登记，不省略没有孤儿的表）。
+  repeated OrphanRows orphans = 5;
+  // 主题恢复摘要；恢复没有带 --themes 时三项全空（清单保留、全部停用）。
+  RestoreThemes themes = 6;
+}
+message OrphanRows {
+  // 被清理的表名（如 metric_1m、probe_cert）。
+  string table = 1;
+  // 该表删掉的行数。
+  int64 rows = 2;
+}
+message RestoreThemes {
+  // 恢复出内容的主题 id（快照引用的主题可能多个版本，这里按 id 去重）。
+  repeated string restored = 1;
+  // 缺包或摘要不符被停用的主题 id；恢复后需重新上传原包。
+  repeated string missing = 2;
+  // --themes 目录里不匹配任何快照引用、因此没有导入的主题包文件名（含 .zip 后缀，不是主题 id）。
+  repeated string ignored = 3;
+}
+message UpdateSettingsRequest { Settings settings = 1; }
+// hub 实际保存的值：标题已清洗，主色已转小写。
+message UpdateSettingsResponse { Settings settings = 1; }
+
+message Theme {
+  // 清单里的 id，[a-z0-9-]{1,32}。
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  // 此不可变产物首次安装的 Unix 秒；重复安装相同摘要不更新。
+  int64 uploaded_at = 4;
+  // 至多一个主题为真。
+  bool enabled = 5;
+  // 清单给了 preview；仅支持的 SDK 版本可通过 GetThemePreview 取图。
+  bool has_preview = 6;
+  // 原始 ZIP 的 SHA-256 小写十六进制，是版本身份而非作者可信证明；历史记录缺原包时为空。
+  string digest = 7;
+  // 清单的 SDK 协议版本；0 表示旧包未声明，仅归档，不可执行。
+  uint32 sdk = 8;
+  // 当前回滚引用指向此版本；与 enabled 一样受单版本删除保护。
+  bool previous = 9;
+  // 曾被启用的版本，其保留文件可匿名读取；false 的待启用版本只可经短期预览能力访问。
+  bool published = 10;
+  // 安装来源的 owner/repo、Release tag 与资产名；本地上传为空，不从这些字段自动下载或更新。
+  string repository = 11;
+  string release = 12;
+  string asset = 13;
+}
+
+message UploadThemeRequest {
+  // zip 包，至多 8 MiB（JSON 里是 base64）。约束：条目至多 2000 个；中央目录声明的未压缩大小单个至多 16 MiB、
+  // 合计至多 64 MiB，实际展开逐条核对；条目只能是普通文件与目录（符号链接、设备、FIFO 拒绝）；条目路径相对包根、
+  // 以 / 分隔，不得含 ..、空段、反斜杠或以 . 开头的段（点文件不会被服务，__MACOSX/ 下的 ._* 也在其列）；同一路径
+  // 不得出现两次；压缩方式只接受 store 与 deflate。包根必须有 index.html 与 theme.json。theme.json 是一个 JSON 对象，
+  // 只有这些字段：id（[a-z0-9-]{1,32}，不得是 builtin）、name 与 version（去掉首尾空白后非空，至多 64 个字符，
+  // 不含控制字符）、sdk（必需，当前只接受 1）、可选的 preview（包内 .png、.jpg、.jpeg 或 .webp 文件的路径，内容必须真是该类型的图片）。
+  bytes package = 1;
+  // 非空表示这是对已安装主题的更新：theme.json 的 id 必须等于它（InvalidArgument），且该主题必须已安装（NotFound）。
+  // 更新时带上它，包装错了主题或目标已被删掉时不会静默装出另一个主题。
+  string expect_id = 2;
+}
+message UploadThemeResponse {
+  Theme theme = 1;
+}
+
+message ListThemesRequest {}
+message ListThemesResponse {
+  // 每个保留产物一项，同一个主题 id 可以出现多次。
+  repeated Theme themes = 1;
+  reserved 2;
+  reserved "theme_origin";
+  // 可信目录覆盖公开页时不能启用托管主题。
+  bool public_dir = 3;
+}
+
+message EnableThemeRequest {
+  // 非空时必须与 digest 一起指定精确产物；两者都为空表示切回内置页。
+  string id = 1;
+  // 原始 ZIP 的 SHA-256，不按 version 标签或最新安装版本推断。
+  string digest = 2;
+}
+message EnableThemeResponse {}
+
+message DeleteThemeRequest {
+  // 删除这个主题的全部版本；若为当前主题则回落内置页，同时清除指向它的回滚引用。
+  string id = 1;
+}
+message DeleteThemeResponse {}
+
+message GetThemePreviewRequest {
+  string id = 1;
+  string digest = 2;
+}
+message GetThemePreviewResponse {
+  bytes content = 1;
+  // image/png、image/jpeg 或 image/webp。
+  string content_type = 2;
+}
+
+message DeleteThemeVersionRequest {
+  string id = 1;
+  // 精确产物摘要，不能为空；当前或上一版本禁止单独删除。
+  string digest = 2;
+}
+message DeleteThemeVersionResponse {}
+message ListThemeReleasesRequest {
+  // 公开仓库的 owner/repo、仓库 URL 或 Release URL；指定 Release 时只查询该 tag。
+  string repository = 1;
+}
+message ThemeReleaseAsset { int64 id = 1; string name = 2; int64 size = 3; }
+message ThemeRelease { string name = 1; string tag = 2; bool prerelease = 3; repeated ThemeReleaseAsset assets = 4; }
+message ListThemeReleasesResponse { repeated ThemeRelease releases = 1; }
+message InstallThemeReleaseRequest {
+  string repository = 1;
+  // 必须显式选择 Release 与 ZIP 资产；hub 重新验证资产归属，不接受任意下载 URL。
+  string tag = 2;
+  int64 asset_id = 3;
+  // 与 UploadThemeRequest.expect_id 相同；为空时不要求目标主题已存在。
+  string expect_id = 4;
+}
+message InstallThemeReleaseResponse { Theme theme = 1; }
+message PreviewThemeRequest {
+  string id = 1;
+  // 精确产物摘要；预览不发布或启用该版本，仅支持 SDK 1 且公开页开启时可用。
+  string digest = 2;
+}
+message PreviewThemeResponse {
+  // 同源相对 URL，携带短期能力，最长 5 分钟。主题变更、所属会话失效或同会话新建预览会撤销它；公开页关闭时不可用。
+  string url = 1;
+}
+message GetThemePackageRequest {
+  string id = 1;
+  // 精确产物摘要；允许下载旧 SDK 的归档包，不授予运行权限。
+  string digest = 2;
+}
+message GetThemePackageResponse {
+  // 安装时的原始 ZIP 字节；不会重新打包主题文件。
+  bytes package = 1;
+}
+
+message GetStorageStatsRequest {}
+message GetStorageStatsResponse {
+  // page_count × page_size：数据库的逻辑大小，等于 WAL 检查点之后主文件的大小；不含 -wal 与 -shm 文件。
+  uint64 db_bytes = 1;
+  // 每张表一项，按表名升序，含 hub 内部的簿记表。
+  repeated TableRows tables = 2;
+  // 指标与探测的每级时序表各一项，顺序固定：metric_1m、metric_5m、metric_1h、probe_1m、probe_5m、probe_1h。
+  // 按表分别给、不合并：各级保留期不同，合并后的最老桶无法与任何一级的保留期对比。
+  repeated SeriesTableHealth series = 3;
+  // 上一次整轮成功的时序表清理（不含告警事件清理）与上卷的完成时刻，Unix 秒。只在成功时记下：缺失即从未成功
+  // 跑过；有值但很旧即此后一直失败或没有运行。
+  optional int64 last_prune_at = 4;
+  optional int64 last_rollup_at = 5;
+  // 本次请求对数据库旁 -wal 文件的一次文件系统观测；不含 -shm，与上面的 SQL 只读事务统计不是同一快照。
+  // GetStorageStats 总是返回此消息。缺失不是无 WAL 文件，也不是 0 字节；有消息时按 result 分支读。
+  WalFileObservation wal = 6;
+  // SQL 统计（行数、逻辑大小、维护健康）所在只读事务开始时的 hub 墙钟，Unix 秒。
+  // GetStorageStats 总是给出。成功计算完成后 60 秒内复用同一份 SQL 统计，此值不变，
+  // 不能当作请求时刻；wal 仍是每次调用各自的文件观测，两者不承诺同一时刻。
+  optional int64 sql_observed_at = 7;
+  // 尚未完成的历史清理作业数，与上面的 SQL 统计同一只读事务、同样随 60 秒复用。删除节点或探测任务时登记一个作业，
+  // 维护循环分块删掉它的时序行、复扫为零后作业才完成；非零表示还有已删节点或任务的行占着空间（它们不出现在任何
+  // 查询结果里）。满配节点（64 个任务、默认保留期）一个作业约需 9 个维护周期（分钟）排干；长期不降是清理在反复失败
+  // （原因见 hub 日志）或作业积压。GetStorageStats 总是给出，0 是没有未完成作业。
+  optional uint64 cleanup_pending = 8;
+  // 库旁的迁移前备份（hub 启动时发现要迁移 schema，先把库做成一份一致快照，按序号只留最近两份），按序号从新到旧。
+  // 每次请求独立列目录，与上面的 SQL 统计不是同一时刻。空列表要结合 schema_backups_error 读：非空是列举失败；
+  // 空串且列表为空才表示没有备份。
+  repeated SchemaBackup schema_backups = 9;
+  // store 的 journal_size_limit：检查点重置 WAL 时保留的文件上限，字节。GetStorageStats 总是给出
+  // store 的非零上限，调用方不另写常量。上限只在 WAL 重置时生效：文件长度远超它，说明自从长到这么大之后还没有
+  // 发生过重置（长读事务会挡住重置，大批写入会把文件撑大），单次读数不足以区分是哪一种。
+  uint64 wal_size_limit_bytes = 10;
+  // 列举迁移前备份失败（如读不了库所在目录）时的错误文本，非空 UTF-8，至多 512 字节；此时 schema_backups 为空，
+  // 不表示没有备份。空串表示列举成功。
+  string schema_backups_error = 11;
+}
+// 一份迁移前备份。文件名是 <库文件名>.before-schema-<schema_version>.<序号>；新旧只看序号，不看 modified_at。
+message SchemaBackup {
+  // hub 看到的路径，与 serve 的 --db 同一写法（--db 是相对路径时它也是相对 hub 工作目录的路径）。
+  string path = 1;
+  // 备份时库的 schema 版本（迁移前的 user_version）；回退时按它选能打开该版本的旧二进制。
+  uint32 schema_version = 2;
+  // 文件字节数。
+  uint64 bytes = 3;
+  // 文件 mtime 的 Unix 秒，只作展示；时钟回拨时可能与序号的先后不一致。
+  int64 modified_at = 4;
+}
+// WAL 文件的实际长度，不是未检查点的数据量；不能据此推导告警或 checkpoint 是否成功。
+// result 恰有一个分支；未识别的分支或没有分支应显示未知，不得补零。
+message WalFileObservation {
+  // 本次 stat 完成时的 hub 墙钟，Unix 秒；并非文件修改时刻，也不是 SQL 快照时刻。
+  int64 observed_at = 1;
+  oneof result {
+    // stat 成功时的实际文件字节数；0 表示文件存在但长度为零。JSON 中 uint64 编码为十进制字符串。
+    uint64 bytes = 2;
+    // stat 返回文件不存在（ENOENT）时为 true，表示“无 WAL 文件”；不会同时返回 bytes。
+    bool absent = 3;
+    // stat 的其他错误（如权限或 IO）；大小未知，不得当成 0 或无文件。非空 UTF-8 文本，至多 512 字节。
+    string error = 4;
+  }
+}
+// 一张时序表的健康读数。两个 stale 是 hub 按当前配置算出的结论，调用方直接用，不必自己重算：
+// oldest_stale：最老桶早于"现在 − 保留期 − 一个桶长 − 一个维护间隔（60 秒）"（严格早于才算）；
+// watermark_stale：水位落后现在超过三个桶长（严格超过才算）。
+// 两项都可能来自一轮维护跑得久而单次误报，持续标红才是故障。oldest_stale 的余量只有约一个维护间隔，一轮跑超
+// 下一个周期边界就可能撞上；watermark_stale 的余量按单独一轮跳过的维护周期数算（5m 级跳过 4 个以内不标，跳过
+// 5 个起可能标——是否标还取决于上次上卷时刻在桶内的相位），连续多轮各跳一拍不累积——每轮做完都把水位推回当前。
+message SeriesTableHealth {
+  string table = 1;
+  // 本级桶长，秒。
+  uint32 bucket_s = 2;
+  // 该级当前配置的保留期，秒。
+  uint64 retention_s = 3;
+  // 表里最老一行的桶起点，Unix 秒；表为空时缺失。
+  optional int64 oldest_ts = 4;
+  // 上卷水位：rollup_state.upto_ts 的原值，本级在它之前的桶已由细一级上卷生成；最细一级（1m）没有水位，缺失。
+  optional int64 watermark_ts = 5;
+  bool oldest_stale = 6;
+  bool watermark_stale = 7;
+}
+message TableRows {
+  string name = 1;
+  uint64 rows = 2;
+}
+
+message ListAlertEventsRequest {
+  // 0 表示不按节点过滤，返回全部事件，含 rule_id 与 node_id 为 0 的系统事件（登录、备份）；非 0 只返回
+  // 该节点的事件，不含系统事件。
+  int64 node_id = 1;
+  // 0 表示从最新事件开始，否则只返回小于此 id 的事件。
+  int64 before_id = 2;
+  // 0 取 100，超过 500 按 500 返回。
+  uint32 limit = 3;
+}
+message ListAlertEventsResponse { repeated AlertEvent events = 1; }
+message GetAlertDeliveryErrorRequest { int64 delivery_id = 1; }
+message GetAlertDeliveryErrorResponse { string error = 1; }
+message AlertEvent {
+  int64 id = 1;
+  int64 rule_id = 2;
+  int64 node_id = 3;
+  // 规则事件为 firing 或 recovered；系统事件的 rule_id/node_id 均为 0，为 login_success、login_locked（登录通知）
+  // 或 backup_failed、backup_recovered、backup_disabled（配置层备份）。backup_disabled 收尾停用前已通知
+  // 的配置层备份故障，此后不再跟踪，不表示故障已恢复。
+  string transition = 4;
+  // 事件墙钟，Unix 秒。
+  int64 at = 5;
+  string summary = 6;
+  // 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）；
+  // 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
+  double value = 7;
+  repeated AlertDelivery deliveries = 8;
+  // 生成时是否处于维护静默覆盖内：为真时不产生任何投递（deliveries 为空）。恢复事件记配对 firing 的值。
+  bool silenced = 9;
+}
+message AlertDelivery {
+  // 错误原文不在只读口径里：接收方可能在错误响应里回显含密钥的请求体。原文经 GetAlertDeliveryError 读出。
+  reserved 4;
+  reserved "last_error";
+  int64 channel_id = 1;
+  // 已开始的投递尝试次数，0–3；每次发送前计数，即使发送前退出也计入。
+  // 发送后结果未落盘时不回退计数，后续重发仍消耗一次尝试。
+  uint32 attempts = 2;
+  bool ok = 3;
+  // 送达墙钟，Unix 秒；未成功时缺失。
+  optional int64 delivered_at = 5;
+  // 不再尝试：成功、不可重试失败或次数耗尽；渠道删除也终止投递。
+  bool done = 6;
+  // 投递 id，GetAlertDeliveryError 用它取原文。
+  int64 id = 7;
+  // 最近一次失败的类别；成功时清空。未终态时是上一次尝试的失败，之后可能重试。
+  DeliveryFailure failure = 8;
+  // 接收方应答的 HTTP 状态码，仅 failure 为 DELIVERY_FAILURE_HTTP_STATUS 时存在。
+  optional uint32 http_status = 9;
+}
+// 投递失败的类别，在产生失败的地方确定，不从错误文本反推。
+enum DeliveryFailure {
+  // 没有失败：已送达，或尚无结果。
+  DELIVERY_FAILURE_UNSPECIFIED = 0;
+  // 接收方以非 2xx 应答（含不跟随的 3xx），状态码见 http_status（100–999）；原文是响应体的前 200 个字符。
+  DELIVERY_FAILURE_HTTP_STATUS = 1;
+  // 没有收到合法应答：连接、DNS、TLS、超时，以及状态码不在 100–999 的应答（原文写明该状态码）。可重试。
+  DELIVERY_FAILURE_TRANSPORT = 2;
+  // 请求没能构造：模板执行、编码、URL。
+  DELIVERY_FAILURE_REQUEST = 3;
+  // 渠道配置无法解析。
+  DELIVERY_FAILURE_CHANNEL_INVALID = 4;
+  // 渠道已删除，投递终止；没有原文。
+  DELIVERY_FAILURE_CHANNEL_DELETED = 5;
+  // 次数耗尽而最后一次结果未落盘；没有原文。不沿用更早一次尝试的失败：最后一次已发出，接收方可能已经收到。
+  DELIVERY_FAILURE_RESULT_UNRECORDED = 6;
+  // 失败没有携带类别；迁移时无法从旧记录确定类别的也归入此类。
+  DELIVERY_FAILURE_UNCLASSIFIED = 7;
+}
+
+message ApiToken {
+  int64 id = 1;
+  string name = 2;
+  // Unix 秒。
+  int64 created_at = 3;
+  // 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。
+  optional int64 last_used_at = 4;
+  TokenGrant grant = 5;
+}
+
+message ListApiTokensRequest {}
+message ListApiTokensResponse {
+  // 按 id 升序。
+  repeated ApiToken tokens = 1;
+}
+
+message CreateApiTokenRequest {
+  // 1–64 字符（去掉控制字符与首尾空白之后），不要求唯一。
+  string name = 1;
+  // 缺失保持全站只读。显式 grant 的 all_nodes=false 且 node_ids 为空表示没有现有节点权限。
+  TokenGrant grant = 2;
+}
+message CreateApiTokenResponse {
+  ApiToken api_token = 1;
+  // 明文，形如 heron_at_ 加 64 位十六进制；只在此处出现一次。
+  string token = 2;
+}
+
+message DeleteApiTokenRequest {
+  int64 id = 1;
+}
+message DeleteApiTokenResponse {}
+
+message GetApiReferenceRequest {}
+message GetApiReferenceResponse {
+  // 技能文件 SKILL.md（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
+  string guide = 1;
+  // 按路径升序。
+  repeated ProtoFile files = 2;
+}
+
+message ProtoFile {
+  // 相对 proto 根的路径，如 heron/v1/admin.proto。
+  string path = 1;
+  string content = 2;
+}
+
+enum TokenPermission {
+  TOKEN_PERMISSION_UNSPECIFIED = 0;
+  TOKEN_PERMISSION_CONFIGURE = 1;
+  TOKEN_PERMISSION_CREATE = 2;
+  TOKEN_PERMISSION_REGISTER = 3;
+  TOKEN_PERMISSION_ROTATE = 4;
+  TOKEN_PERMISSION_DELETE = 5;
+  TOKEN_PERMISSION_UPDATE = 6;
+}
+message TokenGrant {
+  repeated TokenPermission permissions = 1;
+  bool all_nodes = 2;
+  repeated int64 node_ids = 3;
+}
+
+message ExecuteChangeRequest {
+  // 1–128 位 ASCII 字母、数字、横线或下划线，执行时必填，永不复用。
+  string request_id = 1;
+  bool preview = 2;
+  string expected_version = 3;
+  // UpdateNode、修改已有探测和告警时必填；路径相对对应操作消息，不允许改 id。
+  google.protobuf.FieldMask update_mask = 4;
+  oneof change {
+    CreateNodeRequest create_node = 10;
+    UpdateNodeRequest update_node = 11;
+    DeleteNodeRequest delete_node = 12;
+    RotateNodeTokenRequest rotate_node_token = 13;
+    OpenRegisterWindowRequest open_register_window = 14;
+    CloseRegisterWindowRequest close_register_window = 15;
+    SaveProbeTaskRequest save_probe_task = 16;
+    DeleteProbeTaskRequest delete_probe_task = 17;
+    SaveAlertRuleRequest save_alert_rule = 18;
+    DeleteAlertRuleRequest delete_alert_rule = 19;
+    StartUpdateRequest start_update = 20;
+    CancelUpdateRequest cancel_update = 21;
+    DeleteTagRequest delete_tag = 22;
+    RenewNodeBillingRequest renew_node_billing = 23;
+  }
+}
+message Operation {
+  int64 owner_id = 1;
+  string request_id = 2;
+  string action = 3;
+  int64 resource_id = 4;
+  // 白名单配置快照，不含节点 token、注册 key、通知密钥。
+  string before_json = 5;
+  string after_json = 6;
+  // 预览为 0；非 0 表示业务事务和回执一并提交，不表示异步节点更新已安装成功。
+  int64 committed_at = 7;
+  // 已提交回执的稳定标识，恢复后数字 owner_id 和 request_id 相同的不同凭据历史仍可区分；预览为空。
+  string id = 8;
+}
+message ExecuteChangeResponse {
+  Operation operation = 1;
+  string expected_version = 2;
+  bool replayed = 3;
+  // 首次执行的原业务响应；可能含一次性秘密。预览和重试不返回。
+  google.protobuf.Any result = 4;
+}
+message ListOperationsRequest {
+  int64 owner_id = 1;
+  string request_id = 2;
+  uint32 limit = 3;
+}
+message ListOperationsResponse { repeated Operation operations = 1; }
+message ListNotifyChannelRefsRequest {}
+message NotifyChannelRef {
+  int64 id = 1;
+  string name = 2;
+  ChannelKind kind = 3;
+}
+message ListNotifyChannelRefsResponse { repeated NotifyChannelRef channels = 1; }

@@ -1,0 +1,41 @@
+#!/sbin/openrc-run
+# shellcheck disable=SC2034 # 以下变量由 openrc-run 框架读取，脚本内不引用。
+
+name="heron-agent"
+description="Heron monitoring agent"
+supervisor=supervise-daemon
+command="/usr/local/bin/heron-agent"
+command_args="run --config /etc/heron-agent/config.json"
+# install.sh 停服务后按"有效 uid 等于 heron-agent 且可执行文件是 /usr/local/bin/heron-agent"确认进程都已退出，
+# 前提是本服务的每个进程都以它运行、都从这份二进制启动；
+# 改运行身份或新增以其他身份运行的进程时必须同步改那里的判据。
+command_user="heron-agent:heron-agent"
+# 与 systemd 的 AmbientCapabilities 等价：ping_group_range 关闭时靠它拿到
+# CAP_NET_RAW（OpenRC 0.55.1 实测）。
+capabilities="^cap_net_raw"
+# 异常退出后隔 5 秒再拉起，不设次数上限。Alpine 3.21 / OpenRC 0.55.1 实测：
+# 不设 respawn_* 时命令行是 --respawn-delay 2 --respawn-max 5 --respawn-period 1800，
+# 非法 JSON 下监督进程约 11 秒后退出，status 变为 stopped，之后 70 秒窗口内不再拉起。
+# respawn_delay=5、respawn_max=0 时 70 秒内监督进程始终在，错误日志每 5 秒增加一行。
+# respawn_period 不能设 0：同一版本报 "Invalid respawn-period value '0'"，服务起不来。
+# 不设 period 时 supervise-daemon 自带 1800，respawn_max=0 不按这个窗口限次。
+respawn_delay=5
+respawn_max=0
+output_log="/var/log/heron-agent/heron-agent.log"
+error_log="/var/log/heron-agent/heron-agent.err"
+
+depend() {
+	# 只要求排在网络之后启动，不硬依赖某个网络服务：上报循环连不上 hub 时自带退避重试（规则见 client.Runner），
+	# 网络晚于本服务就绪不影响正确性。
+	after net
+}
+
+start_pre() {
+	# supervise-daemon 降权后才打开 output_log/error_log，所以两个文件必须事先存在且属于运行用户；
+	# 目录不交给它：目录属 root、0755，服务用户不能增删或替换目录项，root 在这里的操作不会被链接或竞态劫持。
+	# 每次启动都确认，不靠安装时建一次。checkpath 不跟随符号链接（OpenRC 0.55.1 实测：遇到链接报错、
+	# 退出 1、不动链接目标），任何一条失败都中止启动，不带着打不开的日志进入重启循环。
+	checkpath -d -m 0755 -o root:root /var/log/heron-agent || return 1
+	checkpath -f -m 0640 -o heron-agent:heron-agent /var/log/heron-agent/heron-agent.log || return 1
+	checkpath -f -m 0640 -o heron-agent:heron-agent /var/log/heron-agent/heron-agent.err || return 1
+}

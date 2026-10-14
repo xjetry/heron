@@ -1,0 +1,87 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+# 两个作业都运行第三方 action、pnpm 依赖的安装脚本与 Go 模块的代码，而 actions/checkout 默认把 job token 写进
+# .git/config，这些代码都读得到；它们不需要向本仓库写任何东西，所以 token 只读。仓库的默认设置目前也是只读，
+# 这里写明是不让工作流的安全边界依赖一条可在网页上改掉的仓库设置（与 release.yml 顶层 permissions: {} 同一理由）。
+permissions:
+  contents: read
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    # 冒烟里的等待都有上限，这一条兜住它们之外的挂起，不等到平台默认的 6 小时。
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          # 之后的步骤只读本地检出（buf breaking 对照的 origin/main 已随 fetch-depth: 0 取回），不再需要凭据。
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 12
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1
+        with:
+          setup_only: true
+      # lint 里的 buf breaking 对照 BUF_AGAINST_REF：pull_request 的检出没有本地 main，对照 origin/main；push 到 main 时与本地 main（自己）比较。
+      - run: make ci
+        env:
+          BUF_AGAINST_REF: ${{ github.event_name == 'pull_request' && 'origin/main' || 'main' }}
+      - run: make netstructure-live
+      - run: pnpm --dir web exec playwright install --with-deps chromium firefox webkit
+      - run: make web-e2e
+      # 完整 E2E 在 amd64 运行器上实际运行 amd64、arm64 两个 agent。
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: false
+      # 原生 Linux 的 bridge 容器从 host-gateway 访问宿主，回环监听不能接收这些请求。
+      - run: make e2e
+        env:
+          E2E_LISTEN_HOST: 0.0.0.0
+      # 镜像的构建与冒烟：hub 与 agent 两个镜像组各自两个平台构建并核对根文件系统，本机平台装进 docker 后冒烟
+      # （agent 组对着同一次构建的 hub 注册并上报，并与同一二进制的宿主进程逐字段对照）；不推送。运行器的挂载根是
+      # 真根，agent 冒烟要求两个节点的执行环境都识别为 HOST（scripts/docker-agent-smoke.sh）。
+      - run: make docker VERSION=v0.0.0-ci
+        env:
+          SMOKE_EXPECT_SCOPE_KIND: HOST
+  # darwin 的采集文件带 build tag，Linux 上的 go test 照不到；安装脚本的逻辑测试在这里
+  # 跑的是 macOS 自带的 /bin/sh（bash 3.2 的 sh 模式），ubuntu 上跑的是 dash。
+  # 两格覆盖 Apple Silicon 与 Intel：页大小（16 KiB 与 4 KiB）与 sysctl 的差异只在对应架构的 macOS 内核上显形。
+  agent-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      # agent 的两组包保持 go test 默认的每包 10 分钟超时，卡住的测试尽早暴露。
+      - run: go test -count=1 ./internal/agent/... ./cmd/agent/...
+        env:
+          CGO_ENABLED: "0"
+      # deploy 包的替身测试每个用例都用 sh 真跑一遍安装脚本。高负载的 macOS 开发机上 go test -count=1 ./deploy/
+      # 实测 443 秒，已接近 go test 默认的每包 10 分钟超时；GitHub runner 上没有实测。所以 deploy 单独一步放宽到
+      # 20 分钟，与 Makefile 的 test 目标一致。上一步失败时照跑，覆盖与拆开之前一次跑完全部包相同。
+      # 作业级 timeout-minutes 与 Linux 作业同为 45 分钟，兜住整个作业。
+      - run: go test -count=1 -timeout 20m ./deploy/...
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"

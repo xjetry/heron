@@ -1,0 +1,2 @@
+42 41 0:22 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+44 41 0:26 / /sys/fs/cgroup rw,relatime - cgroup2 none rw

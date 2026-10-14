@@ -1,0 +1,20 @@
+{
+  // 四个程序（app、node、test、e2e）取值都相同的选项。只要有一个程序取值不同，选项就留在各程序自己的文件里，
+  // 不在这里写一个默认值再到别处覆盖：否则读某个程序的配置要拼两份文件才知道生效值，改这里也会悄悄改到覆盖漏掉的程序。
+  "compilerOptions": {
+    "target": "es2023",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}

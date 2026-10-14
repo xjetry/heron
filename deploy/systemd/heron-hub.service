@@ -1,0 +1,40 @@
+[Unit]
+Description=Heron monitoring hub
+After=network-online.target
+Wants=network-online.target
+# 取消启动频率上限。默认上限取自主机 system.conf 的 DefaultStartLimitIntervalSec 与 DefaultStartLimitBurst，
+# 发行版与管理员都可能改；超限后单元进入 failed，Restart= 不再拉起（heron-agent.service 记有 Debian 12 实测）。
+# hub 是全部节点的汇聚点，不论主机怎么配都按 RestartSec 一直重试。
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# 安装器按有效 uid 加可执行文件（/proc/<pid>/exe）确认退出与启动，不能在这里引入其它身份或其它二进制的 Exec* 进程。
+User=heron-hub
+Group=heron-hub
+ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --listen 127.0.0.1:8080
+# 不是 systemctl stop 发起的退出都拉起，包括以 0 退出的：serve 把 SIGTERM、SIGINT 当作关停，排空后正常返回，
+# 进程以 0 退出（cmd/hub/serve.go 的 runServe；本机 kill 实测退出码为 0），Restart=on-failure 把这当作正常结束、
+# 不再拉起。systemctl stop 与 restart 发起的停止不触发 Restart=（systemd.service(5)）。
+Restart=always
+RestartSec=5
+# 关停宽限期，超过后 systemd 发 SIGKILL，最后一批写可能被截断。SIGTERM 之后 hub 先排空在途请求：上限是
+# cmd/hub/serve.go 的 drainTimeout（10 秒），到点后断开连接，但仍等已经进入的处理器返回；之后还要停后台循环、
+# 关库。30 秒给排空之后的收尾留出余量。
+TimeoutStopSec=30
+# 服务进程新建的文件只给服务用户。库文件缺失时由 serve 自己新建，SQLite 按 0644 与 umask 建出，这一项让它
+# 落成 0600。WAL、SHM 不靠这一项：它们的权限跟随库文件，不看 umask（modernc.org/sqlite v1.59.0，Debian 12 上
+# 实测：库 0644 时 UMask=0077 下 WAL、SHM 仍是 0644，库 0600 时 UMask=0022 下仍是 0600），它们的 0600 来自
+# 安装器每次把库文件设成 0600。
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/heron
+
+[Install]
+WantedBy=multi-user.target

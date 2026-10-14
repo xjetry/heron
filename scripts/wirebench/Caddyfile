@@ -1,0 +1,11 @@
+# 最常见的部署写法：站点块、证书文件、reverse_proxy，其余全取 Caddy 的默认值（含 HTTP/3 的 Alt-Svc 头、
+# 空闲超时与 HTTP/2 设置）——被测的就是默认行为。@TAP@ 由 run.sh 换成内侧计数中继的地址。
+# 访问日志写 stdout：每个请求的 proto（HTTP/2.0）与 tls.proto（ALPN 协商结果）是协议的直接证据。
+hub.wirebench.test {
+	tls /certs/chain.pem /certs/key.pem
+	reverse_proxy @TAP@
+	log {
+		output stdout
+		format json
+	}
+}

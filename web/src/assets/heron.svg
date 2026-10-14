@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <style>
+    .bird { fill: #214e57; }
+    .legs { stroke: #214e57; }
+    @media (prefers-color-scheme: dark) {
+      .bird { fill: #a9d4d6; }
+      .legs { stroke: #a9d4d6; }
+    }
+  </style>
+  <path class="bird" d="M7 43c4-10 11-17 21-19l5-1c4-1 5-3 3-6l-3-4c-3-5 0-10 5-10 4 0 6 2 7 5l12 4-14 2c-2-1-3-2-3-4-2 0-3 1-2 3l4 5c4 6 1 11-5 14-2 10-10 15-20 13L7 43Z"/>
+  <path d="M12 40c5-7 11-10 19-11-3 7-9 11-19 11Z" fill="#fff" fill-opacity=".24"/>
+  <path class="legs" d="m24 45-2 13h-7m17-14 4 8-5 6h7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="40" cy="7.5" r="1.5" fill="#e5ad64"/>
+</svg>

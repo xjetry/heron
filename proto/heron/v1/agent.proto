@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+import "heron/v1/types.proto";
+import "heron/v1/update.proto";
+
+// agent → hub 的唯一服务。全部方法都是 unary：hub 向 agent 的下行只有低频
+// 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
+service AgentService {
+  // 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
+  // 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // 周期上报。鉴权用节点 token（Authorization: Bearer）。
+  rpc Report(ReportRequest) returns (ReportResponse);
+  // 节点上 hub 来源的 root 更新器取产物。鉴权用节点 token（Authorization: Bearer）。
+  // 请求里没有版本：hub 取该节点当前更新任务的版本，泄漏的 token 只能取到该节点正在执行的那一个版本。
+  // 响应是官方原始字节；hub 已预先验签，但接受与否只由更新器验签决定。不标无副作用：只接受 POST。
+  rpc GetRelease(GetReleaseRequest) returns (GetReleaseResponse);
+}
+
+message RegisterRequest {
+  // 注册窗口 key，或带 heron_install_ 前缀的一次性安装凭据。运行 token（包括旧版无前缀 token）不能用于注册。
+  string key = 1;
+  string name = 2;
+}
+
+message RegisterResponse {
+  int64 node_id = 1;
+  // 明文 token 只在此处返回一次。
+  string token = 2;
+}
+
+message ReportRequest {
+  Metrics metrics = 1;
+  repeated ProbeResult probe_results = 2;
+  reserved 3, 7;
+  reserved "tasks_version", "capabilities";
+  // agent 静态信息的摘要，每次都带。
+  fixed64 facts_hash = 4;
+  // 进程启动后的首次上报携带；此后仅在 hub 要求时携带。
+  Facts facts = 5;
+  // 来自本机更新器的状态全文：进程首次上报及上一次成功应答索要时携带。
+  // 未带 update_hash 时，不贡献更新状态。
+  UpdateStatus update = 6;
+  // agent 当前持有的任务清单的摘要：收到的 ProbeTasks.tasks（不含 version）按 task_id 升序，每个任务做确定性
+  // protobuf 编码，前缀 8 字节大端长度后依次拼接，对整串取 SHA-256，恰 32 字节；空清单是空串的 SHA-256。
+  // 空字节表示未提供，hub 此时下发清单；给出时只按摘要决定是否重发。
+  // 备份恢复后计数可能与 agent 手里的旧值相等，摘要不会。代表收到并持有的清单，被 agent 判为非法的任务也在其中。
+  bytes tasks_digest = 8;
+  // agent 当前 UpdateStatus 的摘要：确定性 protobuf 编码的 FNV-64a，与 facts_hash 同一种算法；有 UpdateStatus 时
+  // 每次都带。hub 只比较相等、不重算，0 也是合法摘要；缺席时不贡献更新状态。
+  optional fixed64 update_hash = 9;
+  // 与 metrics 同一次采样、实际计入网络合计的每张网卡，按名称字节序严格递增（名称唯一），至多 64 项
+  // （agentwire.MaxNetInterfaces）。超出上限或网络采集失败时缺席，hub 对合计做差分。
+  // 带列表时 hub 用推导值覆盖 metrics 中的合计与摘要（ingest.normalizeNetTotals），agent 可以不重复发送；metrics 仍须通过形状校验。
+  // 列表只是流量账本的输入，不进实时读数与任何 API。
+  repeated NetInterfaceCounter net_interfaces = 10;
+}
+
+// ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响。
+// 新增字段时须在本注释写明它交给了 hub 什么能力。
+message ReportResponse {
+  // 上报间隔。agent 把它限定在 TTL 取准入边界时的编码值之间（internal/agentwire），越界（含 0）取最近的边界。
+  uint32 report_interval_ms = 1;
+  // 请求没有 tasks_digest 或摘要与当前清单不同时携带。
+  ProbeTasks tasks = 2;
+  // hub 持有的 facts_hash 与请求不一致。
+  bool want_facts = 3;
+  // 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
+  UpdateTask update = 4;
+  // 出口地址探测的逐族开关。hub 每次应答都带（没有手填时是空消息，ingest 的 detectionFor）。缺失与各项为 false 相同：两族都照常探测。这是缺省
+  // 不是放宽。hub 借它能做的只是让 agent 停报某一族的
+  // 出口地址，不影响上报、探测任务与鉴权。
+  NetworkDetection detection = 5;
+  reserved 6;
+  reserved "capabilities";
+  // hub 没有与请求的 update_hash 相同的 UpdateStatus 全文（从未收到、摘要已变、或 hub 重启后尚未收到），
+  // 要求下一次上报带全文。
+  bool want_update = 7;
+}
+
+// hub 按节点的手填出口地址（Node.ipv4_pin / ipv6_pin）逐族置位：手填非空即停用该族的探测。
+message NetworkDetection {
+  // 为真时 agent 立即把该族结果报为 ADDRESS_DETECTION_STATE_DISABLED，此后不再对该族发探测请求；由真变假时
+  // 该族退回未探测，agent 立即探测一次，不等下一个 5 分钟周期。
+  bool skip_ipv4 = 1;
+  bool skip_ipv6 = 2;
+}
+
+message GetReleaseRequest {
+  // 节点当前更新任务的 ID。
+  string task_id = 1;
+  // agent 产物矩阵里的架构：amd64、arm64、armv7、386、riscv64。
+  string arch = 2;
+}
+
+message GetReleaseResponse {
+  // 官方 SHA256SUMS 原文。
+  bytes sums = 1;
+  // 官方 SHA256SUMS.sig 原文。
+  bytes signature = 2;
+  // 官方归档原文。
+  bytes archive = 3;
+}

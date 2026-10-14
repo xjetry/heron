@@ -1,0 +1,470 @@
+/* :root 统一颜色、字体、密度与形状 token；状态色与主色分离，站点主色变化不改变状态含义。
+   明暗只经 color-scheme 切换：light-dark() 按元素的 color-scheme 取值，默认跟随系统；公开页在 html 上
+   写 data-theme，下面两条规则让它压过系统设置。不要再按系统明暗的媒体查询改写变量，那会绕过 data-theme。
+   核心配色由 styles.test.ts 对照，避免 token 改动让管理端与公开页的状态含义分裂。 */
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f6f7f9, #0b0d12);
+  --card: light-dark(#ffffff, #12151c);
+  --card-raised: light-dark(#f9fafb, #181c25);
+  --card-hover: light-dark(#f3f4f6, #1c212c);
+  --fg: light-dark(#111827, #e6e8ee);
+  --muted: light-dark(#4b5563, #9aa3b5);
+  --faint: light-dark(#9ca3af, #5f6878);
+  --line: light-dark(#e4e7ec, #232836);
+  --line-strong: light-dark(#d1d5db, #2f3646);
+  /* site.ts 可覆盖主色；状态含义由独立的状态色表达。 */
+  --accent: light-dark(#2563eb, #5b9bf8);
+  --on-accent: light-dark(#ffffff, #0b0d12);
+  /* 状态色固定、与主色无关：换主色不能连带改掉在线 / 离线。 */
+  --status-online: #10b981;
+  --status-attention: #f59e0b;
+  --status-offline: #f43f5e;
+  --status-never: #6b7280;
+  --status-maintenance: #a78bfa;
+  --status-rented: #94a3b8;
+  /* 管理面板仍消费这些变量名，共享定义统一指向状态色。 */
+  --ok: var(--status-online);
+  --bad: var(--status-offline);
+  --warn: var(--status-attention);
+  /* 拉丁字形用内嵌的 Inter / JetBrains Mono（src/fonts.ts 同源加载，不引用远程字体）；中文没有内嵌，回退到系统中文字体。
+     等宽栈在通用族 monospace 之前也列上界面用的中文字体：.num 里偶有漏进来的中文时按界面字体回退，
+     不落到系统给 monospace 配的中文字体（字宽、字重都和界面不一致）。 */
+  --font-ui: "Inter Variable", system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", monospace;
+  --radius-control: 4px;
+  --radius-card: 6px;
+  --control-h: 32px;
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.45);
+  font-family: var(--font-ui); font-size: 14px; line-height: 1.45; color: var(--fg); background: var(--bg);
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+/* 等宽只给数字、单位、时间、IP、版本号；中文与节点名一律不用。code / kbd / pre 也走同一个等宽栈，不落到浏览器默认的 monospace。 */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+:is(code, kbd, pre, samp) { font-family: var(--font-mono); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; flex: none; color: var(--muted); border: 1px solid transparent; background: transparent; border-radius: var(--radius-control); }
+.icon-button:hover { color: var(--fg); border-color: var(--line); }
+:is(button, input, select, textarea, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 折叠标题（details > summary）一律画同一个随展开转向的箭头，不用浏览器自带的三角（系统控件，各浏览器画法不同，flex
+   布局的标题里还不显示）。flex 标题里它是一个 flex 项，普通标题里按行内块排在文字前。 */
+summary { list-style: none; cursor: pointer; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: ""; display: inline-block; flex: none; width: 6px; height: 6px; margin: 0 8px 0 2px; vertical-align: 0.15em; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
+details[open] > summary::before { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
+* { box-sizing: border-box; }
+body { margin: 0; }
+/* 标题阶梯 20 / 15 / 13，统一 600：页面标题、卡片与分区、分组。.page-header、.node-head、卡片名、弹窗等按需覆盖；
+   没覆盖的标题落到这里而不是浏览器默认（h2 约 21px，比页面标题还大）。 */
+h1, h2, h3 { font-weight: 600; line-height: 1.35; }
+h1 { font-size: 20px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+h3 { font-size: 13px; margin: 0 0 8px; }
+a { color: var(--accent); text-decoration: none; }
+/* 表格与标题里的链接是对象名（节点、任务），满屏蓝色会盖过读数：用前景色，悬停才显示链接色。正文里的链接保持链接色。 */
+:is(table, h1, h2, h3) a { color: var(--fg); }
+:is(table, h1, h2, h3) a:hover { color: var(--accent); }
+.layout { min-height: 100vh; display: flex; flex-direction: column; }
+.nav { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line); background: var(--card); }
+.panel-nav a, .panel-nav > button { white-space: nowrap; }
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.heron-mark { display: block; flex: none; }
+.nav .brand { margin-right: 1rem; }
+.nav a.active { font-weight: 600; text-decoration: underline; }
+.nav .link { margin-left: auto; }
+.main { padding: 1rem; max-width: 1200px; width: 100%; margin: 0 auto; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 1rem; }
+.theme-preview { display: block; max-width: 8rem; max-height: 5rem; }
+.login { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
+.login-card { width: min(360px, 100%); padding: 24px; display: grid; gap: 12px; }
+.login-card input, .login-card button { width: 100%; min-width: 0; }
+.login-card button { height: var(--control-h); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.login .brand { margin: 0; font-size: 1.75rem; letter-spacing: -0.04em; }
+.login .heron-mark { width: 44px; height: 44px; }
+.login-description { margin: 0 0 0.5rem; color: var(--muted); }
+label { display: grid; gap: 0.25rem; }
+input, select, button, textarea { font: inherit; min-height: var(--control-h); padding: 0 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); color: var(--fg); }
+textarea { min-height: 6rem; padding: 0.4rem 0.6rem; }
+button { cursor: pointer; }
+button[disabled] { opacity: 0.5; cursor: default; }
+/* 链接样式的按钮是行文里的文字，不是控件：不继承上面的控件最小高度，否则所在的行（投递记录、「已选择 N 个节点 清空已选」）被撑到 32px。 */
+button.link { border: none; background: none; color: var(--accent); padding: 0; min-height: 0; }
+/* 可排序列的表头按钮（th 带 aria-sort）：与表头文字同字同色，排序方向用箭头标在文字后；对比表与节点表共用。 */
+th[aria-sort] > .link { font: inherit; color: inherit; }
+th[aria-sort="ascending"] > .link::after { content: " ↑"; }
+th[aria-sort="descending"] > .link::after { content: " ↓"; }
+button.danger { color: var(--bad); border-color: var(--bad); }
+.error { color: var(--bad); }
+.warn { color: var(--warn); }
+.muted { color: var(--muted); }
+.row { display: flex; align-items: baseline; gap: 1rem; }
+/* 表单里的一行（form.row 与表单内的 .row）混排「标题在上、控件在下」的字段与勾选框、链接按钮这类单行项：
+   按各项最后一行文字的基线对齐，单行项与字段控件里的文字齐平。字段带的下外边距（admin.css 的 form.card label）不参与基线对齐；
+   按底边对齐会把它算进去，按首行基线对齐则让单行项跟着字段标题浮到上方。 */
+form.row, form .row { align-items: last baseline; }
+form.row { flex-wrap: wrap; }
+.detail-header { flex-wrap: wrap; }
+.detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
+/* 节点页 / 对比页的工具栏：时间窗口分段控件、口径说明、覆盖率排一行。 */
+.detail-header { align-items: center; gap: 8px 12px; }
+.table-scroll { overflow-x: auto; position: relative; }
+.tag { display: inline-flex; align-items: center; gap: .15rem; margin: 0 .25rem .15rem 0; padding: 0 .4rem; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
+.tags-edit { white-space: normal; min-width: 12rem; }
+.tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
+table.nodes { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* 单元格一律不折行（上一条），长度不受用户约束的内容会把整张表撑到几千像素，后面的列与 ⋯ 要横向滚动才看得到。
+   这类内容必须二选一：
+   - .clip-text：单行截断加省略号，完整内容放进元素的 title。用于标识类的值（探测目标、渠道目标、备注、原因），
+     全文在悬停提示与编辑抽屉里。
+   - td.wrap-text：恢复折行，并允许在任意字符处断开。用于句子与拼起来的列表（告警条件、作用域、渠道名），
+     它们的关键信息可能在末尾，截断会截掉。必须是 anywhere 而不是 break-word：break-word 不改变单元格的最小内容
+     宽度，表格仍按整串排宽（Chromium、Firefox、WebKit 实测）。 */
+.clip-text { display: block; min-width: 0; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip-text.clip-wide { max-width: 48ch; }
+table.nodes td.wrap-text { white-space: normal; overflow-wrap: anywhere; }
+/* 实时读数表（components/ReadingsTable.tsx：管理端总览、公开页列表视图）。表格外框与表头由各自的样式表给出，这里只管
+   列内排版与手机布局。 */
+.readings-table td { white-space: nowrap; }
+.readings-table .bar.thin { width: 48px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+/* 手机上每行是一张卡：首行状态点、名称、最近上报；下面两行缩进到名称下方，依次是三项用量（带标签）与网速，其余列
+   （负载、本周期、运行时长与调用方追加的列）不显示。区域按 data-label 指名放置，不依赖单元格顺序与 auto 列宽——auto 列会被最宽的
+   用量格撑开，把名称挤到右侧。各端样式表若给表格单元格加了更具体的外框、内边距或固定行高，要在这个断点下自己去掉。 */
+@media (max-width: 900px) {
+  table.readings-table, .readings-table tbody { display: block; background: none; border: 0; }
+  .readings-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .readings-table tr {
+    display: grid; grid-template-columns: 8px repeat(3, minmax(0, 1fr)); gap: 8px 12px; align-items: center;
+    grid-template-areas: "dot name name seen" ". cpu mem disk" ". net net net";
+    margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card);
+  }
+  table.readings-table td { height: auto; padding: 0; border: 0; white-space: normal; min-width: 0; }
+  .readings-table td[data-label="状态"] { grid-area: dot; display: flex; }
+  .readings-table td[data-label="节点"] { grid-area: name; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .readings-table td[data-label="最近上报"] { grid-area: seen; justify-self: end; font-size: 12px; white-space: nowrap; }
+  .readings-table td[data-label="CPU"] { grid-area: cpu; }
+  .readings-table td[data-label="内存"] { grid-area: mem; }
+  .readings-table td[data-label="磁盘"] { grid-area: disk; }
+  .readings-table td:is([data-label="CPU"], [data-label="内存"], [data-label="磁盘"]) { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .readings-table td:is([data-label="CPU"], [data-label="内存"], [data-label="磁盘"])::before { content: attr(data-label); color: var(--muted); flex: none; }
+  .readings-table td .bar.thin { flex: 1; width: auto; min-width: 0; margin: 0; }
+  .readings-table td[data-label="网络"] { grid-area: net; font-size: 12px; }
+  .readings-table td:not([data-label="状态"], [data-label="节点"], [data-label="最近上报"], [data-label="CPU"], [data-label="内存"], [data-label="磁盘"], [data-label="网络"]) { display: none; }
+}
+/* 管理表的自由文本不能决定整张表的宽度；移动端保留每项数据与标签，按节点收拢为卡片。 */
+table.node-management { table-layout: fixed; }
+table.node-management th, table.node-management td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; padding: .5rem; }
+table.node-management th[data-column="order"] { width: 3.5rem; }
+table.node-management th[data-column="public"] { width: 3rem; }
+table.node-management th[data-column="note"] { width: 14%; }
+table.node-management th[data-column="reset"], table.node-management th[data-column="created"] { width: 5.5rem; }
+table.node-management th[data-column="actions"] { width: 5rem; }
+.node-management td[data-column="order"] button { min-width: 1.2rem; min-height: 2rem; }
+.node-management td[data-column="actions"] button { min-height: 2rem; }
+.node-management input:not([type="checkbox"]), .node-management select, .node-management textarea { width: 100%; min-width: 0; }
+.node-management textarea { min-height: 6rem; resize: vertical; }
+.node-management .tags-edit { min-width: 0; }
+.node-management .billing-edit { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.node-management .tag { max-width: 100%; }
+@media (max-width: 760px) {
+  table.node-management, .node-management tbody { display: block; border: 0; background: none; }
+  .node-management thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .node-management tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  table.node-management td { min-width: 0; border: 0; }
+  .node-management td::before { content: attr(data-label); display: block; margin-bottom: .2rem; color: var(--muted); font-size: .8rem; }
+  .node-management td[data-column="name"], .node-management td[data-column="note"], .node-management td[data-column="tags"], .node-management td[data-column="billing"], .node-management td[data-column="actions"] { grid-column: 1 / -1; }
+  .node-management td[data-column="name"] { grid-row: 1; font-weight: 600; }
+  .node-management td[data-column="order"] button { min-width: 2.5rem; min-height: 2.5rem; }
+  .node-management td[data-column="actions"] button { margin-right: .75rem; min-height: 2.5rem; }
+  .node-management .billing-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+tr.offline td { color: var(--muted); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.5rem; }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+.bar { position: relative; min-width: 140px; height: 18px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--accent); opacity: 0.35; }
+/* 标签在条内垂直居中而不写死行高：条高由各处自定（详情面板更矮），行高跟着条高走，否则比 18px 矮的条会把文字裁掉。 */
+.bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 1; display: flex; align-items: center; white-space: nowrap; }
+/* 图表（components/Chart.tsx）：占位说明叠在图区中央；图例自绘，线段色样代替方块。 */
+.chart { width: 100%; min-width: 0; }
+.chart-plot { position: relative; }
+.chart-gap { position: absolute; z-index: 1; left: 0; right: 0; top: 40%; margin: 0; text-align: center; font-size: 12px; pointer-events: none; }
+.chart .uplot { width: 100%; max-width: 100%; }
+.chart-legend { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; }
+.chart-legend li { min-width: 0; }
+.chart-legend .legend-time { color: var(--muted); }
+.chart-legend button { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--fg); max-width: 100%; }
+.chart-legend button[aria-pressed="false"] { color: var(--faint); text-decoration: line-through; }
+.legend-swatch { width: 14px; height: 0; border-top: 2px solid var(--series); flex: none; }
+.legend-swatch.soft { border-top-width: 1px; opacity: .6; }
+.chart-legend .num { color: var(--muted); }
+.chart-legend button[aria-pressed="true"] .num { color: var(--fg); }
+.picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
+fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
+.picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
+.logo-preview { height: 32px; width: auto; }
+/* 计费编辑格：小输入两列排开，平铺选择、日期与说明占整行；表格单元格默认不换行，这里要换。 */
+.billing-edit { display: grid; grid-template-columns: repeat(2, minmax(6rem, 1fr)); gap: 0.25rem 0.5rem; white-space: normal; min-width: 16rem; }
+.billing-edit p, .billing-edit .picks { grid-column: 1 / -1; margin: 0; }
+.secret { font-family: var(--font-mono); word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
+
+/* 到期（components/Expiry.tsx），面板与公开页共用：日期与剩余天数整体按临近 / 已过期着色。 */
+.expiry { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.expiry[data-level="attention"] { color: var(--status-attention); }
+.expiry[data-level="critical"] { color: var(--status-offline); }
+
+/* 国家 / 地区徽章（components/CountryBadge.tsx），面板与公开页共用：两个字母的小方标，不随所在标题放大。
+   公开页的双栈标记（components/AddressFamilies.tsx）跟在它后面，用同一种外观。 */
+.address-families { display: inline-flex; gap: 4px; vertical-align: middle; }
+.country-badge, .address-family {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* 胶囊：已选标签 / 地区、「+N」。全圆角只给胶囊与状态点。 */
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; background: var(--card-raised); white-space: nowrap; max-width: 14rem; }
+.chip > button { border: 0; background: none; padding: 0 0 0 2px; min-height: 0; color: var(--muted); line-height: 1; }
+.chip > button:hover { color: var(--fg); }
+/* 多选下拉（components/MultiSelect.tsx）：桌面为浮层；窄屏改为底部弹出。 */
+.multi-select { position: relative; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 触发按钮带下拉箭头，与原生 select 一样一眼看出点开是下拉；展开时箭头朝上。 */
+.multi-select-trigger { display: inline-flex; align-items: center; gap: 4px; height: var(--control-h); }
+.multi-select-caret { color: var(--muted); transition: transform .15s; }
+.multi-select-trigger[aria-expanded="true"] .multi-select-caret { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .multi-select-caret { transition: none; } }
+.multi-select-trigger[aria-expanded="true"] { border-color: var(--accent); }
+.multi-select-chips { display: contents; list-style: none; margin: 0; padding: 0; }
+.multi-select-popup { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 220px; max-height: 320px; overflow: auto; padding: 8px; background: var(--card-raised); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
+.multi-select-popup input[type="search"] { width: 100%; margin-bottom: 6px; }
+.multi-select-popup ul { list-style: none; margin: 0; padding: 0; }
+.multi-select-popup label { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 6px; border-radius: var(--radius-control); cursor: pointer; }
+.multi-select-popup label:hover { background: var(--card-hover); }
+.multi-select-popup label > span:first-of-type { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-select-popup input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; }
+@media (max-width: 640px) {
+  .multi-select-popup { position: fixed; inset: auto 0 0 0; top: auto; max-height: 60vh; border-radius: 12px 12px 0 0; }
+}
+
+.sparkline { display: block; color: var(--accent); max-width: 100%; }
+.sparkline-empty { color: var(--muted); font-size: 12px; }
+/* 状态徽章（components/StatusBadge.tsx）：色点 + 文字，背景取状态色 10%、边框 40%。 */
+.status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; height: 22px; border-radius: 999px; font-size: 12px; white-space: nowrap; color: var(--status); background: color-mix(in srgb, var(--status) 10%, transparent); border: 1px solid color-mix(in srgb, var(--status) 40%, transparent); }
+.status-badge.is-online, .status-dot[data-status="online"] { --status: var(--status-online); }
+.status-badge.is-offline, .status-dot[data-status="offline"] { --status: var(--status-offline); }
+.status-badge.is-never, .status-dot[data-status="never"] { --status: var(--status-never); }
+.status-badge.is-maintenance, .status-dot[data-status="maintenance"] { --status: var(--status-maintenance); }
+.status-badge.is-rented, .status-dot[data-status="rented"] { --status: var(--status-rented); }
+.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--status, var(--status-never)); flex: none; }
+/* 进度条档位（components/Bar.tsx）：中性用主色、琥珀与玫红用状态色。 */
+.bar[data-level="neutral"] .fill { background: var(--accent); }
+.bar[data-level="attention"] .fill { background: var(--status-attention); }
+.bar[data-level="critical"] .fill { background: var(--status-offline); }
+.bar.thin { min-width: 0; height: 4px; border: 0; border-radius: 999px; background: var(--line); }
+.bar.thin .fill { opacity: 1; border-radius: inherit; }
+.bar.thin > span { display: none; }
+/* ⓘ（components/InfoTip.tsx）：正文在 DOM 里，data-open 时显示为浮层。 */
+.info-tip { position: relative; display: inline-flex; }
+.info-tip > button { width: 20px; height: 20px; min-height: 0; padding: 0; border: 0; background: none; color: var(--muted); font-size: 14px; line-height: 1; }
+.info-tip-body { display: none; position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: max-content; max-width: min(360px, 80vw); padding: 8px 10px; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--card-raised); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
+.info-tip[data-open] .info-tip-body { display: block; }
+
+/* 探测对比（components/ProbeComparison.tsx），两端共用。 */
+.kind-badge { display: inline-block; padding: 0 6px; height: 22px; line-height: 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); font-size: 12px; font-weight: 500; vertical-align: middle; }
+.compare-chart { margin-bottom: 12px; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
+.compare-table th { height: 32px; text-align: left; padding: 0 10px; color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); }
+.compare-table td { height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.compare-table td.num { text-align: right; }
+.compare-table tr[data-focused] td { background: var(--card-hover); }
+.compare-table [data-level="attention"] { color: var(--status-attention); }
+@media (max-width: 640px) { .compare-table { display: block; overflow-x: auto; } }
+
+/* 列表页页头（components/PageHeader.tsx）：标题 + 主按钮，两端共用。 */
+.page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 0 0 16px; }
+.page-header h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+.page-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.page-header-actions { display: flex; align-items: center; gap: 8px; }
+.primary-button { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 500; }
+
+/* 自绘单选下拉（components/Select.tsx）。地区 / 标签入口（components/Facet.tsx）沿用同一个触发按钮外观。 */
+.select { position: relative; display: inline-flex; }
+.select-trigger { display: inline-flex; align-items: center; gap: 6px; max-width: 16rem; }
+.select-label { color: var(--muted); font-size: 13px; }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-caret { flex: none; color: var(--muted); transition: transform .15s; }
+.select-trigger[aria-expanded="true"] { border-color: var(--accent); }
+.select-trigger[aria-expanded="true"] .select-caret { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .select-caret { transition: none; } }
+.select-popup { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 100%; width: max-content; margin: 0; padding: 4px; list-style: none; background: var(--card-raised); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
+.select-popup [role="option"] { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px 0 8px; border-radius: var(--radius-control); cursor: pointer; white-space: nowrap; font-size: 13px; }
+/* 选项靠背景色标出焦点与悬停，不另画轮廓。 */
+.select-popup [role="option"]:is(:hover, :focus) { background: var(--card-hover); outline: none; }
+.select-check { flex: none; visibility: hidden; color: var(--accent); }
+.select-popup [aria-selected="true"] .select-check { visibility: visible; }
+/* 表单字段形态（Select 给了 caption）：标题在上，按钮撑满字段宽度、值靠左箭头靠右，与同一表单里的输入框对齐。 */
+.select-field { display: grid; gap: 0.25rem; min-width: 0; }
+.select-field .select-trigger { width: 100%; max-width: none; }
+.select-field .select-value { margin-right: auto; }
+/* 带自绘候选的输入框（components/SuggestInput.tsx）：候选列表沿用下拉列表的外观，当前候选（键盘移到的那一项）同悬停一样
+   铺底色；列表限高自身滚动。 */
+.suggest { position: relative; min-width: 0; }
+.suggest > input { width: 100%; }
+.suggest-popup { max-height: 240px; overflow-y: auto; }
+.suggest-popup [aria-selected="true"] { background: var(--card-hover); }
+
+/* 筛选行（public/FilterRow.tsx 与管理端列表页共用）。 */
+.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
+.filter-row input[type="search"] { width: min(100%, 260px); }
+/* 带放大镜与「输入 / 搜索」提示的搜索框（SearchHint）：提示叠在输入框上、不接收指针，输入框有内容时不渲染。 */
+.search-field { position: relative; display: inline-flex; align-items: center; width: min(100%, 260px); }
+.filter-row .search-field > input[type="search"] { width: 100%; padding-left: 32px; }
+.search-field > svg { position: absolute; left: 9px; color: var(--muted); pointer-events: none; }
+.search-field > .search-hint { position: absolute; left: 33px; right: 8px; pointer-events: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.search-hint { color: var(--muted); font-size: 13px; }
+.search-hint kbd { display: inline-block; min-width: 18px; padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 4px; font-size: 11px; line-height: 16px; text-align: center; color: var(--fg); }
+.filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.view-switch { display: inline-flex; }
+.view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
+/* 筛选行里的标签一律写在控件左侧，和不带标签的搜索框、勾选项落在同一条中线上；标签文字弱化，控件保持前景色。 */
+.filter-row > label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.filter-row > label > :is(select, input:not([type="checkbox"])) { color: var(--fg); }
+/* 地区与标签筛选（components/Facet.tsx，公开页总览与管理端节点页共用）：筛选行上是入口按钮，外观沿用自绘下拉的触发按钮
+   （.select-trigger），有选择时描强调色；展开的面板在 DOM 里紧跟入口，由 order 排到筛选行最后、独占一行，选项平铺成胶囊，
+   按行宽折行。选中的胶囊与公开页「只看在线」同一种强调色描边，单选 / 多选与匹配方式用共享的分段控件，与选项区分开。 */
+.facet-trigger[data-active] { border-color: var(--accent); }
+.facet-trigger[data-active] .select-value { color: var(--accent); }
+.facet-panel { order: 1; flex: 1 0 100%; display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
+.facet-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.facet-panel .segmented { margin-bottom: 0; }
+.facet-hint { margin: 0; color: var(--muted); font-size: 12px; }
+.facet-options { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.facet-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; min-height: 0; max-width: 16rem; padding: 0 12px; border-radius: 999px; font-size: 13px; }
+.facet-chip:hover { border-color: var(--line-strong); }
+.facet-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.facet-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facet-chip .num { color: var(--muted); font-size: 12px; }
+.facet-box { display: inline-grid; place-items: center; flex: none; width: 14px; height: 14px; border: 1px solid var(--line-strong); border-radius: 3px; }
+.facet-chip[aria-pressed="true"] .facet-box { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+/* 分配 / 作用域（components/NodeAssignment.tsx）：三张卡片式单选一行，指定节点的勾选列表自身滚动。 */
+.assignment { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
+.assignment-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.assignment-card { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; align-content: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); cursor: pointer; }
+.assignment-card:has(input:checked) { border-color: var(--fg); }
+.assignment-card input { margin: 3px 0 0; }
+.assignment-card span { font-weight: 600; }
+.assignment-card small { grid-column: 2; color: var(--muted); font-size: 12px; }
+.assignment-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.assignment-list { list-style: none; margin: 8px 0; padding: 0; max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.assignment-list li { padding: 0 10px; }
+.assignment-list label { display: flex; gap: 8px; align-items: center; height: var(--control-h); }
+@media (max-width: 900px) { .assignment-modes { grid-template-columns: 1fr; } }
+
+/* 节点页状态头与六个现值格：公开页与管理详情共用。 */
+.node-head { display: grid; gap: 8px; margin-bottom: 16px; }
+.node-head-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.node-head h1 { margin: 0; font-size: 22px; line-height: 28px; overflow-wrap: anywhere; }
+.now-grid { margin: 4px 0 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.now-cell { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); min-width: 0; }
+.now-cell dt { font-size: 12px; color: var(--muted); }
+.now-cell dd { margin: 2px 0 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.now-cell .now-line { display: block; font-size: 14px; white-space: nowrap; }
+.now-cell [data-level="attention"] { color: var(--status-attention); }
+.now-cell [data-level="critical"] { color: var(--status-offline); }
+@media (max-width: 900px) { .now-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .now-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 页内 tab（节点详情）：下划线式，选中项用前景色 + 2px 底线；面板只渲染当前项。 */
+.tabs { display: flex; gap: 4px; margin: 16px 0 12px; border-bottom: 1px solid var(--line); }
+.tabs [role="tab"] { height: 36px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.node-head-meta { margin: 4px 0 12px; font-size: 13px; color: var(--muted); }
+.node-head-title .node-head-edit { margin-left: auto; }
+
+/* 自绘的日期 / 时刻控件（components/DateInput.tsx）：一个与其它输入框同高同边框的外框，里面是几段定宽数字、分隔符与两个图标按钮。
+   各段用等宽数字，位数由 data-length 定宽；焦点与错误画在外框上，而不是每段各画一圈。 */
+.date-field, .file-field { display: grid; gap: 0.25rem; justify-items: start; min-width: 0; }
+.date-box { position: relative; display: inline-flex; align-items: center; height: var(--control-h); padding: 0 2px 0 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); color: var(--fg); }
+.date-box:focus-within { border-color: var(--accent); }
+.date-box[data-invalid] { border-color: var(--status-offline); }
+.date-box[data-disabled] { opacity: 0.5; }
+.date-box .date-segment { min-height: 0; height: 24px; padding: 0 1px; border: 0; border-radius: 2px; background: none; color: inherit; text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.date-box .date-segment[data-length="4"] { width: 4.6ch; }
+.date-box .date-segment[data-length="2"] { width: 2.8ch; }
+.date-box .date-segment::placeholder { color: var(--faint); }
+.date-box .date-segment:focus-visible { outline: none; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.date-sep { color: var(--muted); font-family: var(--font-mono); }
+.date-box .icon-button { width: 26px; height: 26px; min-height: 0; }
+.date-box .icon-button:first-of-type { margin-left: 4px; }
+.date-field > small { font-size: 12px; }
+.filter-row > .date-field { display: inline-flex; align-items: center; gap: 6px; }
+.filter-row > .date-field > .field-caption { font-size: 13px; color: var(--muted); }
+/* 筛选行是单行：未填完的提示只靠红框，说明文字不占行内位置（仍由 aria-describedby 读出）。 */
+.filter-row > .date-field > small { display: none; }
+
+/* 自绘月历（components/Calendar.tsx）：挂在控件外框下方的浮层，周一开头，选中日用主色实底，今天描边。 */
+.calendar { position: absolute; top: calc(100% + 4px); left: -1px; z-index: 30; width: 252px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card-raised); color: var(--fg); box-shadow: var(--shadow-float); }
+.calendar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.calendar-title { font-size: 13px; font-weight: 600; }
+.calendar-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.calendar-grid th { height: 26px; padding: 0; font-size: 12px; font-weight: 500; color: var(--muted); text-align: center; }
+.calendar-grid td { padding: 1px; border: 0; text-align: center; }
+.calendar-grid button { width: 100%; height: 30px; min-height: 0; padding: 0; border: 1px solid transparent; border-radius: var(--radius-control); background: none; color: inherit; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.calendar-grid button:hover { background: var(--card-hover); }
+.calendar-grid button[data-outside] { color: var(--faint); }
+.calendar-grid button[aria-current="date"] { border-color: var(--line-strong); }
+.calendar-grid button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.calendar-foot { display: flex; justify-content: flex-end; padding-top: 4px; }
+
+/* 自绘文件选择（components/FileInput.tsx）：原生输入透明地铺满整块，点击、拖放与键盘都落到它身上；看得见的是按钮与文件名。 */
+.file-input { position: relative; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; cursor: pointer; }
+.file-input .file-native { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; opacity: 0; cursor: inherit; }
+.file-button { display: inline-flex; align-items: center; height: var(--control-h); padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); color: var(--fg); white-space: nowrap; }
+.file-input:hover .file-button { border-color: var(--line-strong); }
+.file-input:has(.file-native:focus-visible) .file-button { outline: 2px solid var(--accent); outline-offset: 2px; }
+.file-input[data-disabled] { opacity: 0.5; cursor: default; }
+.file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+
+/* 分段控件：一组互斥选项拼成一个外框，选中项前景色实底。两种写法共用外观：单选（label > input + span，探测类型、渠道类型）
+   与按钮（button[aria-pressed]，时间窗口）。面板与公开页都用，所以放在共享样式里。 */
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; margin-bottom: 12px; }
+.detail-header .segmented { margin-bottom: 0; }
+.segmented label { position: relative; }
+.segmented input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.segmented span, .segmented > button { display: inline-block; height: 30px; line-height: 30px; padding: 0 12px; font-size: 13px; color: var(--muted); }
+.segmented > button { min-height: 0; border: 0; border-radius: 0; background: none; }
+.segmented > button + button { border-left: 1px solid var(--line); }
+.segmented > button:hover { color: var(--fg); }
+.segmented input:checked + span, .segmented > button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.segmented input:focus-visible + span, .segmented > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* 历史图网格：每张至少 480px 宽，管理端与公开页在 1440 宽下都排两列；卡片内边距收紧，把面积留给图。 */
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; margin-bottom: 12px; container-type: inline-size; }
+/* 最后一行不满时把最后一张拉宽，不留空格：两列（宽 2×480+12 到 3×480+24）时张数为奇数，最后一张撑满整行；
+   三列（宽 3×480+24 到 4×480+36）时剩一张撑满、剩两张时最后一张占两格。断点由上面的 480px 与 12px 间距算出，
+   改其中任一项要同步改这里；四列以上不处理。 */
+@container (min-width: 972px) and (max-width: 1463.98px) { .chart-grid > .chart-card:last-child:nth-child(odd) { grid-column: 1 / -1; } }
+@container (min-width: 1464px) and (max-width: 1955.98px) {
+  .chart-grid > .chart-card:last-child:nth-child(3n + 1) { grid-column: 1 / -1; }
+  .chart-grid > .chart-card:last-child:nth-child(3n + 2) { grid-column: span 2; }
+}
+.chart-grid > .card.chart-card { margin: 0; padding: 12px 14px 8px; }
+.chart-card h2 { font-size: 13px; margin: 0 0 6px; }
+.coverage-note { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; }
+
+/* 公开节点页页头里的系统信息行（public/NodePage.tsx）。 */
+.facts-inline { display: flex; flex-wrap: wrap; gap: 2px 16px; margin: 6px 0 0; font-size: 12px; }
+.facts-inline > div { display: flex; gap: 6px; min-width: 0; }
+.facts-inline dt { color: var(--muted); }
+.facts-inline dd { margin: 0; overflow-wrap: anywhere; }

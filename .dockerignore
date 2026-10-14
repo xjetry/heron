@@ -1,0 +1,6 @@
+# 构建上下文只放行镜像组预先构建的二进制（deploy/image.mk），两个 Dockerfile 只 COPY 它们。
+# 其余一概排除：node_modules、参考项目、.git 与本地库文件不该进入镜像构建。
+# 这个文件决定 agent 镜像的构建上下文，登记在 AGENT_BUNDLE_FILES 里（deploy/agent.mk）。
+*
+!build/image/linux/*/heron-hub
+!build/image/linux/*/heron-agent

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MethodOptions {
+  // GET 成功响应的 Cache-Control: max-age（秒）。heron.v1 的每个方法接受 GET（idempotency_level = NO_SIDE_EFFECTS）
+  // 当且仅当声明了这个值且大于 0；hub 装配时逐个方法核对，不符即拒绝启动。失败响应一律 no-store，POST 响应不带缓存头。
+  // 50000–99999 是留给组织内部扩展的字段号区间。
+  uint32 cache_max_age_s = 50002;
+}

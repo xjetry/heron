@@ -1,0 +1,1126 @@
+[
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "PUT",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "payload-config/2026-09-28T01:02:03Z.db",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "PUT\n/backups/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:s3.example:9000\nx-amz-content-sha256:fac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\nfac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=6d60a9fbd86440fcc5904061ab40281ff7fea9e326897ad2e54b0a1934c0c68a"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "GET\n/backups/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=2ef68eaf7aa6a756274e7545225fe9e84ad731f9e2c0b9775214d7084a1368d2"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "DELETE\n/backups/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=6481899df9f415f51aa417cc42b9f094ed8ccc57dc1ddae41d693d788c0a0d73"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "PUT",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "payload-sp ace/plus+/雪/100%/~tilde",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "PUT\n/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:s3.example:9000\nx-amz-content-sha256:72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=cefce0c2782bcffe54f8c22f01dba9eb639639d33fab49aaa86cda33e52f0f39"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "GET\n/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=0d470016ad0c10ab2094ca21051cf5d7f3abd9fe72d90d601b597fcb82fe0df2"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "DELETE\n/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=431b0b08a711ea9611fd3d0c0371deb90fb29a6643ff62f0f1acb9879e52f9b7"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "PUT",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "payload-a//b/../c/./d",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/a//b/../c/./d",
+  "canonical_request": "PUT\n/backups/a//b/../c/./d\n\nhost:s3.example:9000\nx-amz-content-sha256:63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=e9d22ccf68110c807e31ce6b8300de1a1640e4e1198cb13e5e55abd850eba522"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/a//b/../c/./d",
+  "canonical_request": "GET\n/backups/a//b/../c/./d\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=d8c24e2bd359c4d4f02e00dc8a5714f5e599f8392d58c2894910d7401413e5fc"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/a//b/../c/./d",
+  "canonical_request": "DELETE\n/backups/a//b/../c/./d\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=192cfa877318d65d0e3079ee4c18b3e59e66e71af8ab48c675fef3be1d0ebc95"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "PUT",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "payload-!*'();:@&=+$,?#[]",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "PUT\n/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:s3.example:9000\nx-amz-content-sha256:99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=8be2b85aa4eeda37bd175ff312b8c1012a6f1f5fbe36eca35ed8cf36c8484839"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "GET\n/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=8fa0f1acb7c5d79139a47b6549ea13c88330ddac9e597c09df754015fc7c0573"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "DELETE\n/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=02e951256f59bac35811f63d5c3a6f9d217ac235ecf88f502836e23ab2395114"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "PUT",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "payload-a%2Fb",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/a%252Fb",
+  "canonical_request": "PUT\n/backups/a%252Fb\n\nhost:s3.example:9000\nx-amz-content-sha256:5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=0a22bc936bb528bd58ca3c37941f7818ac878c995c86268c6c95c7695ced0631"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/a%252Fb",
+  "canonical_request": "GET\n/backups/a%252Fb\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=7dc80c5ef75b987e07730fda95288d4efd642d631f339d4fb9b0a817fbc233b2"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/a%252Fb",
+  "canonical_request": "DELETE\n/backups/a%252Fb\n\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a6eb117c67a77030011169b839f6e399d283e9560cb846975637489572fe1361"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "a +/雪%"
+   ],
+   [
+    "max-keys",
+    "256"
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/?encoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25",
+  "canonical_request": "GET\n/backups/\nencoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=4b5b0bcbc2c01f94812f5c002f3078fbd2ee643a6047025bfeca6a143cc2b78e"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "hub/config/"
+   ],
+   [
+    "continuation-token",
+    "1/a+b=c=="
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/?continuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F",
+  "canonical_request": "GET\n/backups/\ncontinuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=23e3ca0cbc4f3b70a3cae0130025cbeb42954885fa69b05c99f91d7b8bd3ad38"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example:9000",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "a-b",
+    "1"
+   ],
+   [
+    "a",
+    "2"
+   ],
+   [
+    "a",
+    "1"
+   ]
+  ],
+  "payload": "",
+  "host": "s3.example:9000",
+  "request_uri": "/backups/?a=1&a=2&a-b=1",
+  "canonical_request": "GET\n/backups/\na=1&a=2&a-b=1\nhost:s3.example:9000\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=76ca1e61d60e3b338274d6082c7891d497ba0fef7442dafdec5bbc95b3fc7eac"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "PUT",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "payload-config/2026-09-28T01:02:03Z.db",
+  "host": "s3.example",
+  "request_uri": "/base/backups/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "PUT\n/base/backups/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:s3.example\nx-amz-content-sha256:fac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\nfac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=3ef640fa21a908736c30f16bd836db79812aecf40b7d3552acc01d2d2c66e5bc"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "GET\n/base/backups/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=62f7c188286614f4827e42ad3a59523e0212ac18604985a4156cd2389096b0a5"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "DELETE\n/base/backups/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=92548cbffc4ea309266904c4b42cd468df4adb6408f40114cfb172a174c9af3c"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "PUT",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "payload-sp ace/plus+/雪/100%/~tilde",
+  "host": "s3.example",
+  "request_uri": "/base/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "PUT\n/base/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:s3.example\nx-amz-content-sha256:72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=161f4c208503dbd6470660ad2c2155742f492d333ea41d5023f62ca14278cdb2"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "GET\n/base/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=b0feb562f4c8ef3361682de77ccbcdb6c4e03ef6975a974855e1d13b623104ef"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "DELETE\n/base/backups/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a8056265842c0b02d85e02af827869c68b27ca6f3db404a462543b1e97488a9f"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "PUT",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "payload-a//b/../c/./d",
+  "host": "s3.example",
+  "request_uri": "/base/backups/a//b/../c/./d",
+  "canonical_request": "PUT\n/base/backups/a//b/../c/./d\n\nhost:s3.example\nx-amz-content-sha256:63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=64b0180901475037bd52b8ca381ba006903edc08978e2d5ed3aafab513bba4d6"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/a//b/../c/./d",
+  "canonical_request": "GET\n/base/backups/a//b/../c/./d\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=d82fe40e29fb043c9f105d72bf748e55eaebe8d4fe51d9f16f260bec7d714609"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/a//b/../c/./d",
+  "canonical_request": "DELETE\n/base/backups/a//b/../c/./d\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=27d291491a470d196293ccbff49883b7adb502898f9396d376ccdf6cdb293142"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "PUT",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "payload-!*'();:@&=+$,?#[]",
+  "host": "s3.example",
+  "request_uri": "/base/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "PUT\n/base/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:s3.example\nx-amz-content-sha256:99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=51c9379cd68264750a11d054acd0603988c12e02bc45277766485c672de02c06"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "GET\n/base/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=37c8f68f5a1f237e028afbaaa547d472c127db61123ca48fe133db4719f1a971"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "DELETE\n/base/backups/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=8eb89293605ecae3205971ba957ae1dcb2e6ab2fb263cee763dafeaccfc0c7d0"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "PUT",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "payload-a%2Fb",
+  "host": "s3.example",
+  "request_uri": "/base/backups/a%252Fb",
+  "canonical_request": "PUT\n/base/backups/a%252Fb\n\nhost:s3.example\nx-amz-content-sha256:5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=c3da2434983fb14b664e8bc16ab15818737d6c002a1c16a0d1f3a9f5836d1b27"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/a%252Fb",
+  "canonical_request": "GET\n/base/backups/a%252Fb\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=35138737fbfdba06a18d88944e0611fe9bf78d62f5634a8396372a62ea181bff"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/a%252Fb",
+  "canonical_request": "DELETE\n/base/backups/a%252Fb\n\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=b6cc6c441efedfebcaf1e848db0da42222433d69d025e0011589dea45152a1ef"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "a +/雪%"
+   ],
+   [
+    "max-keys",
+    "256"
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/?encoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25",
+  "canonical_request": "GET\n/base/backups/\nencoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=7b82898c41944e759f709faedb0dbd6fbae8ae3fb560c70d20c3a5e52e74a3fe"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "hub/config/"
+   ],
+   [
+    "continuation-token",
+    "1/a+b=c=="
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/?continuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F",
+  "canonical_request": "GET\n/base/backups/\ncontinuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=f0a574b053216e8d2fa318af53fc10c912ec1e2a90342441d1265fd675061344"
+ },
+ {
+  "virtual_host": false,
+  "endpoint": "http://s3.example/base/",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "a-b",
+    "1"
+   ],
+   [
+    "a",
+    "2"
+   ],
+   [
+    "a",
+    "1"
+   ]
+  ],
+  "payload": "",
+  "host": "s3.example",
+  "request_uri": "/base/backups/?a=1&a=2&a-b=1",
+  "canonical_request": "GET\n/base/backups/\na=1&a=2&a-b=1\nhost:s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=68c3feed6c97e998c5c005dd16c09ea15d43327de35984d9118f71cb2722d517"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "PUT",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "payload-config/2026-09-28T01:02:03Z.db",
+  "host": "backups.s3.example",
+  "request_uri": "/base/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "PUT\n/base/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:backups.s3.example\nx-amz-content-sha256:fac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\nfac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=35f8cf0d96d7f504592251b40588471279059e01aab83182addcf8e39c2975d2"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "GET\n/base/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=5f5eb71addf0c48562b13b4300db57e5e0d3ccdd659f2877a83c0cb0665e5464"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "DELETE",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "DELETE\n/base/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=03c6663b3f5b659dccbb0a52ffe7a4b1622cbeef9f0c6b41d138063b235d2d23"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "PUT",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "payload-sp ace/plus+/雪/100%/~tilde",
+  "host": "backups.s3.example",
+  "request_uri": "/base/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "PUT\n/base/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:backups.s3.example\nx-amz-content-sha256:72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=c253caeaf27dc976051e7375a4dda8f0d086bd4285f52c8f4552d8022b9d4759"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "GET\n/base/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a42acc98adba41da4045d2cf8072a3eb45081b4f8c3112381a9e1848d285d7d9"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "DELETE",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "DELETE\n/base/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a7787e5ce804caffb958390939a4f6c0d24847e0bcaf2aaa35db10fe5a9d3627"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "PUT",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "payload-a//b/../c/./d",
+  "host": "backups.s3.example",
+  "request_uri": "/base/a//b/../c/./d",
+  "canonical_request": "PUT\n/base/a//b/../c/./d\n\nhost:backups.s3.example\nx-amz-content-sha256:63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=b073df206301e51ba73caf0499a6114f2ee26529809067a191006e11f29d699e"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/a//b/../c/./d",
+  "canonical_request": "GET\n/base/a//b/../c/./d\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=04eb7cd63cac630aa6af2455f38a0bb3b1f498d869a1c7bf3a93b3d2a765fd87"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "DELETE",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/a//b/../c/./d",
+  "canonical_request": "DELETE\n/base/a//b/../c/./d\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=dd606db591051e248d1c42c12bc6d338244823951fdd1848723b2c5f13586026"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "PUT",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "payload-!*'();:@&=+$,?#[]",
+  "host": "backups.s3.example",
+  "request_uri": "/base/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "PUT\n/base/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:backups.s3.example\nx-amz-content-sha256:99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=9575f5fc31f2913d8db98aafffa20d360725231d3a061e7180865e47e8055f53"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "GET\n/base/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=25365279544b29aaed72405f25ee15354bd9ac07939b8cf57f36a04d30c78dc8"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "DELETE",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "DELETE\n/base/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=005ce6f6031457c5346be04f83aca4ea237ba22ea2bd90ae6e7d13546b081282"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "PUT",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "payload-a%2Fb",
+  "host": "backups.s3.example",
+  "request_uri": "/base/a%252Fb",
+  "canonical_request": "PUT\n/base/a%252Fb\n\nhost:backups.s3.example\nx-amz-content-sha256:5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=781cd9ece0d499a7938da6de4f88b2258e50dfaee9ba3e22d26c650c8688928a"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/a%252Fb",
+  "canonical_request": "GET\n/base/a%252Fb\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a60fd037d793183cf7c0d8ba273c32a9d6322e6339c661ed3832bd080bfa40a8"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "DELETE",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/a%252Fb",
+  "canonical_request": "DELETE\n/base/a%252Fb\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=942bfc35e6e39f8984fa73fc9a53ec098417c2f3f789a08cfdc6e907a367b538"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "a +/雪%"
+   ],
+   [
+    "max-keys",
+    "256"
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/?encoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25",
+  "canonical_request": "GET\n/base/\nencoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=b0f747ec685fc4fda4d055744ce314f64d530e39073f549172ae08214703193b"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "hub/config/"
+   ],
+   [
+    "continuation-token",
+    "1/a+b=c=="
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/?continuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F",
+  "canonical_request": "GET\n/base/\ncontinuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=b049eba5b99d4a8efc4618e3054b1c8d376b61bb3975d8ca135ac1412c314a7d"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example/base",
+  "region": "us-east-1",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "a-b",
+    "1"
+   ],
+   [
+    "a",
+    "2"
+   ],
+   [
+    "a",
+    "1"
+   ]
+  ],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/base/?a=1&a=2&a-b=1",
+  "canonical_request": "GET\n/base/\na=1&a=2&a-b=1\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=10fd7a6b3c59b038cd12fe7d9c0668baaf1c2d0c56a306a48a071ec61f78012a"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "PUT",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "payload-config/2026-09-28T01:02:03Z.db",
+  "host": "backups.s3.example",
+  "request_uri": "/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "PUT\n/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:backups.s3.example\nx-amz-content-sha256:fac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\nfac069abbbdf51582f831d5ea5ecc2ece0b8f9d58e5960088ca44532cc01cd8f",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=445506112f6870b8d81a0cce1384472e86e34019a3ec506811fcd04bae6690c4"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "GET\n/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=832fc4696b381e19286a4fb68be3acd702014f110c6bfd1404ad9e122481d2c2"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "config/2026-09-28T01:02:03Z.db",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/config/2026-09-28T01%3A02%3A03Z.db",
+  "canonical_request": "DELETE\n/config/2026-09-28T01%3A02%3A03Z.db\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=09bed7fc66dbb89a17e204f0da5afcd4b4531d635fe5ac1c8d2388ad330f8ff1"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "PUT",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "payload-sp ace/plus+/雪/100%/~tilde",
+  "host": "backups.s3.example",
+  "request_uri": "/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "PUT\n/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:backups.s3.example\nx-amz-content-sha256:72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n72caed5835938f3977dfdac026db1696bf960bfce76db76d0abc3b3eccb23fb1",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=006333d860228e8ae50d6606cadef236e48605672548ad9173b82f37a16023dc"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "GET\n/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=d5a15420fd2c64e64b3c7a80852b5bbfa2ebbad2fada463fbb4eee3c3cfd82e0"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "sp ace/plus+/雪/100%/~tilde",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde",
+  "canonical_request": "DELETE\n/sp%20ace/plus%2B/%E9%9B%AA/100%25/~tilde\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=b7f684aed6b6c14c9d396314522d8b7be771b9dfa8cbbd03959844a5150b33d0"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "PUT",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "payload-a//b/../c/./d",
+  "host": "backups.s3.example",
+  "request_uri": "/a//b/../c/./d",
+  "canonical_request": "PUT\n/a//b/../c/./d\n\nhost:backups.s3.example\nx-amz-content-sha256:63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n63b72c549a5ee27e7a159c19f54312e9153c8f26f312b3b47046c3e3dbb7dad7",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=08357670bfecdeb2694ad076eefa2d8d987d3f1d0678d938511de877f1fec8c6"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/a//b/../c/./d",
+  "canonical_request": "GET\n/a//b/../c/./d\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=5f951f4293b50d6bc28473031f0b04faad60658af03825345d073b7f2ccec6ac"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "a//b/../c/./d",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/a//b/../c/./d",
+  "canonical_request": "DELETE\n/a//b/../c/./d\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=5b0071843322b5116879eef8190b1508f7f2b56c6c40934982f9c558b2cdfbcd"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "PUT",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "payload-!*'();:@&=+$,?#[]",
+  "host": "backups.s3.example",
+  "request_uri": "/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "PUT\n/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:backups.s3.example\nx-amz-content-sha256:99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n99cec7aae6799e75f56b8d7e147a499c93d0bbde86211e8858cb8a239431a982",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=352d7c99ec79cadd216db50ec670be2f14138418f51ea6deca6066cb028e97e6"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "GET\n/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=7ecd86a66d9cc75cee80ed2178dc110d2dadaa8817d31901ce455347d55ac232"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "!*'();:@&=+$,?#[]",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D",
+  "canonical_request": "DELETE\n/%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%3F%23%5B%5D\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=da0bb670fb8e520a22726b890cd66d2c2ce1c3d730a2fd7af74b8cd8302f56fd"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "PUT",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "payload-a%2Fb",
+  "host": "backups.s3.example",
+  "request_uri": "/a%252Fb",
+  "canonical_request": "PUT\n/a%252Fb\n\nhost:backups.s3.example\nx-amz-content-sha256:5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\n5d52026415084ae30002506df1a54e7bc1a1beb3ad773eaa00ec45a707b91fbb",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=ccd4951bcaa45a2178d2a2dda97f58ba2e881ebce51551191904b4fc544790b1"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/a%252Fb",
+  "canonical_request": "GET\n/a%252Fb\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=446570445c12b57f482ab50046eb60ea60377a48c9f64205e2b2e83aa327294a"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "DELETE",
+  "key": "a%2Fb",
+  "query": [],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/a%252Fb",
+  "canonical_request": "DELETE\n/a%252Fb\n\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=43368bf1eb0607ddf2007c130bfb09d700c077015a6e20cb199d3f0b8620e5ca"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "a +/雪%"
+   ],
+   [
+    "max-keys",
+    "256"
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/?encoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25",
+  "canonical_request": "GET\n/\nencoding-type=url&list-type=2&max-keys=256&prefix=a%20%2B%2F%E9%9B%AA%25\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=c46c60d49c826897e7164ad3451a2d5ab9f6533958b79783e7492ecd52227360"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "list-type",
+    "2"
+   ],
+   [
+    "prefix",
+    "hub/config/"
+   ],
+   [
+    "continuation-token",
+    "1/a+b=c=="
+   ],
+   [
+    "encoding-type",
+    "url"
+   ]
+  ],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/?continuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F",
+  "canonical_request": "GET\n/\ncontinuation-token=1%2Fa%2Bb%3Dc%3D%3D&encoding-type=url&list-type=2&prefix=hub%2Fconfig%2F\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=8a1d094ef8f33c58e2a095a645e3ee41b9749541f2def671214ad3ca29311914"
+ },
+ {
+  "virtual_host": true,
+  "endpoint": "http://s3.example",
+  "region": "auto",
+  "method": "GET",
+  "key": "",
+  "query": [
+   [
+    "a-b",
+    "1"
+   ],
+   [
+    "a",
+    "2"
+   ],
+   [
+    "a",
+    "1"
+   ]
+  ],
+  "payload": "",
+  "host": "backups.s3.example",
+  "request_uri": "/?a=1&a=2&a-b=1",
+  "canonical_request": "GET\n/\na=1&a=2&a-b=1\nhost:backups.s3.example\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20260928T010203Z\n\nhost;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "authorization": "AWS4-HMAC-SHA256 Credential=access/20260928/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=3dc93f648ffc5a72cbeb53dc4bbc3638f5f403f0014b5fc8719c1819ed99a0a9"
+ }
+]

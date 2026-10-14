@@ -1,0 +1,57 @@
+[Unit]
+Description=Heron monitoring agent
+# 采集只读 /proc、/sys 与配置；加固项若遮蔽了采集路径不会以启动失败显形，
+# scripts/install-accept.sh 在 systemd 主机上同时跑服务与 root 手动运行的 agent，要求两者上报的字段集合、
+# 内存总量与 bootId 一致，以此发现采集缩水。
+# 执行环境识别只看本服务进程自己的挂载与文件：cgroup 挂载根上的 cgroup.type，与被消费
+# /proc 文件（stat/meminfo/loadavg/cpuinfo）的来源。两条不变式：其一，服务
+# 进程不得有独立的 cgroup namespace——挂载根会变成服务自身的 cgroup，识别会把它误当
+# 执行环境；其二，服务必须能看到 /sys/fs/cgroup 与上述四个 /proc 文件，被遮蔽时对应
+# 资源缺读数而不是启动失败。本单元现有的私有挂载命名空间（ProtectSystem=strict、
+# PrivateTmp、ProtectHome）只添加只读重挂与私有 /tmp，不换这两个挂载的文件系统实例：
+# 实测：Incus guest（Debian 12 / systemd 252）上用本单元实跑识别探针，服务
+# 内的识别与同配置 guest 中由 shell 运行的结果逐字段相同，服务级 MemoryMax=128M 不改变
+# 识别与读数。
+# 调整本节隔离或文件系统项前，须在新机器上重跑同款对照，
+# 未实测过的隔离项不得加入。
+After=network-online.target
+Wants=network-online.target
+# 异常退出后不设次数上限。Debian 12 / systemd 252.39-1~deb12u2 实测：默认 Restart=on-failure
+#（无 RestartSec、无 StartLimitIntervalSec）在配置为非法 JSON 时 NRestarts 到 5 即 failed，
+# journal 为 "Start request repeated too quickly"，此后 70 秒不再拉起。StartLimitIntervalSec=0 取消这个上限。
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# install.sh 停服务后按"有效 uid 等于 heron-agent 且可执行文件是 /usr/local/bin/heron-agent"确认
+# 进程都已退出，前提是本服务的每个进程都以它运行、都从这份二进制启动；
+# 新增以其他身份运行的 Exec*（如 ExecStartPre=+）、改用 DynamicUser= 或从别处启动同名进程时
+# 必须同步改那里的判据。
+User=heron-agent
+Group=heron-agent
+ExecStart=/usr/local/bin/heron-agent run --config /etc/heron-agent/config.json
+Restart=on-failure
+# 间隔 5 秒。同一台 Debian 12 机器上，RestartSec=5 与 StartLimitIntervalSec=0 在非法 JSON 下
+# 72 秒内 NRestarts 从 0 增到 13，相邻两次增加间隔约 5 秒，没有进入 failed。
+RestartSec=5
+# agent 的 prober.Scheduler.Apply 与 client.limitedTransport 分别限制任务数和响应体；此处只作纵深防御。
+# 2026-09-29，OrbStack LXC Debian 12.15 arm64 / systemd 252.39-1~deb12u2 / cgroup v2，
+# 连接一个 hub，64 个 ICMP 任务以 5 秒间隔探测已放行的 127.0.0.1，全部有结果后持续 3 分钟：
+# VmHWM 结束时 12344 KiB（期间采样最高 13444 KiB），服务 cgroup memory.peak 为 21389312 字节。
+# cgroup 峰值约 20.40 MiB，取六倍后向上取整到 128 MiB，为 Go GC、并发探测及不同平台留余量；
+# 该负载不代表所有负载的最坏峰值。内核须提供 memory 控制器，安装验收按主进程 cgroup 回读生效值。
+MemoryMax=128M
+# 裸机 Debian/Ubuntu/Alpine 的 ping_group_range 默认关闭，没有 CAP_NET_RAW 时
+# ICMP 探测只能回报 error；Rocky 9 放开是发行版默认值，不作依赖。
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# 用户由安装脚本创建并拥有配置文件（0600），OpenRC 侧以同一用户运行：这里用静态 User=，
+# 需要的加固逐项写出，不经 DynamicUser= 隐式引入。RestrictSUIDSGID= 是 DynamicUser= 会隐含的一项，在此明写。
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+import "google/protobuf/descriptor.proto";
+
+// Access 声明 AdminService 的方法接受哪种凭据，由挂载时绑定的拦截器在构造时读出并裁决。
+// 每个方法都必须显式声明：ACCESS_UNSPECIFIED 让 hub 在构造处理器时拒绝启动，
+// 因而不存在"漏标时默认放行还是默认拒绝"的取舍。
+enum Access {
+  ACCESS_UNSPECIFIED = 0;
+  // 登录入口：校验请求体里的密码与第二因素，或 Passkey 挑战响应，不需要现有会话或 API token。
+  ACCESS_LOGIN = 1;
+  // 无副作用，不列出或管理任何凭据，也不回显可能含密钥的内容——配置本身，或外部接收方对它的回显：
+  // 会话与 API token 都可调用。把方法改成 ACCESS_READ 就是扩大 API token 的权限。
+  ACCESS_READ = 2;
+  // 仅会话：有副作用的方法，以及凭据管理（包括只读的 ListApiTokens——自动化进程
+  // 没有理由知道还有哪些 token 存在），以及回显可能含密钥的内容的方法（如
+  // ListNotifyChannels：webhook 请求体模板里可能放着密钥；GetAlertDeliveryError：
+  // 接收方可能在错误响应里回显收到的请求体）。
+  ACCESS_SESSION = 3;
+  // 类型化变更入口：会话或具有相应预授权的 API token，资源范围在写事务内再次裁决。
+  ACCESS_CHANGE = 4;
+}
+
+extend google.protobuf.MethodOptions {
+  // 50000–99999 是留给组织内部扩展的字段号区间。
+  Access access = 50001;
+}

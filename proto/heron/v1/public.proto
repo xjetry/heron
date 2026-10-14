@@ -1,0 +1,211 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+import "heron/v1/cache.proto";
+import "heron/v1/query.proto";
+import "heron/v1/types.proto";
+
+// 公开页与第三方主题 → hub。没有鉴权，不需要也不看任何凭据；按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源）：
+// 每个来源桶容量 60、每秒补充 10，超出返回 ResourceExhausted。只对标为公开的节点应答，未公开的节点与不存在的节点得到同一个 NotFound。
+// 方法都无副作用，可用 GET 调用：/heron.v1.PublicService/<方法>?connect=v1&encoding=json&message=<URL 编码的 JSON 请求>。
+// GET 的成功响应带 Cache-Control: max-age=<cache_max_age_s>，失败响应带 no-store；POST 响应不带缓存头。
+// Settings.public_enabled 关闭时所有方法（包括 GetSite）返回 NotFound；快照字节缓存仍可在 1 秒内命中。
+service PublicService {
+  // 站点外观：标题、明暗、主色、logo 与自定义 CSS。
+  rpc GetSite(GetSiteRequest) returns (PublicSite) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 300;
+  }
+  // 全部公开节点的实时状态。请求是规范形态时（GET 的 message 为 JSON {} 或 proto 空消息，POST 的正文为 {} 或空，
+  // 不带压缩与 Connect-Timeout-Ms；connect-web 与 curl 的写法都是），hub 按编码缓存响应字节 1 秒，窗口内不再序列化；
+  // 其余形态每次序列化。节点改为非公开后，hub 最多再下发它 1 秒；GET 响应另带 max-age=1，浏览器与中间缓存还可再用 1 秒。
+  rpc GetSnapshot(PublicServiceGetSnapshotRequest) returns (PublicSnapshot) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 1;
+  }
+  // 公开节点一段时间的指标历史；请求与响应和 AdminService.QueryMetrics 相同。
+  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 60;
+  }
+  // 公开节点一段时间的探测历史。当前分配给该节点的任务，序列带种类与目标：把节点标为公开即公开它正在探测的目标。
+  // 历史里有、但已从该节点撤下的任务不带这两项，客户端退回用 task_id 称呼。
+  rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 60;
+  }
+  // 跨节点对比的第一步：当前分配了该任务的公开节点与任务标注。任务只分配给了非公开节点时返回 NotFound，
+  // 与任务不存在相同，不暴露它的存在。节点改为非公开后，GET 响应最多再被缓存使用 60 秒。
+  rpc ListProbeComparisonNodes(ListProbeComparisonNodesRequest) returns (ListProbeComparisonNodesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 60;
+  }
+  // 跨节点对比的第二步：一个任务在一组公开节点上的探测历史；非公开或不存在的节点列入 unavailable_node_ids。
+  rpc QueryProbeComparison(QueryProbeComparisonRequest) returns (QueryProbeComparisonResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 60;
+  }
+}
+
+message GetSiteRequest {}
+
+// 公开页外观，取值约束见 AdminService.UpdateSettings。空串表示该项用公开页的默认值。
+message PublicSite {
+  string title = 1;
+  // auto、light 或 dark。
+  string theme = 2;
+  // #rrggbb 或空串。
+  string accent_color = 3;
+  // data:image/…;base64,… 或空串。
+  string logo = 4;
+  // 放在公开页内置样式之后的 CSS；不含 "</"。
+  string custom_css = 5;
+  // 应答这次请求的 origin 上管理面板的入口路径（/admin/），供公开页放登录入口；该 origin 上没有面板时为空串。
+  // 主题 SDK 桥接不转交此字段，主题不能通过桥接调用管理服务。
+  string admin_path = 6;
+}
+
+message PublicServiceGetSnapshotRequest {}
+
+message PublicSnapshot {
+  // hub 墙钟，Unix 秒；客户端据此显示"多久之前"而不依赖自己的时钟。
+  int64 now = 1;
+  // hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
+  uint32 report_interval_ms = 2;
+  // 按 sort_order、id 升序。
+  repeated PublicNode nodes = 3;
+  // nodes 里各节点标签的并集，每个标签一次（Node.tags 的写法），按标签名的大小写折叠键排序，与管理端 ListTags 同序。
+  // 公开页的标签栏照它渲染：顺序由 hub 的折叠键定，客户端不必复刻折叠规则。
+  repeated string tags = 4;
+}
+
+message PublicNode {
+  int64 id = 1;
+  string name = 2;
+  // 在线 ⇔ 距最近一次上报不足 TTL，hub 是唯一裁决者。
+  bool online = 3;
+  // 最近一次上报的墙钟 Unix 秒；从未上报则缺失。
+  optional int64 last_seen_at = 4;
+  // 管理员在面板里定的顺序；nodes 已按它排好。
+  int32 sort_order = 5;
+  // 主机静态信息的公开部分；从未上报且没有手填出口地址则缺失。从未上报但管理员手填了出口地址的节点只有 network
+  // （手填的族为 AVAILABLE），其余字段为零值。
+  PublicFacts facts = 6;
+  // 最近一次上报的读数；从未上报则缺失，离线节点仍带最后一次读数。
+  PublicMetrics metrics = 7;
+  // hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
+  Traffic traffic = 8;
+  // 计费与到期的公开部分；五项都没填时缺失。
+  PublicBilling billing = 9;
+  // 国家 / 地区的显示值，与 Node.country 相同，空串表示没有。只放行这个值：查得于哪个地址、来源是手动还是
+  // 查得都不公开——公开页表达"在哪个区域"，不定位机器。
+  string country = 10;
+  // 节点标签，与 Node.tags 同一口径（先建的写法、按折叠排序）。只有公开节点进快照，私有节点的标签不出现；标签常写用途与
+  // 归属（db、客户A），挂在公开节点上即对外可见，没有单独的公开开关。
+  repeated string tags = 11;
+  // 维护状态，与 Node.maintenance 相同：公开页据此显示"维护中"徽章。
+  bool maintenance = 12;
+  // 公开备注，与 Node.public_remark 相同：站长写给访客的一行说明（如线路类型）。空串表示没有。公开快照只包含
+  // 公开节点，这个字段不携带额外的可见范围：私有节点的备注不经公开端下发。
+  string public_remark = 13;
+  // 已出租，与 Node.rented 相同：公开页据此显示"已出租"，不画读数、不上到期色。
+  bool rented = 14;
+}
+
+// Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
+// 不公开，号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
+message PublicBilling {
+  reserved 5;
+  reserved "auto_renew";
+  // 价格，十进制文本（如 12.50）；空表示未填。
+  string price = 1;
+  // ISO 4217 币种代码；价格非空时必有。
+  string currency = 2;
+  BillingCycle billing_cycle = 3;
+  // 到期日 YYYY-MM-DD；空表示没有到期日。
+  string expires_on = 4;
+  // 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
+  optional int32 days_left = 6;
+}
+
+// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、诊断与执行环境不公开，
+// 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
+message PublicFacts {
+  reserved 1, 3, 8, 9, 11, 12;
+  reserved "hostname", "kernel", "agent_version", "icmp_available", "diagnostics", "execution";
+  string os = 2;
+  string arch = 4;
+  string virtualization = 5;
+  string cpu_model = 6;
+  // 与 Facts.cpu_cores 同号同义：agent 所在执行环境的有效核数。
+  uint32 cpu_cores = 7;
+  // 双栈出口：每个地址族只公开显示状态，地址与探测时间不公开。缺失表示两族都没有显示值（agent 不报双栈出口，
+  // 也没有手填，hub 也没记到该族公网来源）。
+  PublicNetworkInfo network = 10;
+}
+
+// NetworkInfo 的公开部分，字段号相同。某个地址族缺失表示它没有显示值：还没探测过（agent 启动后首轮探测完成前
+// 报的是空的 network），没有手填，hub 也没记到该族公网来源。
+message PublicNetworkInfo {
+  PublicAddressDetection ipv4 = 1;
+  PublicAddressDetection ipv6 = 2;
+}
+
+// AddressDetection 的公开部分，字段号相同。出口地址与探测时间不公开，号与名保留。
+message PublicAddressDetection {
+  reserved 2, 3;
+  reserved "address", "checked_at";
+  // 取自管理端的显示值（Node.network），不是 agent 原报。
+  // AVAILABLE：agent 经该地址族连上外部探测服务并拿到了公网地址，即这台机器有该族的公网出口；或管理员手填了该族的
+  // 公网地址（运维断言该族有公网入口，用于探测不到的主机）；或该族没有手填、agent 没报到可用结果（原报缺该族或
+  // FAILED），而 hub 在 Report 上看到的来源（Node.last_source，经 --trusted-proxies 解析）是该族公网地址——hub 看到的
+  // 来源，不是 agent 的自述，也不是运维的断言。
+  // UNSUPPORTED：本机该族只有回环、链路本地地址（私网地址算可用，可经 NAT 出网），或连接时系统报网络不可达、
+  // 不支持该地址族。FAILED：这一轮探测没成功（超时、DNS 失败、服务异常），不能据此判断有没有出口。
+  // DISABLED：手填刚清空，agent 还没恢复该族的探测；随后的上报会换成探测结果。
+  // agent 每 5 分钟探测一次。
+  AddressDetectionState state = 1;
+}
+
+// 与 Metrics 同字段号、同语义，但不公开启动标识与网卡集合标识。每个读数都是 optional：
+// 缺失表示无读数，与读数为 0 是两个不同的事实。
+message PublicMetrics {
+  reserved 1, 20;
+  reserved "boot_id", "net_counter_epoch";
+  optional double cpu_pct = 2;
+  optional double load1 = 3;
+  optional double load5 = 4;
+  optional double load15 = 5;
+  optional uint64 mem_total = 6;
+  optional uint64 mem_used = 7;
+  optional uint64 swap_total = 8;
+  optional uint64 swap_used = 9;
+  optional uint64 disk_total = 10;
+  optional uint64 disk_used = 11;
+  // 内核累计计数器，字节。
+  optional uint64 net_rx_total = 12;
+  optional uint64 net_tx_total = 13;
+  // agent 自测的瞬时速率，字节/秒。
+  optional uint64 net_rx_bps = 14;
+  optional uint64 net_tx_bps = 15;
+  optional uint32 tcp_conns = 16;
+  optional uint32 udp_conns = 17;
+  optional uint32 procs = 18;
+  optional uint64 uptime_s = 19;
+  // 整盘设备读/写速率，字节/秒。
+  optional uint64 disk_read_bps = 21;
+  optional uint64 disk_write_bps = 22;
+  // steal 与 iowait 占比，百分比。
+  optional double cpu_steal_pct = 23;
+  optional double cpu_iowait_pct = 24;
+  // 按核负载，与 Metrics.load1_per_core 同号同义。容器节点上它的分母是主机核数，与公开的 load1 一起可推出主机核数。
+  optional double load1_per_core = 25;
+  // TCP 建连与段的采样速率，与 Metrics 同号同义；重传率 = Σtcp_retrans_segs_ps ÷ Σtcp_out_segs_ps × 100。
+  optional double tcp_active_opens_ps = 26;
+  optional double tcp_passive_opens_ps = 27;
+  optional double tcp_out_segs_ps = 28;
+  optional double tcp_retrans_segs_ps = 29;
+}

@@ -1,0 +1,413 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron/gen/heron/v1;heronv1";
+
+// 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
+// 与读数为 0 是两个不同的事实，从协议一直保持到图表。
+message Metrics {
+  // 启动周期标识，随计数器同一条消息到达：流量差分必须在同一条消息里
+  // 同时拿到计数器与它所属的启动周期，否则重启后的首次上报会被误当增量。
+  // 空串（读不到）或 UUID 文本（8-4-4-4-12 位十六进制，大小写均可：Linux 的
+  // /proc/sys/kernel/random/boot_id、macOS 的 kern.bootsessionuuid）；hub 拒收其他写法的整条上报。
+  string boot_id = 1;
+  optional double cpu_pct = 2;
+  optional double load1 = 3;
+  optional double load5 = 4;
+  optional double load15 = 5;
+  optional uint64 mem_total = 6;
+  optional uint64 mem_used = 7;
+  optional uint64 swap_total = 8;
+  optional uint64 swap_used = 9;
+  optional uint64 disk_total = 10;
+  optional uint64 disk_used = 11;
+  // 内核累计计数器，实际计入的网卡逐项 uint64 相加（2^64 字节回绕）。请求带 ReportRequest.net_interfaces 时
+  // hub 用列表推导的合计覆盖这里（agentwire.NetInterfaceSummary；agent 可以不重复发送），并据列表逐网卡做差分；
+  // 不带列表时（超出网卡上限或网络采集失败）hub 对合计做差分。同时带了列表与合计时，hub 不核对两者是否一致，仍以推导值覆盖。
+  optional uint64 net_rx_total = 12;
+  optional uint64 net_tx_total = 13;
+  // agent 按本地采样间隔测得的 bytes/s；用于实时视图和历史采样峰值。逐网卡求差后相加：只计两次采样都在、收发都不
+  // 倒退的网卡；首样本或没有任何网卡满足时缺失，不伪造零值。
+  optional uint64 net_rx_bps = 14;
+  optional uint64 net_tx_bps = 15;
+  optional uint32 tcp_conns = 16;
+  optional uint32 udp_conns = 17;
+  optional uint32 procs = 18;
+  optional uint64 uptime_s = 19;
+  // 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
+  // 集合改变时仅重建差分基线，不把换掉的网卡计数当新增流量。空串表示这次合计没有附带集合摘要：
+  // 账本只在摘要相同且计数不倒退时入账，空摘要与任何带摘要的列表都对不上，只重建基线。
+  // 请求带 ReportRequest.net_interfaces 时，hub 只校验非空摘要的格式，不核对它是否等于推导值；带列表时 agent 可以不发送，由 hub 推导并覆盖。
+  string net_counter_epoch = 20;
+  // agent 本地两次采样间整盘设备读/写字节速率合计，bytes/s；按设备集合整体求差：
+  // 首样本、设备集合变化或任一设备计数回退时缺失，不伪造零值。
+  optional uint64 disk_read_bps = 21;
+  optional uint64 disk_write_bps = 22;
+  // steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
+  // 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
+  optional double cpu_steal_pct = 23;
+  optional double cpu_iowait_pct = 24;
+  // 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
+  // 负载范围无法确定、或该范围的核数无从得知时缺失（例如 LXC guest 里 /proc/loadavg 由 lxcfs 提供）；
+  // 出现时 load1 必然同时出现。缺失不是 0。
+  optional double load1_per_core = 25;
+  // TCP 计数的采样速率：/proc/net/snmp 的 ActiveOpens、PassiveOpens、OutSegs、RetransSegs
+  // 两次采样之差除以单调钟间隔。四项同一次读取，同时出现或同时缺失（hub 准入）；首样本、计数回退时缺失；
+  // darwin 不设置。计数属于 agent 所在的网络命名空间，IPv4 与 IPv6 计入同一组。
+  // 重传率不在协议里：同一组样本上 Σtcp_retrans_segs_ps ÷ Σtcp_out_segs_ps × 100，先求和再相除。
+  optional double tcp_active_opens_ps = 26;   // 主动建连尝试（含被拒），次/秒
+  optional double tcp_passive_opens_ps = 27;  // 被动接受的连接，次/秒
+  optional double tcp_out_segs_ps = 28;       // 发出段，段/秒
+  optional double tcp_retrans_segs_ps = 29;   // 重传段，段/秒
+}
+
+// 一张计入网络合计的网卡的内核累计计数，与同一请求的 Metrics 同一次采样。
+message NetInterfaceCounter {
+  // 网卡名：非空 UTF-8、无控制字符、至多 64 字节（与 AgentDiagnostics.net_interfaces 同一准入，agentwire.ValidateInterfaceName）。
+  string name = 1;
+  uint64 rx_bytes = 2;
+  uint64 tx_bytes = 3;
+}
+
+// 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
+message Facts {
+  string hostname = 1;
+  string os = 2;
+  string kernel = 3;
+  string arch = 4;
+  string virtualization = 5;
+  string cpu_model = 6;
+  // agent 所在执行环境的有效核数（可见上限）的上取整：主机范围是主机的处理器数；容器或 guest 的 cgroup 范围
+  // 是 cpu.max 折算的配额核数与 cpuset 核数的较小者（1.5 核报 2），cgroup v1 等旧读法是 /proc/cpuinfo 的处理器数；
+  // 精确值见 execution.cpu_effective_cores。
+  // 有效核数无法确定时为 0。只做展示；按核负载用 Metrics.load1_per_core，不再用它作分母。
+  uint32 cpu_cores = 7;
+  string agent_version = 8;
+  // 两种 ICMP socket 是否至少一种可用。
+  bool icmp_available = 9;
+  // agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。始终是 agent 的原报：管理员手填的地址
+  // （Node.ipv4_pin / ipv6_pin）不写进这里，面板显示的是两者合成的 Node.network。
+  NetworkInfo network = 10;
+  // 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
+  // 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
+  AgentDiagnostics diagnostics = 11;
+  // 每个资源按哪个范围采样、可见上限是多少，与本条 Facts 同一次识别；仅管理端可读。缺失表示这次没有上报执行环境，与空对象不同：空对象的 kind 是未指定，校验会拒绝。
+  // 这是 agent 自报的信息，容器里的进程能伪造它读取的文件；hub 不据此授予任何权限。
+  ExecutionScope execution = 12;
+}
+
+// 一次识别的结果。识别看两件事：cgroup 挂载根是不是非根 cgroup（有 cgroup.type 即容器或 guest 的命名空间根），
+// 以及被读取的每个 /proc 文件实际所在的文件系统（procfs、lxcfs 或其他）。来源无法确定的资源缺读数，
+// 不改用另一个范围的数。容量都是"可见上限"：命名空间里看不到的祖先 cgroup 配额与内存上限不计入。
+message ExecutionScope {
+  ScopeKind kind = 1;
+  ResourceScope cpu = 2;
+  ResourceScope memory = 3;
+  ResourceScope swap = 4;
+  ResourceScope load = 5;
+  // 本次识别的有效核数精确值；CPU 范围未知时缺失。
+  optional double cpu_effective_cores = 6;
+  // 本次识别的内存、swap 可见上限，字节。缺失表示该资源范围未知，或范围已知而总量读不出；出现即是已知值。
+  // swap 的 0 是已知值（主机没有 swap，或环境的 memory.swap.max 为 0），不能省略成缺失；内存上限出现时必为正。
+  optional uint64 memory_limit_bytes = 7;
+  optional uint64 swap_limit_bytes = 8;
+  // Metrics.load1_per_core 的分母：负载所在范围的核数；缺失即本次不上报按核负载。
+  optional uint32 load_cores = 9;
+  // 固定类别的说明，按枚举值升序、去重，至多 8 个；读者忽略不认识的值。kind 不是 IDENTIFY_FAILED 时，只要有资源
+  // 的范围是 UNKNOWN，就至少有一条说明给出原因（IDENTIFY_FAILED 本身就是原因）。
+  repeated ScopeNote notes = 10;
+}
+
+enum ScopeKind {
+  // 不是一次识别结果。带 ExecutionScope 时 kind 必须是后面的非零值；整段 execution 缺失才表示没有上报。
+  SCOPE_KIND_UNSPECIFIED = 0;
+  // 挂载根是真正的根 cgroup，或非 Linux：读数是整台主机。
+  SCOPE_KIND_HOST = 1;
+  // 挂载根是非根 cgroup（容器或 guest 的命名空间根）：读数是这个 cgroup 的。
+  SCOPE_KIND_CGROUP_NAMESPACE = 2;
+  // cgroup v1、混合挂载或没有 cgroup2：沿用旧读法，范围未区分。
+  SCOPE_KIND_CGROUP_V1_LEGACY = 3;
+  // 挂载根的状态读不出（权限等错误）：依赖它的资源都缺读数。
+  SCOPE_KIND_IDENTIFY_FAILED = 4;
+}
+
+enum ResourceScope {
+  // 不是合法的资源范围。带 ExecutionScope 时各资源必须给出非未指定的范围。
+  RESOURCE_SCOPE_UNSPECIFIED = 0;
+  // 整台主机。
+  RESOURCE_SCOPE_HOST = 1;
+  // agent 所在容器或 guest 的 cgroup。
+  RESOURCE_SCOPE_ENVIRONMENT = 2;
+  // 来源无法确定或读不到：该资源本次缺读数。
+  RESOURCE_SCOPE_UNKNOWN = 3;
+  // cgroup v1 等旧读法，范围未区分。
+  RESOURCE_SCOPE_LEGACY = 4;
+}
+
+enum ScopeNote {
+  SCOPE_NOTE_UNSPECIFIED = 0;
+  // 检测到容器标识（/.dockerenv、/run/.containerenv、container= 环境变量、/run/systemd/container），而挂载根是主机的
+  // 根 cgroup：读数是整台主机，不是这个容器的。
+  SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT = 1;
+  // /proc/self/mountinfo 读不了或解析失败，/proc 文件的来源都无法确定。
+  SCOPE_NOTE_MOUNTINFO_UNREADABLE = 2;
+  // /proc/loadavg 由 lxcfs 或其他文件系统提供，负载的范围无法确定。
+  SCOPE_NOTE_LOADAVG_NOT_PROCFS = 3;
+  // /proc/cpuinfo 不是 procfs，主机核数无从得知（按核负载因此缺失）。
+  SCOPE_NOTE_CPUINFO_NOT_PROCFS = 4;
+  // 环境 cgroup 上 memory.current、memory.stat 或 memory.max 缺失或读不出：内存缺读数。memory 控制器未下放时
+  // swap 的文件也一起缺失，同时会有 SWAP_ACCOUNTING_MISSING。
+  SCOPE_NOTE_MEMORY_CONTROLLER_MISSING = 5;
+  // 环境 cgroup 上 memory.swap.current 或 memory.swap.max 缺失或读不出：swap 缺读数。
+  SCOPE_NOTE_SWAP_ACCOUNTING_MISSING = 6;
+  // 挂载根是真根而 /proc/stat 不是 procfs 或来源无法确定：CPU 缺读数。环境 cgroup 不读 /proc/stat，不记这一条。
+  SCOPE_NOTE_PROC_STAT_NOT_PROCFS = 7;
+  // /proc/meminfo 的来源不可用：真根要求 procfs，环境 cgroup 要求 procfs 或 lxcfs。真根上内存与 swap 因此缺读数；
+  // 环境里 memory.max、memory.swap.max 为数值时可见上限就是它们，为 max 时对应资源缺读数。
+  SCOPE_NOTE_MEMINFO_UNUSABLE = 8;
+  // 环境 cgroup 的 cpu.max 或 cpuset.cpus.effective 读不出、认不出，或 cpu.stat 不存在：CPU 缺读数。
+  // cpuset.cpus.effective 不存在（cpuset 控制器未下放）不算，那时有效核数取 /proc/cpuinfo。
+  SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE = 9;
+}
+
+message AgentDiagnostics {
+  // 生效的包含/排除规则，包含非空时排除必须为空；排除已展开平台缺省值。
+  // 每组至多 64 个 glob，每个至多 128 字节。
+  repeated string net_include = 1;
+  repeated string net_exclude = 2;
+  // 最近成功采样实际计入的网卡，按名称排序，最多前 128 个，每个至多 64 字节。
+  // 本次网络采集失败时为空，不回显上一次的集合冒充当前采集结果。
+  repeated string net_interfaces = 3;
+  // 实际计入的总数；大于 net_interfaces 长度表示展示列表被截断，计数和集合摘要仍覆盖全集。
+  uint32 net_interfaces_total = 4;
+  // 固定失败类别，不承载由文件内容或网络对端产生的原始错误文本；空列表表示本次采集无错误。
+  repeated CollectionComponent failed_collectors = 5;
+  // Agent 当前生效的上报间隔（毫秒），不含请求耗时和失败退避；0 表示尚未知。
+  uint32 report_interval_ms = 6;
+  // 本次采样是否启用了结构规则：Linux 上未显式给出包含或排除规则时为真，其余为假。
+  bool net_structure_rules = 7;
+  // 被结构规则排除的网卡与原因，按名称字节序严格递增，最多前 128 项；名称准入同 net_interfaces。
+  // 规则未启用、本次退回或网络采集失败时为空。
+  repeated NetStructureExclusion net_structure_excluded = 8;
+  // 被结构规则排除的总数；大于列表长度表示展示列表被截断。
+  uint32 net_structure_excluded_total = 9;
+  // 结构规则把名字规则放行的网卡全部排除，本次退回只按名字规则计入；此时排除列表为空。
+  bool net_structure_fallback = 10;
+}
+
+message NetStructureExclusion {
+  string name = 1;
+  NetStructureReason reason = 2;
+}
+
+// 结构规则的固定原因类别，由 agent 按 sysfs 判定，不承载原始文件内容。
+enum NetStructureReason {
+  NET_STRUCTURE_REASON_UNSPECIFIED = 0;
+  // 有 lower_* 链接：叠加在同一网络命名空间的另一张网卡上（网桥、bond、VLAN、macvlan、ipvlan、带底层的 vxlan）。
+  NET_STRUCTURE_REASON_STACKED = 1;
+  // 有 brport 而没有 device：挂在网桥上的虚拟口（tap、veth）。
+  NET_STRUCTURE_REASON_BRIDGE_PORT = 2;
+  // uevent 的 DEVTYPE 为 vxlan 或 geneve：不带底层网卡的 overlay。
+  NET_STRUCTURE_REASON_OVERLAY = 3;
+  // type 为三层隧道的 ARPHRD 值：tun、WireGuard、ipip、ip6tnl、sit、gre、ip6gre。
+  NET_STRUCTURE_REASON_TUNNEL = 4;
+}
+
+enum CollectionComponent {
+  COLLECTION_COMPONENT_UNSPECIFIED = 0;
+  COLLECTION_COMPONENT_BOOT_ID = 1;
+  COLLECTION_COMPONENT_CPU = 2;
+  COLLECTION_COMPONENT_MEMORY = 3;
+  COLLECTION_COMPONENT_SWAP = 4;
+  COLLECTION_COMPONENT_DISK = 5;
+  COLLECTION_COMPONENT_LOAD = 6;
+  COLLECTION_COMPONENT_PROCS = 7;
+  COLLECTION_COMPONENT_UPTIME = 8;
+  COLLECTION_COMPONENT_CONNS = 9;
+  COLLECTION_COMPONENT_NET = 10;
+  // 磁盘 I/O 计数器（/proc/diskstats）与磁盘用量（statfs）是两种来源，失败各自成类，
+  // 面板才不会把"没有可计的整盘设备"显示成磁盘用量采集失败。
+  COLLECTION_COMPONENT_DISK_IO = 11;
+  // /proc/net/snmp 的 TCP 计数；平台不提供时（darwin）不记失败。
+  COLLECTION_COMPONENT_TCP_STATS = 12;
+}
+
+// NetworkInfo 保留 agent 对两个地址族的原始探测结果；AddressDetection 的状态与地址由
+// agentwire.ValidateNetwork 一起校验，只有 AVAILABLE 能携带对应地址族的公网地址。
+// 管理端可对照原报与手填显示值，公开投影只保留地址族状态，不复制地址。
+message NetworkInfo {
+  AddressDetection ipv4 = 1;
+  AddressDetection ipv6 = 2;
+}
+
+enum AddressDetectionState {
+  ADDRESS_DETECTION_STATE_UNSPECIFIED = 0;
+  ADDRESS_DETECTION_STATE_AVAILABLE = 1;
+  ADDRESS_DETECTION_STATE_UNSUPPORTED = 2;
+  ADDRESS_DETECTION_STATE_FAILED = 3;
+  // agent 按 hub 的指示停止了这一族的探测（ReportResponse.detection）：hub 在管理员为该族手填了出口地址
+  // （Node.ipv4_pin / ipv6_pin）时要求停用。没有地址；checked_at 是停用生效的时刻。停不停由 hub 决定，agent 照做。
+  // 应答不再要求停用时，agent 立即把该族退回未探测（缺失）并马上探测一次：已恢复探测，但尚无本轮结果。
+  // DISABLED 只在最近一次应答仍要求停用时出现在上报里。
+  ADDRESS_DETECTION_STATE_DISABLED = 4;
+}
+
+message AddressDetection {
+  AddressDetectionState state = 1;
+  // 仅 AVAILABLE 有地址，且必须与所在字段的地址族相符。
+  string address = 2;
+  // 当前这个结果（state + address）首次得到的时刻，Unix 秒；未探测为 0，已探测范围为 1..253402300799（9999 年末）。
+  // 同一族连续探测得到相同的 state 与 address 时 agent 沿用原值，任一变化（含转为 DISABLED、由停用退回后的第一份
+  // 结果）才取新时刻，所以它不是最近一次探测的时刻；facts_hash 覆盖整份 Facts，结果不变时摘要也不变，hub 不重新索取。
+  int64 checked_at = 3;
+}
+
+message ProbeResult {
+  uint64 task_id = 1;
+  // 测量完成至发送的时长，agent 单调钟；hub 用它反推测量时刻。
+  uint32 age_ms = 2;
+  oneof outcome {
+    uint32 rtt_us = 3;
+    // 计入丢包。
+    Timeout timeout = 4;
+    // 无权限、解析失败等；不计入丢包。
+    ProbeError error = 5;
+  }
+  // HTTPS 探测（HTTP 任务且 target 为 https://）握手成功时顺带带回的服务端证书到期时刻
+  // （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每个配置身份每小时至多一次。
+  // 不携带签发者与证书链。optional 区分"没带"与 0；hub 对未携带的结果不更新证书观测。
+  optional int64 cert_not_after_s = 6;
+  // 证书相关的丢包（默认校验失败、钉住后指纹不符、钉住且相符但不在有效期）带回的对方叶证书，供人工确认信任；
+  // 只随 timeout 结果，每任务每个配置身份每小时至多一次。从不自动生效。
+  PresentedCertificate presented = 7;
+  // 产生这条结果时任务的 ProbeTask.config_id，原样回显。空表示这条结果没有带回任务身份。
+  // presented 只在它与任务当前身份相等时被采信；cert_not_after_s 在身份相等时采信，身份为空时只对未钉住的任务采信。
+  bytes task_config_id = 8;
+}
+
+message PresentedCertificate {
+  // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+  bytes spki_sha256 = 1;
+  // 叶证书 NotAfter，Unix 秒，正数。
+  int64 not_after_s = 2;
+  // agent 当时的判定。
+  PresentedReason reason = 3;
+}
+
+enum PresentedReason {
+  PRESENTED_REASON_UNSPECIFIED = 0;
+  // 任务未钉指纹，按系统根证书与主机名校验失败。
+  PRESENTED_REASON_CA_VERIFY_FAILED = 1;
+  // 任务钉了指纹，对方叶证书的指纹与之不符。
+  PRESENTED_REASON_PIN_MISMATCH = 2;
+  // 任务钉了指纹且相符，但当前时刻不在证书有效期内（未生效或已过期）。
+  PRESENTED_REASON_OUTSIDE_VALIDITY = 3;
+}
+
+message Timeout {}
+
+message ProbeError {
+  string message = 1;
+}
+
+enum ProbeKind {
+  PROBE_KIND_UNSPECIFIED = 0;
+  PROBE_KIND_ICMP = 1;
+  PROBE_KIND_TCP = 2;
+  PROBE_KIND_HTTP = 3;
+  PROBE_KIND_DNS = 4;
+}
+
+message ProbeTask {
+  uint64 id = 1;
+  ProbeKind kind = 2;
+  // 按种类：ICMP 是 IP 或主机名，TCP 是 host:port，HTTP 是绝对 URL，DNS 是要解析的 DNS 名。
+  string target = 3;
+  uint32 interval_s = 4;
+  uint32 timeout_ms = 5;
+  // DNS 任务要查询的解析器，ip:port 规范形式（IPv6 带方括号），只允许 IP 字面量：解析器自身
+  // 若是名字就要先用别的解析器解析它，地址策略也就查不到实际要发包的地址。只对 DNS 任务有意义；
+  // 其他种类携带即 InvalidArgument——静默忽略会让调用方以为它生效了。
+  string dns_server = 6;
+  // 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
+  // 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
+  // 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
+  bytes cert_spki_sha256 = 7;
+  // 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
+  // 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
+  bytes config_id = 8;
+}
+
+message ProbeTasks {
+  uint64 version = 1;
+  repeated ProbeTask tasks = 2;
+}
+
+// 周期流量计入口径；启用配额时必须显式指定。
+enum TrafficQuotaMode {
+  TRAFFIC_QUOTA_MODE_UNSPECIFIED = 0;
+  TRAFFIC_QUOTA_MODE_SUM = 1;
+  TRAFFIC_QUOTA_MODE_RX = 2;
+  TRAFFIC_QUOTA_MODE_TX = 3;
+  TRAFFIC_QUOTA_MODE_MAX = 4;
+}
+
+message Traffic {
+  // 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+  uint64 total_rx = 1;
+  uint64 total_tx = 2;
+  // 当前周期内的字节数。
+  uint64 period_rx = 3;
+  uint64 period_tx = 4;
+  // 当前周期起点与下次重置时刻，Unix 秒。
+  int64 period_start = 5;
+  int64 next_reset_at = 6;
+  // 周期重置日 1–28。
+  uint32 reset_day = 7;
+  // 周期配额，0 表示未设配额；随公开节点一起公开。
+  uint64 quota_bytes = 8;
+  TrafficQuotaMode quota_mode = 9;
+  // 按 quota_mode 计算的周期用量；未设配额时仍有值。
+  uint64 quota_used_bytes = 10;
+  // 用量占配额的百分比；未设配额时缺失。实时展示可能领先于告警使用的已提交观测。
+  optional double quota_used_pct = 11;
+}
+
+// 节点的计费周期。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
+// 未指定表示没有周期（一次性付费或未填）；自动续期要求非未指定。
+enum BillingCycle {
+  BILLING_CYCLE_UNSPECIFIED = 0;
+  // 1 个月。
+  BILLING_CYCLE_MONTHLY = 1;
+  // 3 个月。
+  BILLING_CYCLE_QUARTERLY = 2;
+  // 6 个月。
+  BILLING_CYCLE_SEMIANNUAL = 3;
+  // 12 个月。
+  BILLING_CYCLE_YEARLY = 4;
+  // 24 个月。
+  BILLING_CYCLE_BIENNIAL = 5;
+  // 36 个月。
+  BILLING_CYCLE_TRIENNIAL = 6;
+  // 60 个月。
+  BILLING_CYCLE_QUINQUENNIAL = 7;
+}
+
+// 节点的计费与到期。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
+// 驱动 days_left、自动续期与到期规则。Node、CreateNodeRequest 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
+message Billing {
+  // 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。
+  string price = 1;
+  // ISO 4217 币种代码（三个大写字母）；价格非空时必填，币种可以单独填。
+  string currency = 2;
+  BillingCycle billing_cycle = 3;
+  // 到期日 YYYY-MM-DD；空表示没有到期日。保存时须为空或存在的日期。
+  string expires_on = 4;
+  // 开着时，到期日早于今天（hub 时区）即按周期推后到不早于今天。hub 启动、每个日界（零点不存在的日子取新一天的
+  // 第一个时刻）、计费字段变化与保存启用的到期规则时检查。保存时要求 billing_cycle 与 expires_on 都非空。
+  bool auto_renew = 5;
+  // 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
+  // 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
+  optional int32 days_left = 6;
+}

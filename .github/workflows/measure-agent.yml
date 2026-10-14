@@ -1,0 +1,59 @@
+name: measure-agent
+# agent 与常驻更新器在 linux/amd64 上的常驻内存。实测（GitHub 托管 runner，发布二进制，每组约 11 分钟、每 60 秒读 /proc/<pid>/status）：agent VmRSS 17.5–21.6 MB、峰值 22.5 MB，常驻更新器 18.5–19.1 MB；64 个探测任务与无任务、GOMAXPROCS 默认与 1 之间差在 2.5 MB 以内。只能手动触发：测量占一台运行器一个多小时，
+# 结论由人读 artifact，不进任何门禁。
+#
+# 运行器是一次性的 Linux 虚拟机（有 systemd 与 Docker）：systemd 形态用发布资产里的 install.sh 直接装在运行器上，
+# 与生产节点同一安装路径；container 形态在容器里运行本树构建的 agent。两种形态各测 T=0 / T=64 与 GOMAXPROCS
+# 默认 / 1，每组每分钟采一次 /proc/<pid>/status（scripts/wirebench/measure-agent.sh）。
+# 只读权限：发布资产经 gh release download 取得，不推送、不发布任何东西。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: release tag whose agent and updater packages are installed (empty = the bound version in AGENT_VERSION)
+        required: false
+        default: ''
+      minutes:
+        description: minutes per measurement group (at least 10)
+        required: false
+        default: '11'
+permissions:
+  contents: read
+jobs:
+  rss-linux-amd64:
+    runs-on: ubuntu-24.04
+    # systemd 形态四组逐个执行（各 minutes 分钟加安装），container 形态四组与之并行；这一条兜住它们之外的挂起。
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      # 输入经环境变量传入、在 shell 里校验，不展开进脚本源码：tag 名可以含改写命令的字符。
+      - name: Download the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          version=${VERSION_INPUT:-$(sed -n 1p AGENT_VERSION)}
+          case "$version" in v[0-9]*) ;; *) echo "version must look like v0.11.1: $version" >&2; exit 1;; esac
+          case "$version" in *[!A-Za-z0-9_.-]*) echo "version may only contain [A-Za-z0-9_.-]" >&2; exit 1;; esac
+          mkdir -p build/wirebench/release
+          gh release download "$version" -R "$GITHUB_REPOSITORY" -D build/wirebench/release
+          (cd build/wirebench/release && sha256sum -c SHA256SUMS)
+      - name: Measure
+        env:
+          MINUTES: ${{ inputs.minutes }}
+        run: scripts/wirebench/measure-agent.sh build/wirebench/release "$MINUTES"
+      # 上传原始输出与环境事实。hub 的库（含本轮随机的管理密码与节点 token 的摘要）与测试密钥不上传。
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: measure-agent-linux-amd64
+          path: |
+            build/wirebench/runs/
+            !build/wirebench/runs/*/hub/
+            !build/wirebench/runs/*/certs/key.pem
+          retention-days: 30

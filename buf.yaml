@@ -1,0 +1,23 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  # 豁免只到文件：历史查询的请求与响应由管理与公开两个服务共用，公开服务的两个方法直接返回
+  # PublicSite 与 PublicSnapshot。其余文件照常受这两条规则约束。
+  ignore_only:
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - proto/heron/v1/admin.proto
+      - proto/heron/v1/public.proto
+    RPC_RESPONSE_STANDARD_NAME:
+      - proto/heron/v1/public.proto
+breaking:
+  use:
+    - WIRE_JSON
+  # public.proto 里的 reserved 只标记"对应的源字段尚未公开"，公开一个源字段的显式动作就是删掉它的
+  # reserved；hub 构造投影时核对重新启用的号与源字段同名同型，这个号不会被挪作他用，旧客户端也从未见过它。
+  # 前提（该文件里带 reserved 的消息都是投影目标）由 internal/hub/api 的 TestPublicReservedOnlyMarksUnpublishedSourceFields 核对。
+  ignore_only:
+    RESERVED_MESSAGE_NO_DELETE:
+      - proto/heron/v1/public.proto

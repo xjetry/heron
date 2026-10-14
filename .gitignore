@@ -1,0 +1,16 @@
+# 构建产物
+/bin/
+/build/
+/dist/
+/internal/hub/web/dist/*
+!/internal/hub/web/dist/.gitkeep
+/internal/hub/web/dist-public/*
+!/internal/hub/web/dist-public/.gitkeep
+/web/node_modules/
+/web/test-results/
+/web/playwright-report/
+
+# 本地运行数据
+*.db
+*.db-wal
+*.db-shm
