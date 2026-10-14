@@ -83,7 +83,7 @@ it("默认单选：点一个只看它，点另一个换成它，再点当前那�
   expect(panel("地区").queryByText("显示属于任一所选地区的节点。")).toBeNull();
 });
 
-it("多选：地区并集、标签交集，与搜索、只看在线叠加；计数按筛选后的节点算；滤空时说明", async () => {
+it("多选：地区并集、标签交集，与搜索、节点状态叠加；计数按筛选后的节点算；滤空时说明", async () => {
   render();
   await screen.findByText("2 / 4 在线");
   wall();
@@ -104,14 +104,23 @@ it("多选：地区并集、标签交集，与搜索、只看在线叠加；计�
   expect(shown()).toEqual(["web-1"]);
   pick("标签", "web");
   expect(shown()).toEqual(["web-1", "db-1"]);
-  fireEvent.click(screen.getByRole("button", { name: "只看在线" }));
+  expect(statusButtons()).toEqual([["全部 2", true], ["在线 1", false], ["离线 1", false]]);
+  fireEvent.click(status("在线"));
   expect(shown()).toEqual(["web-1"]);
+  expect(statusButtons()).toEqual([["全部 2", false], ["在线 1", true], ["离线 1", false]]);
   fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "4837" } });
   expect(shown()).toEqual([]);
   expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "只看在线" }));
+  expect(statusButtons()).toEqual([["全部 1", false], ["在线 0", true], ["离线 1", false]]);
+  fireEvent.click(status("离线"));
+  expect(shown()).toEqual(["db-1"]);
+  fireEvent.click(status("全部"));
   expect(shown()).toEqual(["db-1"]);
 });
+
+const statusGroup = () => screen.getByRole("group", { name: "节点状态" });
+const status = (name: "全部" | "在线" | "离线") => within(statusGroup()).getByRole("button", { name: new RegExp(`^${name} \\d+$`) });
+const statusButtons = () => within(statusGroup()).getAllByRole("button").map((b) => [b.getAttribute("aria-label"), b.getAttribute("aria-pressed") === "true"]);
 
 it("标签折叠比较：选 db 时 DB 的节点也命中", async () => {
   render();

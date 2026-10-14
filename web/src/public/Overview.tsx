@@ -6,7 +6,7 @@ import { regionOptions, tagOptions, useFacetModes } from "../lib/facets";
 import { POLL_MS } from "../lib/poll";
 import { sameTag, type TagMatch } from "../lib/tags";
 import { FilterRow } from "./FilterRow";
-import { filterPublicNodes, NO_FILTERS, sortNodes, type NodeSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
+import { filterPublicNodes, NO_FILTERS, sortNodes, statusCounts, type NodeSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
 import { CardGrid } from "./NodeCard";
 import { NodeList } from "./NodeList";
@@ -47,7 +47,7 @@ export function PublicOverview() {
       {all.length > 0 && (
         <>
           <StatusSummary nodes={nodes} />
-          <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} modes={modes} onMode={chooseMode} onTagMatch={chooseTagMatch} view={view} onView={chooseView} groupBy={wallGroupBy} onGroupBy={chooseGroupBy} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
+          <FilterRow filters={effective} onFilters={setFilters} statusCounts={statusCounts(all, effective)} regions={regions} tags={tags} modes={modes} onMode={chooseMode} onTagMatch={chooseTagMatch} view={view} onView={chooseView} groupBy={wallGroupBy} onGroupBy={chooseGroupBy} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
           {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} tags={gate.data.tags} now={now} groupBy={wallGroupBy} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
           {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortNodes(nodes, sort)} now={now} />}

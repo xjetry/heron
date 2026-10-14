@@ -6,9 +6,20 @@ import { literalPattern } from "../lib/fold";
 import { expiryLevel, nodeStatus, STATUS_ORDER, usageLevel, type Level, type NodeStatus } from "../lib/status";
 import { matchesTags, sameTag, type TagMatch } from "../lib/tags";
 
+// 节点状态筛选把五态分成互补的两档：在线就是 nodeStatus 的「在线」，离线是其余四态（离线、从未上报、维护中、已出租）。
+// 已出租即使仍在上报也归离线，与 nodeStatus 先判已出租的次序一致。互补保证「在线 + 离线 = 全部」，三档计数对得上。
+export type StatusFilter = "all" | "online" | "offline";
+export const STATUS_FILTERS: readonly { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "全部" }, { value: "online", label: "在线" }, { value: "offline", label: "离线" },
+];
+
+function matchesStatus(node: PublicNode, status: StatusFilter): boolean {
+  return status === "all" || (nodeStatus(node) === "online") === (status === "online");
+}
+
 // tagMatch 只在选了至少两个标签时影响结果；默认交集，与管理端的标签过滤同一口径。
-export type PublicFilters = { search: string; regions: readonly string[]; tags: readonly string[]; tagMatch: TagMatch; onlineOnly: boolean };
-export const NO_FILTERS: PublicFilters = { search: "", regions: [], tags: [], tagMatch: "all", onlineOnly: false };
+export type PublicFilters = { search: string; regions: readonly string[]; tags: readonly string[]; tagMatch: TagMatch; status: StatusFilter };
+export const NO_FILTERS: PublicFilters = { search: "", regions: [], tags: [], tagMatch: "all", status: "all" };
 
 // 名称、标签与公开备注共用 lib/fold 的折叠字面匹配，不把访客输入当成正则表达式。
 export function matchesSearch(node: PublicNode, search: string): boolean {
@@ -17,14 +28,21 @@ export function matchesSearch(node: PublicNode, search: string): boolean {
   return pattern.test(node.name) || node.tags.some((tag) => pattern.test(tag)) || pattern.test(node.publicRemark);
 }
 
-// 地区取并集（matchesRegion），标签按 tagMatch 取交集或并集，再与搜索及五态在线判定取交集。两种空选择都匹配一切，
+// 地区取并集（matchesRegion），标签按 tagMatch 取交集或并集，再与搜索及节点状态取交集。两种空选择与状态「全部」都匹配一切，
 // 由各自的谓词显式处理。
 export function filterPublicNodes(nodes: readonly PublicNode[], f: PublicFilters): PublicNode[] {
   return nodes.filter((n) =>
     matchesSearch(n, f.search)
     && matchesRegion(n.country, f.regions)
     && matchesTags(n.tags, f.tags, f.tagMatch)
-    && (!f.onlineOnly || nodeStatus(n) === "online"));
+    && matchesStatus(n, f.status));
+}
+
+// 三档计数按其余筛选（搜索、地区、标签）算，不看状态筛选本身：切换状态时数字不变，访客能先看到每一档有多少台再选。
+export function statusCounts(nodes: readonly PublicNode[], f: PublicFilters): Record<StatusFilter, number> {
+  const scope = filterPublicNodes(nodes, { ...f, status: "all" });
+  const online = scope.filter((n) => matchesStatus(n, "online")).length;
+  return { all: scope.length, online, offline: scope.length - online };
 }
 
 export type NodeSort = "default" | "expiry" | "cpu" | "traffic";

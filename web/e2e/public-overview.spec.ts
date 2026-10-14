@@ -118,18 +118,28 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
   await page.screenshot({ path: testInfo.outputPath("wall-dark.png"), fullPage: true });
 
-  // 筛选：地区入口（默认单选，点一个只看它，再点回到全部）+ 只看在线。
+  // 筛选：地区入口（默认单选，点一个只看它，再点回到全部）+ 节点状态。离线是在线以外的全部：维护中的 hk-edge 虽仍在上报，
+  // 也计入离线，所以不加筛选时是 5 = 2 + 3。三档计数跟随地区筛选，不跟随状态筛选本身。
+  const statuses = page.getByRole("group", { name: "节点状态" });
+  const status = (name: "全部" | "在线" | "离线") => statuses.getByRole("button", { name: new RegExp(`^${name} \\d+$`) });
+  await expect(statuses.getByRole("button")).toHaveText(["全部 5", "在线 2", "离线 3"]);
   const regionFacet = page.getByRole("button", { name: /^地区 / });
   const japan = page.getByRole("group", { name: "地区" }).getByRole("button", { name: /^日本 \d+$/ });
   await regionFacet.click();
   await japan.click();
   await expect(regionFacet).toHaveAccessibleName("地区 日本");
   await expect(page.locator(".summary-count")).toHaveText("1 / 2 在线");
-  await page.getByRole("button", { name: "只看在线" }).click();
+  await expect(statuses.getByRole("button")).toHaveText(["全部 2", "在线 1", "离线 1"]);
+  await status("在线").click();
   await expect(page.locator(".tile")).toHaveCount(1);
+  await expect(page.locator(".tile-name")).toHaveText(["tokyo-core"]);
+  await status("离线").click();
+  await expect(page.locator(".tile-name")).toHaveText(["tokyo-home"]);
+  await expect(statuses.getByRole("button")).toHaveText(["全部 2", "在线 1", "离线 1"]);
   await japan.click();
   await expect(regionFacet).toHaveAccessibleName("地区 全部");
-  await page.getByRole("button", { name: "只看在线" }).click();
+  await expect(page.locator(".tile")).toHaveCount(3);
+  await status("全部").click();
   await regionFacet.click();
 
   // 卡片视图：只有在线与维护中出卡片，离线折叠；卡片有费用与到期。

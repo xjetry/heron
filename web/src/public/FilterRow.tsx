@@ -6,13 +6,13 @@ import { Select } from "../components/Select";
 import type { Facet, FacetMode, FacetOption } from "../lib/facets";
 import type { TagMatch } from "../lib/tags";
 import { SEARCH_KEYSHORTCUTS, useSearchShortcut } from "../lib/useSearchShortcut";
-import { NODE_SORTS, COLOR_BYS, GROUP_BYS, type NodeSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
+import { NODE_SORTS, COLOR_BYS, GROUP_BYS, STATUS_FILTERS, type NodeSort, type ColorBy, type GroupBy, type PublicFilters, type StatusFilter } from "./filters";
 import type { View } from "./prefs";
 
-// 筛选行：搜索、地区与标签两个筛选入口、只看在线、视图切换；状态墙多一个分组依据（有标签时）与着色依据，
-// 卡片与列表多一个排序（两者共用同一个排序选择）。地区与标签的选项由调用方从当前快照算出并带计数。
-export function FilterRow({ filters, onFilters, regions, tags, modes, onMode, onTagMatch, view, onView, groupBy, onGroupBy, colorBy, onColorBy, sort, onSort }: {
-  filters: PublicFilters; onFilters: (next: PublicFilters) => void;
+// 筛选行：搜索、地区与标签两个筛选入口、节点状态（全部、在线、离线）、视图切换；状态墙多一个分组依据（有标签时）与着色依据，
+// 卡片与列表多一个排序（两者共用同一个排序选择）。地区与标签的选项、三档状态的计数都由调用方从当前快照算出。
+export function FilterRow({ filters, onFilters, statusCounts, regions, tags, modes, onMode, onTagMatch, view, onView, groupBy, onGroupBy, colorBy, onColorBy, sort, onSort }: {
+  filters: PublicFilters; onFilters: (next: PublicFilters) => void; statusCounts: Readonly<Record<StatusFilter, number>>;
   regions: readonly FacetOption[]; tags: readonly FacetOption[];
   modes: Readonly<Record<Facet, FacetMode>>; onMode: (facet: Facet, mode: FacetMode) => void; onTagMatch: (match: TagMatch) => void;
   view: View; onView: (view: View) => void;
@@ -33,8 +33,15 @@ export function FilterRow({ filters, onFilters, regions, tags, modes, onMode, on
       <FacetFilters modes={modes} onMode={onMode}
         regions={{ options: regions, selected: filters.regions, onChange: (next) => onFilters({ ...filters, regions: next }) }}
         tags={tags.length > 0 ? { options: tags, selected: filters.tags, onChange: (next) => onFilters({ ...filters, tags: next }), match: filters.tagMatch, onMatch: onTagMatch } : undefined} />
-      <button type="button" className="toggle" aria-pressed={filters.onlineOnly} onClick={() => onFilters({ ...filters, onlineOnly: !filters.onlineOnly })}>只看在线</button>
-      <div className="view-switch" role="group" aria-label="视图">
+      {/* 计数写进可访问名称，与地区、标签胶囊同一写法：读屏读到的是「在线 12」而不是拆开的两段。 */}
+      <div className="button-group" role="group" aria-label="节点状态">
+        {STATUS_FILTERS.map(({ value, label }) => (
+          <button key={value} type="button" aria-pressed={filters.status === value} aria-label={`${label} ${statusCounts[value]}`} onClick={() => onFilters({ ...filters, status: value })}>
+            {label}{" "}<span className="num">{statusCounts[value]}</span>
+          </button>
+        ))}
+      </div>
+      <div className="button-group" role="group" aria-label="视图">
         <button type="button" aria-pressed={view === "wall"} onClick={() => onView("wall")}>状态墙</button>
         <button type="button" aria-pressed={view === "cards"} onClick={() => onView("cards")}>卡片</button>
         <button type="button" aria-pressed={view === "list"} onClick={() => onView("list")}>列表</button>

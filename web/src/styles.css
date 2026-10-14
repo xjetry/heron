@@ -333,16 +333,21 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .search-field > .search-hint { position: absolute; left: 33px; right: 8px; pointer-events: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .search-hint { color: var(--muted); font-size: 13px; }
 .search-hint kbd { display: inline-block; min-width: 18px; padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 4px; font-size: 11px; line-height: 16px; text-align: center; color: var(--fg); }
-.filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.view-switch { display: inline-flex; }
-.view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
-.view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
+/* 筛选行里的互斥按钮组（公开页的节点状态与视图）：相邻按钮共用一条边框，只有两端带圆角；选中项描强调色，并压在相邻按钮
+   的边框之上，否则它右侧那条描边会被后一个按钮的 -1px 重叠盖住。计数与地区、标签胶囊同一写法。 */
+.button-group { display: inline-flex; }
+.button-group > button { border-radius: 0; }
+.button-group > button + button { margin-left: -1px; }
+.button-group > button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.button-group > button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; }
+.button-group > button[aria-pressed="true"] { position: relative; border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.button-group .num { color: var(--muted); font-size: 12px; }
 /* 筛选行里的标签一律写在控件左侧，和不带标签的搜索框、勾选项落在同一条中线上；标签文字弱化，控件保持前景色。 */
 .filter-row > label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .filter-row > label > :is(select, input:not([type="checkbox"])) { color: var(--fg); }
 /* 地区与标签筛选（components/Facet.tsx，公开页总览与管理端节点页共用）：筛选行上是入口按钮，外观沿用自绘下拉的触发按钮
    （.select-trigger），有选择时描强调色；展开的面板在 DOM 里紧跟入口，由 order 排到筛选行最后、独占一行，选项平铺成胶囊，
-   按行宽折行。选中的胶囊与公开页「只看在线」同一种强调色描边，单选 / 多选与匹配方式用共享的分段控件，与选项区分开。 */
+   按行宽折行。选中的胶囊与公开页筛选行按钮组的选中项同一种强调色描边，单选 / 多选与匹配方式用共享的分段控件，与选项区分开。 */
 .facet-trigger[data-active] { border-color: var(--accent); }
 .facet-trigger[data-active] .select-value { color: var(--accent); }
 .facet-panel { order: 1; flex: 1 0 100%; display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }

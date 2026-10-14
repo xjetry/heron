@@ -54,7 +54,7 @@ test('公开页地区多选与家宽标签交集，标签匹配方式，未知�
     const [panel, control] = [await boxOf(tags), await boxOf(page.getByRole('button', { name }))];
     expect(panel.y).toBeGreaterThanOrEqual(control.y + control.height);
   };
-  await below(/^只看在线$/);
+  await below(/^在线 \d+$/);
   await below(/^着色依据 /);
   await page.screenshot({ path: testInfo.outputPath('regions-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 375, height: 812 });
