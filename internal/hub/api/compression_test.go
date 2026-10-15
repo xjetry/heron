@@ -21,7 +21,7 @@ import (
 )
 
 // 直接读取线上字节，不经 Connect 客户端解压；gRPC 的压缩位在消息帧里，只有检查 HTTP 头会漏掉它。
-// 管理端只有 GetSnapshot 压缩（理由与它的字符串字段清单见 Service.Handler），其余过程一律不压缩。
+// 管理端只有 GetSnapshot 与 ListNodes 压缩（各自的理由见 Service.Handler），其余过程一律不压缩。
 func TestAdminResponseCompressionPolicy(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")
@@ -51,7 +51,7 @@ func TestAdminResponseCompressionPolicy(t *testing.T) {
 				anonymous    bool
 				compressed   bool
 			}{
-				{"list", "ListNodes", &heronv1.ListNodesRequest{}, &heronv1.ListNodesResponse{}, false, false},
+				{"list", "ListNodes", &heronv1.ListNodesRequest{}, &heronv1.ListNodesResponse{}, false, true},
 				{"upload", "UploadTheme", &heronv1.UploadThemeRequest{Package: themetest.Minimal(t, "compression")}, &heronv1.UploadThemeResponse{}, false, false},
 				{"unauthenticated", "ListNodes", &heronv1.ListNodesRequest{}, nil, true, false},
 				{"snapshot", "GetSnapshot", &heronv1.GetSnapshotRequest{}, &heronv1.GetSnapshotResponse{}, false, true},

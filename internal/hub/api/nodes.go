@@ -201,22 +201,23 @@ func (s *Service) ListNodes(ctx context.Context, req *connect.Request[heronv1.Li
 	if req.Msg.GetUntagged() && len(tags) > 0 {
 		return nil, invalid("tags and untagged: must not be combined; untagged selects nodes with no tags, so tags must be empty")
 	}
-	var nodes []store.Node
-	if req.Msg.GetUntagged() {
-		nodes, err = s.store.ListUntaggedNodes(ctx)
-	} else {
-		nodes, err = s.store.ListNodesByTags(ctx, tags)
+	// today 只取一次：同一个日期既拼进版本、又交给 nodeProto 算 days_left，版本与内容说的是同一天。
+	today := s.today()
+	revision := func(counter uint64) string {
+		return fmt.Sprintf("%s.%d.%s", s.nodeListEpoch, counter, today.Format(time.DateOnly))
 	}
+	known := req.Msg.GetKnownRevision()
+	list, err := s.store.ReadNodeList(ctx, store.NodeFilter{Tags: tags, Untagged: req.Msg.GetUntagged()},
+		func(counter uint64) bool { return known != "" && known == revision(counter) })
 	if err != nil {
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := make([]*heronv1.Node, 0, len(nodes))
-	today := s.today()
-	for _, n := range nodes {
-		out = append(out, nodeProto(n, today))
+	out := &heronv1.ListNodesResponse{Revision: revision(list.Revision), Unchanged: list.Unchanged}
+	for _, n := range list.Nodes {
+		out.Nodes = append(out.Nodes, nodeProto(n, today))
 	}
-	return connect.NewResponse(&heronv1.ListNodesResponse{Nodes: out}), nil
+	return connect.NewResponse(out), nil
 }
 
 func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.CreateNodeRequest]) (*connect.Response[heronv1.CreateNodeResponse], error) {

@@ -2544,7 +2544,10 @@ type ListNodesRequest struct {
 	// 为真时只返回没有任何标签的节点（仍限于调用方可见的节点范围）。为假时不按此过滤。
 	// 与非空 tags 互斥，同时给出返回 InvalidArgument：带有所选全部标签与没有标签的交集必然为空，空结果会把写错的
 	// 条件伪装成"没有这样的节点"——与超过 16 个标签按参数错误拒绝同一理由。
-	Untagged      bool `protobuf:"varint,2,opt,name=untagged,proto3" json:"untagged,omitempty"`
+	Untagged bool `protobuf:"varint,2,opt,name=untagged,proto3" json:"untagged,omitempty"`
+	// 条件读取：填上次 ListNodesResponse.revision。与当前版本相同则响应 unchanged=true、nodes 为空，调用方上次用同一组
+	// tags / untagged 拿到的列表仍然成立；不同或为空串时照常返回整份。任意字符串都合法，对不上就是"变了"。
+	KnownRevision string `protobuf:"bytes,3,opt,name=known_revision,json=knownRevision,proto3" json:"known_revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2593,9 +2596,22 @@ func (x *ListNodesRequest) GetUntagged() bool {
 	return false
 }
 
+func (x *ListNodesRequest) GetKnownRevision() string {
+	if x != nil {
+		return x.KnownRevision
+	}
+	return ""
+}
+
 type ListNodesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Nodes []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	// 节点资料版本，不透明字符串，只比较相等。覆盖 Node 除 last_seen_at 外的全部字段（含按 hub 时区今天算出的
+	// billing.days_left），以及调用方 token 的节点可见范围；last_seen_at 是读取时刻的值，它的变化不改变版本，实时值从
+	// GetSnapshot 取。hub 重启后版本必然不同，即便资料没变。
+	Revision string `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	// 为真时 nodes 为空：known_revision 与 revision 相同。
+	Unchanged     bool `protobuf:"varint,3,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2635,6 +2651,20 @@ func (x *ListNodesResponse) GetNodes() []*Node {
 		return x.Nodes
 	}
 	return nil
+}
+
+func (x *ListNodesResponse) GetRevision() string {
+	if x != nil {
+		return x.Revision
+	}
+	return ""
+}
+
+func (x *ListNodesResponse) GetUnchanged() bool {
+	if x != nil {
+		return x.Unchanged
+	}
+	return false
 }
 
 type CreateNodeRequest struct {
@@ -12031,12 +12061,15 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vNodeAddress\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12/\n" +
 	"\x06source\x18\x02 \x01(\x0e2\x17.heron.v1.AddressSourceR\x06source\x125\n" +
-	"\x05state\x18\x03 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05state\"B\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05state\"i\n" +
 	"\x10ListNodesRequest\x12\x12\n" +
 	"\x04tags\x18\x01 \x03(\tR\x04tags\x12\x1a\n" +
-	"\buntagged\x18\x02 \x01(\bR\buntagged\"9\n" +
+	"\buntagged\x18\x02 \x01(\bR\buntagged\x12%\n" +
+	"\x0eknown_revision\x18\x03 \x01(\tR\rknownRevision\"s\n" +
 	"\x11ListNodesResponse\x12$\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x0e.heron.v1.NodeR\x05nodes\"l\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x0e.heron.v1.NodeR\x05nodes\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\tR\brevision\x12\x1c\n" +
+	"\tunchanged\x18\x03 \x01(\bR\tunchanged\"l\n" +
 	"\x11CreateNodeRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12+\n" +
 	"\abilling\x18\x02 \x01(\v2\x11.heron.v1.BillingR\abilling\x12\x16\n" +

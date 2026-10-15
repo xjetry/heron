@@ -583,9 +583,18 @@ message ListNodesRequest {
   // 与非空 tags 互斥，同时给出返回 InvalidArgument：带有所选全部标签与没有标签的交集必然为空，空结果会把写错的
   // 条件伪装成"没有这样的节点"——与超过 16 个标签按参数错误拒绝同一理由。
   bool untagged = 2;
+  // 条件读取：填上次 ListNodesResponse.revision。与当前版本相同则响应 unchanged=true、nodes 为空，调用方上次用同一组
+  // tags / untagged 拿到的列表仍然成立；不同或为空串时照常返回整份。任意字符串都合法，对不上就是"变了"。
+  string known_revision = 3;
 }
 message ListNodesResponse {
   repeated Node nodes = 1;
+  // 节点资料版本，不透明字符串，只比较相等。覆盖 Node 除 last_seen_at 外的全部字段（含按 hub 时区今天算出的
+  // billing.days_left），以及调用方 token 的节点可见范围；last_seen_at 是读取时刻的值，它的变化不改变版本，实时值从
+  // GetSnapshot 取。hub 重启后版本必然不同，即便资料没变。
+  string revision = 2;
+  // 为真时 nodes 为空：known_revision 与 revision 相同。
+  bool unchanged = 3;
 }
 
 message CreateNodeRequest {
