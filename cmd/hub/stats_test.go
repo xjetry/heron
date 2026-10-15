@@ -40,9 +40,10 @@ func v8Fixture(t *testing.T, dir string) string {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 		t.Fatal(err)
 	}
-	if freshVersion != 45 {
-		t.Fatalf("fixture user_version = %d, want 45; rebuild the v8 fixture for the new version", freshVersion)
+	if freshVersion != 46 {
+		t.Fatalf("fixture user_version = %d, want 46; rebuild the v8 fixture for the new version", freshVersion)
 	}
+	removeV46Revision(t, raw)
 	removeV45Config(t, raw)
 	removeV44Config(t, raw)
 	removeV43Metrics(t, raw)
@@ -130,6 +131,34 @@ func v8Fixture(t *testing.T, dir string) string {
 		}
 	}
 	return path
+}
+
+// removeV46Revision 撤掉迁移 46 建的节点资料版本表与推进它的触发器。触发器按名字前缀从 sqlite_schema 取：
+// 它们挂在 node、node_facts 等更早的表上，只删表会留下引用不存在之表的触发器，再迁移时撞上同名对象。
+func removeV46Revision(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'node\_list\_revision\_%' ESCAPE '\'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var triggers []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		triggers = append(triggers, name)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(triggers) == 0 {
+		t.Fatal("no node_list_revision triggers found; the v46 schema changed and this downgrade needs updating")
+	}
+	for _, name := range triggers {
+		restoreExec(t, db, "DROP TRIGGER "+name)
+	}
+	restoreExec(t, db, "DROP TABLE node_list_revision; PRAGMA user_version=45")
 }
 
 func removeV45Config(t *testing.T, db *sql.DB) {
