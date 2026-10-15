@@ -4,6 +4,7 @@ import { AgentService } from "../src/gen/heron/v1/agent_pb";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { AddressDetectionState, type AddressDetectionSchema } from "../src/gen/heron/v1/types_pb";
 import { expect, login, must, mustField, rpc, test } from "./fixtures";
+import { POLL_MS } from "../src/lib/poll";
 
 async function openEditor(page: Page, label: string) {
   await page.getByRole("button", { name: `更多操作 ${label}`, exact: true }).click();
@@ -61,7 +62,8 @@ test("手填出口地址：编辑、列表与公开标记、清空恢复探测",
   await expect(dialog).toHaveCount(0);
   // agent 还没收到恢复探测的应答，库里仍是它报的 DISABLED：列表写"等待探测"，公开页不再画 IPv4。
   await expect(row.getByLabel("IPv4", { exact: true })).toHaveText("IPv4等待探测");
-  await expect(publicRow.getByRole("group", { name: "公网出口" })).toHaveCount(0);
+  // 公开页靠下一次快照轮询看到新显示值：一个周期加请求耗时可能超过断言默认的 5 秒，等两个周期。
+  await expect(publicRow.getByRole("group", { name: "公网出口" })).toHaveCount(0, { timeout: 2 * POLL_MS });
   // 清空之后的应答不再要求停用；agent 恢复探测，报回探测结果，列表回到探测状态。facts 经写协程异步落库，节点列表每 10 秒
   // 才重取一次（Nodes.tsx 的 refetchInterval），长于断言的等待：先确认 hub 已给出新显示值，再重新进入页面。
   expect((await report(failed)).detection?.skipIpv4).toBe(false);

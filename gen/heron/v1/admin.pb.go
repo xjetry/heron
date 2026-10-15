@@ -2608,7 +2608,9 @@ type ListNodesResponse struct {
 	Nodes []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	// 节点资料版本，不透明字符串，只比较相等。覆盖 Node 除 last_seen_at 外的全部字段（含按 hub 时区今天算出的
 	// billing.days_left），以及调用方 token 的节点可见范围；last_seen_at 是读取时刻的值，它的变化不改变版本，实时值从
-	// GetSnapshot 取。hub 重启后版本必然不同，即便资料没变。
+	// GetSnapshot 取。hub 重启后版本必然不同，即便资料没变。版本是全站的一个计数，不按凭据与条件区分：只拿同一凭据、
+	// 同一组 tags / untagged 上次的响应来比；限定节点范围的 token 会看到范围外节点的改动也让版本变化（只知道"有改动"，
+	// 看不到内容）。
 	Revision string `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	// 为真时 nodes 为空：known_revision 与 revision 相同。
 	Unchanged     bool `protobuf:"varint,3,opt,name=unchanged,proto3" json:"unchanged,omitempty"`

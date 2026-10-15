@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sync"
@@ -58,7 +60,7 @@ func nodeWithFacts(t *testing.T) (*Store, int64) {
 // 列归类：true 表示这一列出现在 ListNodes 的内容里（直接或经推导），改它必须推进版本；false 的列与理由：
 //   - node.last_seen_at：实时状态，面板从快照取，分钟刷出每分钟写它；
 //   - node.token_hash：节点凭据，不在 ListNodes 里；
-//   - node_facts.facts_hash、facts_rev：摘要与字段集合版本，展示列变了它们才变。
+//   - node_facts.facts_hash、facts_rev：agent 对整份 Facts 算的摘要与 hub 的持久化字段集合版本，不在 ListNodes 里。
 //
 // 两张表的列由 PRAGMA 枚举，清单之外的列直接判红：加列必须在这里归类，并改 schema.go 里对应触发器的 WHEN。
 var nodeListColumns = map[string]map[string]bool{
@@ -309,5 +311,44 @@ func TestReadNodeListFiltersMatchListNodesByTags(t *testing.T) {
 	untagged, err := s.ReadNodeList(ctx, NodeFilter{Untagged: true}, nil)
 	if err != nil || len(untagged.Nodes) != 1 || untagged.Nodes[0].Name != "bare" {
 		t.Fatalf("无标签 = %+v %v", untagged, err)
+	}
+}
+
+// Tags 与 Untagged 同时给出没有合法含义（带有所选标签与没有标签的交集为空）：存储层显式拒绝，不按其中一个放宽。
+func TestReadNodeListRejectsTagsWithUntagged(t *testing.T) {
+	t.Parallel()
+	s, _ := nodeWithFacts(t)
+	if _, err := s.ReadNodeList(t.Context(), NodeFilter{Tags: []string{"db"}, Untagged: true}, nil); err == nil {
+		t.Fatal("Tags 与 Untagged 同时给出应报错")
+	}
+}
+
+// 恢复覆盖已有的库时整表删除再插入节点行，触发器随之推进版本：恢复后的版本大于恢复前，不会与旧标签页手里的版本相等。
+// （恢复要求 hub 已停止，重启后纪元另换；这里钉的是库里这一层。）
+func TestRestoreAdvancesNodeListRevision(t *testing.T) {
+	t.Parallel()
+	s, clk := open(t)
+	ctx := t.Context()
+	if _, _, err := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(t.TempDir(), "config.db")
+	if err := s.SnapshotConfig(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	before := revisionOf(t, s)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(ctx, s.path, snapshot, "", "", clk.Now(), slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(s.path, clk, slog.Default(), RequireCurrentSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if after := revisionOf(t, reopened); after <= before {
+		t.Fatalf("恢复后版本 = %d，恢复前 %d：恢复的整表搬运应推进版本", after, before)
 	}
 }

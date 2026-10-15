@@ -538,19 +538,19 @@ test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ pa
   expect(Math.abs(enabled)).toBeLessThan(1.5);
 });
 
-// 管理端只有总览轮询的 GetSnapshot 由 hub 压缩（字段经审核，internal/hub/api/service.go），节点表等其余响应不压缩。
-// 从浏览器入口核对实际收到的响应头，而不是只看服务端单测。
-test('总览轮询的快照压缩，其余管理响应不压缩', async ({ page }) => {
+// 管理端只有 GetSnapshot 与 ListNodes 由 hub 压缩（各自的理由见 internal/hub/api/service.go 的 Handler），其余响应
+// 不压缩：总览同时读的 ListAlertRules 代表其余过程。从浏览器入口核对实际收到的响应头，而不是只看服务端单测。
+test('总览读取的快照与节点资料压缩，其余管理响应不压缩', async ({ page }) => {
   await page.goto('/admin/login');
   await login(page);
   const encodings = new Map<string, string>();
   page.on('response', async (response) => {
-    const method = new URL(response.url()).pathname.match(/^\/heron\.v1\.AdminService\/(GetSnapshot|ListNodes)$/)?.[1];
+    const method = new URL(response.url()).pathname.match(/^\/heron\.v1\.AdminService\/(GetSnapshot|ListNodes|ListAlertRules)$/)?.[1];
     if (method && response.ok()) encodings.set(method, (await response.allHeaders())['content-encoding'] ?? '');
   });
   await page.goto('/admin/');
   await expect(page.getByRole('list', { name: '需要处理' })).toBeVisible();
-  await expect.poll(() => [encodings.get('GetSnapshot'), encodings.get('ListNodes')]).toEqual(['gzip', '']);
+  await expect.poll(() => [encodings.get('GetSnapshot'), encodings.get('ListNodes'), encodings.get('ListAlertRules')]).toEqual(['gzip', 'gzip', '']);
 });
 
 test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字，进详情再返回还原；/ 与 ⌘K 打开快速搜索', async ({ page, browserName, hub }) => {

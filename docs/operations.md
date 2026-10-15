@@ -86,7 +86,7 @@ hub 只提供明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止。
 - `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信；为空则不信任任何转发头。
 - HTTPS 反代必须保留浏览器访问的 Host（含非默认端口），并设置 `X-Forwarded-Proto: https`。否则管理接口的同源检查会拒绝浏览器请求（包括密码登录），返回 403。不要通过改写或删除浏览器的 Origin 头绕过检查。
 - 不信任转发头时，公开页与注册的限流按 TCP 对端地址计，反代后的访客共用代理地址的一个桶，登录锁定也按代理地址计；节点来源 IP 同样记成代理地址。
-- 反代与 CDN 必须对 `/heron.v1.AdminService/` 路径禁用响应压缩，并保留 hub 的 `Cache-Control: no-store, no-transform`；公开 API 与静态资源可继续压缩。部署后用带 `Accept-Encoding: gzip` 的管理请求检查最终响应没有 `Content-Encoding`、缓存头完整。
+- 反代与 CDN 必须对 `/heron.v1.AdminService/` 路径禁用响应压缩，并保留 hub 的 `Cache-Control: no-store, no-transform`；公开 API 与静态资源可继续压缩。hub 自己只压缩 `GetSnapshot` 与 `ListNodes` 两个管理过程，其余管理响应不压缩。部署后用带 `Accept-Encoding: gzip` 的其它管理请求（例如 `ListTags`）检查最终响应没有 `Content-Encoding`、缓存头完整。
 - 公开服务按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源）：每个来源瞬时 60 次，此后每秒 10 次，超出返回 429。
 - 经过 CDN 时在反代验证 CDN 来源后解析真实客户端地址，再转发给 hub；不要无条件信任客户端自带的地址头。
 

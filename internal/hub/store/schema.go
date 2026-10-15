@@ -208,11 +208,12 @@ func schemaStatements() []string {
 }
 
 // node_list_revision 是节点资料的版本计数，ListNodes 的条件读取据它判断调用方手里那份列表是否仍成立（ReadNodeList）。
-// 不变式：凡改变 ListNodes 返回内容的写入，都在同一条语句里经下面的触发器把它加一，与写入一起提交或一起回滚；写者
-// 不必各自记得推进，动态表名的排序写入、分钟刷出、国家查询、续期扫描、离线子命令与恢复的整表搬运都落在触发器上。
-// 不推进的写入：只改 node.last_seen_at（实时状态，面板从快照取；分钟刷出每分钟写它）或 node.token_hash（不在
-// ListNodes 里）；只改 node_facts.facts_hash、facts_rev（摘要与字段集合版本，展示列变了它们才变）；新建标签行
-// （挂上节点时 node_tag 的插入已推进）。node 与 node_facts 的 UPDATE 触发器逐列比较新旧值，写回原值不推进；列的
+// 不变式：凡改变 ListNodes 返回内容的写入，都经下面的触发器让它严格增大（每改一行加一，一条语句改多行就加多次），
+// 与写入一起提交或一起回滚；调用方只比较相等。写者不必各自记得推进，动态表名的排序写入、分钟刷出、国家查询、续期
+// 扫描、离线子命令与恢复的整表搬运都落在触发器上。
+// 不推进的写入：只改 node.last_seen_at（实时状态，面板从快照取；分钟刷出每分钟写它）或 node.token_hash；只改
+// node_facts.facts_hash（agent 对整份 Facts 算的摘要）或 facts_rev（hub 的持久化字段集合版本）；新建标签行（挂上节点时
+// node_tag 的插入已推进）。这几列都不在 ListNodes 里。node 与 node_facts 的 UPDATE 触发器逐列比较新旧值，写回原值不推进；列的
 // 归类由 TestNodeListRevisionColumnClassification 逐列核对，加列必须在那里归类并改这里的 WHEN。
 // 只有一行（id = 1），建库时种子为 0；是运行态，不进任何备份层，恢复对 node 等表的 DELETE + INSERT 经触发器推进它。
 const ddlNodeListRevision = `CREATE TABLE node_list_revision (
