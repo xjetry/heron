@@ -282,7 +282,7 @@ func historyPoolSize() int { return max(2, runtime.GOMAXPROCS(0)) }
 // 或重算不再是单协程，这个上限要重新论证。
 func evaluationPoolSize() int { return 2 }
 
-// readConnMaxIdle 是池里连接空闲多久才回收，三个池同一个值。面板每 2 秒、流量每 10 秒轮询（web/src/lib/poll.ts），
+// readConnMaxIdle 是池里连接空闲多久才回收，三个池同一个值。面板每 5 秒、流量每 10 秒轮询（web/src/lib/poll.ts），
 // database/sql 优先复用最近归还的连接，持续有人看面板时轮询用到的那几个连接空闲时长到不了它；只有突发时多开、之后
 // 不再用到的连接才在 5 分钟后关掉，把页缓存还回去。轮询之间不关连接靠的是空闲保留等于上限（见 configureReadPool），
 // 这个时长决定的只是突发过后多久缩回去。

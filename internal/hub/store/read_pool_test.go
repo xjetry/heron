@@ -256,7 +256,7 @@ func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
 	}
 }
 
-// 面板每 POLL_MS（2 秒）拉一次；一次轮询用过、归还的连接，到下一次轮询时必须还在池里。等 3 秒：
+// 面板每 POLL_MS（web/src/lib/poll.ts，5 秒）拉一次；一次轮询用过、归还的连接，到下一次轮询时必须还在池里。等 6 秒：
 // 一个轮询间隔，加上 database/sql 回收协程至少 1 秒一轮的扫描粒度。全部池同时验，共用这一次等待。
 func TestReadPoolKeepsIdleConnectionsAcrossPolls(t *testing.T) {
 	t.Parallel()
@@ -270,7 +270,7 @@ func TestReadPoolKeepsIdleConnectionsAcrossPolls(t *testing.T) {
 			t.Fatalf("idle %s connections after returning %d = %d", pc.name, pc.limit, before[i].Idle)
 		}
 	}
-	time.Sleep(3 * time.Second)
+	time.Sleep(6 * time.Second)
 	for i, pc := range cases {
 		after := pc.db(s).Stats()
 		if d := after.MaxIdleTimeClosed - before[i].MaxIdleTimeClosed; d != 0 || after.Idle != pc.limit {

@@ -35,7 +35,7 @@ import (
 const publicMaxBody = 4 << 10
 
 const (
-	// 每个来源的桶（IPv4 一个地址、IPv6 一个 /64，见 ratelimit.BySource）：容量 publicBurst，每 publicRefill 补充一个。公开页每 2 秒轮询一次快照，一个访客开几个标签页仍远在其下。
+	// 每个来源的桶（IPv4 一个地址、IPv6 一个 /64，见 ratelimit.BySource）：容量 publicBurst，每 publicRefill 补充一个。公开页每 5 秒轮询一次快照，一个访客开几个标签页仍远在其下。
 	publicBurst  = 60
 	publicRefill = time.Second / 10
 )

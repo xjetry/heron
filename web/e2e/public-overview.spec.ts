@@ -4,6 +4,7 @@ import { AdminService } from "../src/gen/heron/v1/admin_pb";
 import { PublicService, type PublicNodeSchema } from "../src/gen/heron/v1/public_pb";
 import { AddressDetectionState, BillingCycle } from "../src/gen/heron/v1/types_pb";
 import { boxOf, expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
+import { POLL_MS } from "../src/lib/poll";
 
 // 公开页只消费 PublicService 的投影字段，不引入管理信息或无来源的统计；下面的禁用词在可见文本里出现即失败。IP 地址不在这里查：公开快照没有地址字段
 // （PublicAddressDetection 只有 state，由 hub 的投影与 internal/hub/api 的测试钉住）；「IPv4」「IPv6」地址族标记是允许的。
@@ -45,7 +46,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(header.getByRole("link").nth(1)).toHaveAccessibleName("GitHub 仓库");
   await expect(header.getByRole("link").nth(1)).toHaveAttribute("href", "https://github.com/xjetry/heron");
   await expect(header.getByRole("link").nth(2)).toHaveText("登录");
-  await expect(header.getByText("实时 · 每 2 秒")).toBeVisible();
+  await expect(header.getByText(`实时 · 每 ${POLL_MS / 1000} 秒`)).toBeVisible();
   await expect(page.getByRole("navigation")).toHaveCount(0);
   await expect(page.locator("footer.site-footer")).toHaveCount(0);
 

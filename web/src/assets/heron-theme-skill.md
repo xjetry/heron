@@ -83,7 +83,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 - 单次调用 15 秒没有结果即以「公开接口调用超时」拒绝。
 - 容器对消息通道限流：同时在飞的调用至多 8 个，每秒至多 30 条消息，单条消息序列化后至多 16384 个字符。**超出的消息被静默丢弃**，对应调用只会在 15 秒后超时——不要并发刷请求，串行或小批量即可。
 - SDK 一律经 POST 请求，不经浏览器 HTTP 缓存；同一节点同一窗口的历史在主题里自己缓存，别每次重绘都重新查。
-- 公开接口另有按来源 IP 的限流（桶 60、每秒补 10），超出返回 `resource_exhausted`。实时状态约每 2 秒轮询一次 `getSnapshot()` 就够（agent 上报间隔见 `reportIntervalMs`，再快也拿不到更新的数据）；历史查询在用户换窗口或换节点时才发。
+- 公开接口另有按来源 IP 的限流（桶 60、每秒补 10），超出返回 `resource_exhausted`。实时状态约每 5 秒轮询一次 `getSnapshot()` 就够（agent 上报间隔见 `reportIntervalMs`，再快也拿不到更新的数据）；历史查询在用户换窗口或换节点时才发。
 - 路由：主题文档实际放在带摘要的资源路径下，**不能**把 iframe 的 `location.pathname` 当作站点路由；用 `onRoute` 取当前路径、用 `navigate` 跳转。访客打开 `/nodes/3` 这样的深链接时，`onRoute` 第一次回调就给出 `/nodes/3`。
 
 ## JSON 口径

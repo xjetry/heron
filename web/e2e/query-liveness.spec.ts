@@ -6,6 +6,7 @@ import { PublicService } from "../src/gen/heron/v1/public_pb";
 import { ProbeKind } from "../src/gen/heron/v1/types_pb";
 import { expect, login, must, mustField, requestMessage, rpc, rpcPath, rpcRoute, test } from "./fixtures";
 import { READ_DEADLINE_MESSAGE } from "../src/api/deadline";
+import { POLL_MS } from "../src/lib/poll";
 
 // 三个查询方法的请求消息都带 hub 时钟下的 from、to（Unix 秒）。
 type HubWindow = { from: bigint; to: bigint };
@@ -68,7 +69,8 @@ for (const [path, service] of [["/admin/", "AdminService"], ["/", "PublicService
       calls += 1;
       if (!hanging) await route.continue();
     });
-    await page.clock.runFor(1990);
+    // 下一次轮询在首次请求之后一个 POLL_MS；其后的 1000、2000 是两次重试的退避，与轮询周期无关。
+    await page.clock.runFor(POLL_MS - 10);
     await expect.poll(() => calls).toBe(1);
     await page.clock.runFor(30_000);
     await page.clock.runFor(1000);
@@ -84,7 +86,8 @@ for (const [path, service] of [["/admin/", "AdminService"], ["/", "PublicService
     await expect(page.getByRole("alert")).toContainText(READ_DEADLINE_MESSAGE);
     hanging = false;
     const recovered = page.waitForResponse((response) => response.url().includes(rpcPath(snapshot)) && response.ok());
-    await page.clock.runFor(2000);
+    // 最终失败之后由轮询定时器发起下一次请求，走满一个周期一定越过一次。
+    await page.clock.runFor(POLL_MS);
     await recovered;
     await page.clock.runFor(1);
     await expect(page.getByRole("alert")).toHaveCount(0);

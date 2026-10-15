@@ -99,7 +99,7 @@ it("已有快照时刷新失败仍保留表格并显示错误", async () => {
 });
 
 it("按 POLL_MS 轮询快照", async () => {
-  expect(POLL_MS).toBe(2000);
+  expect(POLL_MS).toBe(5000);
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const getSnapshot = vi.fn(async () => snapshot);
   render({ getSnapshot });
