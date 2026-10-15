@@ -11,6 +11,7 @@ import { Secret } from "../components/Secret";
 import { UserscriptButton } from "../components/UserscriptButton";
 import { Picks } from "../components/Picks";
 import { AdminService, TokenPermission, type CreateApiTokenResponse } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { withId } from "../lib/ids";
 import { dateTime, day } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
@@ -123,7 +124,7 @@ function ApiTokenDrawer({ opener, pending, error, onClose, onCreate }: {
   const [permissions, setPermissions] = useState<TokenPermission[]>([]);
   const [allNodes, setAllNodes] = useState(true);
   const [selected, setSelected] = useState<Set<bigint>>(new Set());
-  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: !allNodes });
+  const nodes = useNodeList({}, { enabled: !allNodes });
   // 明文和草稿只属于本次抽屉；卸载后重新打开不能恢复。
   const [secret, setSecret] = useState<{ label: string; value: string; canCreate: boolean } | null>(null);
   const submit = async (e: FormEvent<HTMLFormElement>) => {

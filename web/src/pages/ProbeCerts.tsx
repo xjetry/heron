@@ -7,6 +7,7 @@ import { Link, useParams } from "react-router";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type NodeProbeCertificate } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { PresentedReason, ProbeTaskSchema } from "../gen/heron/v1/types_pb";
 import { formatPin } from "../lib/certpin";
 import { Timestamp } from "../components/Timestamp";
@@ -26,7 +27,7 @@ export function ProbeCerts() {
   const taskId = BigInt(id);
   const qc = useQueryClient();
   const certs = useQuery(AdminService.method.listProbeCertificates, { taskId });
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useNodeList({});
   const save = useMutation(AdminService.method.saveProbeTask);
   const [notice, setNotice] = useState("");
   const refresh = () => {

@@ -1,9 +1,8 @@
-import { useQuery } from "@connectrpc/connect-query";
 import { skipToken } from "@tanstack/react-query";
 import { type KeyboardEvent, useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { errorBanner } from "../api/queryGate";
-import { AdminService } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { filterNodes } from "../lib/nodeSearch";
 import { SEARCH_KEYSHORTCUTS, useSearchShortcut } from "../lib/useSearchShortcut";
 import { Icon } from "./Icon";
@@ -20,7 +19,7 @@ export function QuickSearch() {
   const trigger = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const nodes = useQuery(AdminService.method.listNodes, opener ? {} : skipToken);
+  const nodes = useNodeList(opener ? {} : skipToken);
   useSearchShortcut(useCallback(() => setOpener((current) => current ?? trigger.current ?? document.body), []));
   const close = () => { setOpener(null); setQuery(""); setActive(0); };
   const matches = nodes.data ? filterNodes(nodes.data.nodes, query).slice(0, LIMIT) : [];

@@ -10,6 +10,7 @@ import { RowMenu } from "../components/RowMenu";
 import { Picks } from "../components/Picks";
 import { NodeAssignment, assignmentValid, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, AlertKind, BaselineMode, ProbeMetric, ResourceMetric, RttMode, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { ALERT_KINDS, BASELINE_MODES, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RELATIVE_LIMITS, RESOURCE_METRICS, RTT_MODES, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 import { isHTTPSTarget } from "../lib/probes";
@@ -116,7 +117,7 @@ export function AlertRules() {
   const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; rule: AlertRule; opener: HTMLElement } | null>(null);
   const [toggling, setToggling] = useState<bigint | null>(null);
   const { error, mutationOptions } = useLatestError();
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useNodeList({});
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
   const tasks = useQuery(AdminService.method.listProbeTasks, {});
   // 离线巡检每 10 秒一轮；按同一周期刷新，触发中的节点不用手动刷新就能看到。

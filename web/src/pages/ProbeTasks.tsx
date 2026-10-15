@@ -13,6 +13,7 @@ import { RowMenu } from "../components/RowMenu";
 import { PageHeader } from "../components/PageHeader";
 import { assignmentValid, NodeAssignment, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { formatPin, parsePin } from "../lib/certpin";
 import { ascending, withId } from "../lib/ids";
@@ -41,7 +42,7 @@ export function ProbeTasks() {
   const transport = useTransport();
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const { error, mutationOptions } = useLatestError();
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useNodeList({});
   const list = useQuery(AdminService.method.listProbeTasks, {});
   // 任务与分配的每次修改都让列表重新拉取；节点列表没有变化，不失效它。
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listProbeTasks, cardinality: "finite" }) });

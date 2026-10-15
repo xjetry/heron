@@ -5,6 +5,7 @@ import { errorBanner, queryGateAll } from "../api/queryGate";
 import { PageHeader } from "../components/PageHeader";
 import { ReadingsTable } from "../components/ReadingsTable";
 import { AdminService } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { liveById, liveStatus } from "../lib/adminStatus";
 import { attentionCards } from "../lib/attention";
 import { withId } from "../lib/ids";
@@ -21,7 +22,7 @@ const DETAILS_MS = 10_000;
 export function Overview() {
   const [search, setSearch] = useState("");
   const snap = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
-  const details = useQuery(AdminService.method.listNodes, {}, { refetchInterval: DETAILS_MS });
+  const details = useNodeList({}, { refetchInterval: DETAILS_MS });
   const rules = useQuery(AdminService.method.listAlertRules, {}, { refetchInterval: DETAILS_MS });
   const gate = queryGateAll(snap, details);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);

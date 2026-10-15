@@ -10,6 +10,7 @@ import { Expiry } from "../components/Expiry";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Node } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { byExpiryDay, canRenew, hubToday, priceText } from "../lib/billing";
 import { isDate } from "../lib/format";
 import { withId } from "../lib/ids";
@@ -25,7 +26,7 @@ const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 // 管理员与 hub 不在同一时区时格子也不会错开一天。"已续费"调 RenewNodeBilling，推后的日期由 hub 算。
 export function Renewals() {
   const qc = useQueryClient();
-  const nodes = useQuery(AdminService.method.listNodes, {}, { refetchInterval: TRAFFIC_MS });
+  const nodes = useNodeList({}, { refetchInterval: TRAFFIC_MS });
   const tags = useQuery(AdminService.method.listTags, {});
   const { error, isLatest, mutationOptions } = useLatestError();
   const [notice, setNotice] = useState("");

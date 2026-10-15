@@ -9,6 +9,7 @@ import { assignmentValid, NodeAssignment, type NodeSelection } from "../componen
 import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { AdminService, SilenceKind, type Node, type Silence } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { liveIds, withId } from "../lib/ids";
 import { dateTime } from "../lib/format";
 import { DateTimeInput, TimeInput } from "../components/DateInput";
@@ -57,7 +58,7 @@ export function Silences() {
   const qc = useQueryClient();
   const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; silence: Silence; opener: HTMLElement } | null>(null);
   const { error, mutationOptions } = useLatestError();
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useNodeList({});
   const silences = useQuery(AdminService.method.listSilences, {}, { refetchInterval: 10_000 });
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listSilences, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveSilence, { ...mutationOptions, onSuccess: refresh });

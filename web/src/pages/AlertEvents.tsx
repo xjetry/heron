@@ -2,6 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matchesFilters, type EventFilters } from "../components/EventFeed";
 import { PageHeader } from "../components/PageHeader";
 import { ruleLabel, TRANSITIONS } from "../lib/alerts";
@@ -16,7 +17,7 @@ export function AlertEvents() {
   // 无效参数不能退化成"全部节点"——那是放宽；直接报错，不发请求。
   const valid = raw === null || /^[1-9]\d*$/.test(raw);
   const nodeId = raw !== null && valid ? BigInt(raw) : 0n;
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useNodeList({});
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
   const rules = useQuery(AdminService.method.listAlertRules, {});
   const events = useAlertEvents(valid ? nodeId : null);

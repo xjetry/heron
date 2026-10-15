@@ -13,6 +13,7 @@ import { NodeAddresses, addressText } from "../components/NodeAddresses";
 import { NowGrid } from "../components/NowGrid";
 import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import { liveStatus } from "../lib/adminStatus";
 import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
@@ -37,7 +38,7 @@ export function NodeDetail() {
   const validId = /^\d+$/.test(id ?? "");
   const nodeId = validId ? BigInt(id!) : 0n;
   const qc = useQueryClient();
-  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
+  const nodes = useNodeList({}, { enabled: validId, refetchInterval: TRAFFIC_MS });
   const snap = useQuery(AdminService.method.getSnapshot, {}, { enabled: validId, refetchInterval: POLL_MS });
   const tags = useQuery(AdminService.method.listTags, {}, { enabled: validId });
   const rules = useQuery(AdminService.method.listAlertRules, {}, { enabled: validId && tab === "events" });

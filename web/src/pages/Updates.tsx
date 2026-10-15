@@ -6,6 +6,7 @@ import { MixedCheckbox } from "../components/MixedCheckbox";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Node } from "../gen/heron/v1/admin_pb";
+import { useNodeList } from "../api/useNodeList";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
 import { liveById, liveStatus } from "../lib/adminStatus";
 import { POLL_MS } from "../lib/poll";
@@ -111,7 +112,7 @@ function BindingNotice({ change }: { change: BindingChange }) {
 
 export function Updates() {
   const updates = useQuery(AdminService.method.getUpdates, {}, { refetchInterval: 3000 });
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useNodeList({});
   // 快照只用于把离线与从未上报的节点排到最后，不进 gate：它失败时页面照常可用，只是失去这一条排序。
   const snapshot = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const [latestCheck, setLatestCheck] = useState<LatestCheck>({ version: "", latestBound: "", bound: "" });

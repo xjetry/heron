@@ -1,4 +1,4 @@
-import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
+import { createConnectQueryKey, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type DragEvent, type ReactNode, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -18,6 +18,7 @@ import { NodeCredentialsDrawer } from "../components/NodeCredentialsDrawer";
 import { NodeMoveModal } from "../components/NodeMoveModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
+import { nodeListQueryOptions, useNodeList } from "../api/useNodeList";
 import { priceText } from "../lib/billing";
 import { useFacetModes } from "../lib/facets";
 import { duration } from "../lib/format";
@@ -65,7 +66,7 @@ export function Nodes() {
   // 只有一条不带条件的查询：全部筛选都在浏览器里按它过滤（applyScope），面板计数也按它算；它同时是全部节点总数 N 的来源——
   // 移动目标位置的合法区间 1..N-k+1 按 N 计算——且与 useOrder 的 reload 同一个键。查询键不随筛选变，刷新失败时
   // react-query 保留上一份数据，弹窗草稿独立于列表，刷新与排序不会卸载正在编辑的节点。
-  const nodes = useQuery(AdminService.method.listNodes, { tags: [] }, { refetchInterval: 10_000 });
+  const nodes = useNodeList({ tags: [] }, { refetchInterval: 10_000 });
   const snapshot = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const hubVersion = snapshot.data?.hubVersion;
   // 落后标记以 GetSnapshot 的 boundAgentVersion 为目标，hubVersion 只表示 hub 自身版本，不能代替节点的目标版本。
@@ -179,8 +180,8 @@ export function Nodes() {
     items: nodes.data?.nodes ?? [], id: (node) => node.id, enabled: !reordered && nodes.data !== undefined,
     save: (ids) => reorder.mutateAsync({ ids }),
     reload: async () => {
-      // 排序要求完整排列，回读与列表同一条不带条件的查询。
-      const options = createQueryOptions(AdminService.method.listNodes, { tags: [] }, { transport });
+      // 排序要求完整排列，回读与列表同一条不带条件的查询；staleTime 0 让它一定发请求（未变时 hub 只回版本，沿用缓存）。
+      const options = nodeListQueryOptions(qc, transport, { tags: [] });
       await qc.cancelQueries({ queryKey: options.queryKey, exact: true });
       return (await qc.fetchQuery({ ...options, staleTime: 0 })).nodes;
     },
@@ -324,8 +325,9 @@ export function Nodes() {
   </section>;
 }
 
-// 节点资料的 lastSeenAt 随 ListNodes（10 秒）刷新，快照条目随 POLL_MS 刷新，两边任一处有上报时间都算上报过；快照里没有
-// 这个节点时只看节点资料。不经 nodeStatus：维护中的节点也可能从未上报，这里问的只是"有没有 agent 用过它的凭据"。
+// 节点资料里的 lastSeenAt 是 ListNodes 读取时的值，它的变化不推进资料版本（条件读取下可能一直停在从未上报）；快照条目随
+// POLL_MS 刷新，两边任一处有上报时间都算上报过；快照里没有这个节点时只看节点资料。不经 nodeStatus：维护中的节点也可能
+// 从未上报，这里问的只是"有没有 agent 用过它的凭据"。
 function neverReported(node: Node, live: { lastSeenAt?: bigint } | undefined): boolean {
   return node.lastSeenAt === undefined && live?.lastSeenAt === undefined;
 }
