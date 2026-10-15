@@ -52,14 +52,14 @@ func nodeTagsQuery(where string) string {
 	WHERE nt.node_id IN (SELECT n.id FROM node n` + where + `) ORDER BY t.name_fold`
 }
 
-// tagFilterWhere 是 ListNodesByTags 交给 queryNodes 的节点条件：n 个折叠后的名字，外加所选标签数，共 n+1 个参数。
+// tagFilterWhere 是按标签交集筛选（NodeFilter.where）的节点条件：n 个折叠后的名字，外加所选标签数，共 n+1 个参数。
 func tagFilterWhere(n int) string {
 	return ` WHERE n.id IN (SELECT nt.node_id FROM node_tag nt JOIN tag t ON t.id = nt.tag_id
 	WHERE t.name_fold IN (` + strings.TrimSuffix(strings.Repeat("?, ", n), ", ") + `)
 	GROUP BY nt.node_id HAVING COUNT(DISTINCT nt.tag_id) = ?)`
 }
 
-// untaggedWhere 是 ListUntaggedNodes 交给 queryVisibleNodes 的节点条件：节点在 node_tag 里没有任何关联行。
+// untaggedWhere 是只取无标签节点（NodeFilter.where）的节点条件：节点在 node_tag 里没有任何关联行。
 // 判据是关联行而不是 tag 行：节点被去掉最后一个标签后 tag 行仍在（setNodeTags 的注释），此时节点没有标签；DeleteTag
 // 删标签时关联行也一并删除。NOT EXISTS 对每个节点只判一次关联存在性，不需要聚合去重。
 const untaggedWhere = ` WHERE NOT EXISTS (SELECT 1 FROM node_tag nt WHERE nt.node_id = n.id)`
@@ -153,29 +153,17 @@ func nodeTags(ctx context.Context, tx *sql.Tx, where string, args []any) (map[in
 // 取交集而不是并集：多选过滤是逐步收窄——再选一个标签，结果只会变少，"db 且 客户A"才是按多个维度定位一批机器；
 // 并集会让多选越选越多。实现是按节点分组、数命中的不同标签：命中数等于所选的不同标签数，节点才拥有全部所选标签。
 // 所选标签数按折叠去重后计，否则 [db, DB] 会要求命中两个标签而任何节点都只能命中一个；不存在的名字匹配不到任何标签，
-// 命中数凑不满，结果为空。
+// 命中数凑不满，结果为空。条件的拼法在 NodeFilter.where，读取经 ReadNodeList。
 func (s *Store) ListNodesByTags(ctx context.Context, names []string) ([]Node, error) {
-	// 空条件匹配一切：没选任何标签表示不过滤，返回全部节点。这与"空即拒绝"的方向相反，所以显式分支，不让它
-	// 从下面的 SQL 里掉出来——IN () 在 SQLite 里合法且不匹配任何行，空选择会静默变成空列表。
-	if len(names) == 0 {
-		return s.queryVisibleNodes(ctx, "")
-	}
-	seen := map[string]bool{}
-	var folds []any
-	for _, name := range names {
-		fold := TagFold(name)
-		if !seen[fold] {
-			seen[fold] = true
-			folds = append(folds, fold)
-		}
-	}
-	return s.queryVisibleNodes(ctx, tagFilterWhere(len(folds)), append(folds, len(folds))...)
+	list, err := s.ReadNodeList(ctx, NodeFilter{Tags: names}, nil)
+	return list.Nodes, err
 }
 
 // ListUntaggedNodes 返回没有任何标签的节点，顺序与 ListNodes 相同（nodeOrder 是节点列表唯一的排序）。
 // 与 ListNodesByTags 各管一种条件：调用方要的是"没有标签"而不是某个标签集合的交集，两者不组合。
 func (s *Store) ListUntaggedNodes(ctx context.Context) ([]Node, error) {
-	return s.queryVisibleNodes(ctx, untaggedWhere)
+	list, err := s.ReadNodeList(ctx, NodeFilter{Untagged: true}, nil)
+	return list.Nodes, err
 }
 
 // ListTags 列出全部标签与各自的节点数，按 name_fold 排序；没挂在任何节点上的标签节点数为 0。

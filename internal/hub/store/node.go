@@ -361,27 +361,36 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) queryVisibleNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
-	if _, ok := Principal(ctx); ok {
-		if where == "" {
-			where = " WHERE "
-		} else {
-			where += " AND "
-		}
-		where += nodeScopeSQL(ctx, "n.id")
+// visibleWhere 给作用于 node n 的条件追加调用方的节点可见范围（nodeScopeSQL）；没有主体（浏览器会话、hub 内部调用）
+// 时原样返回。
+func visibleWhere(ctx context.Context, where string) string {
+	if _, ok := Principal(ctx); !ok {
+		return where
 	}
-	return s.queryNodes(ctx, where, args...)
+	if where == "" {
+		return " WHERE " + nodeScopeSQL(ctx, "n.id")
+	}
+	return where + " AND " + nodeScopeSQL(ctx, "n.id")
 }
 
-// queryNodes 是 store.Node 值的唯一来源（selectNodes 与 scanNodes 只在这里用）：where 是作用于 node n 的条件（空串即
-// 全部）。节点行与它们的标签在同一个只读事务里读出，两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与
-// 标签就会是不同时刻的样子（TestNodeRowAndTagsComeFromOneSnapshot）。
+func (s *Store) queryVisibleNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
+	return s.queryNodes(ctx, visibleWhere(ctx, where), args...)
+}
+
+// queryNodes 在自己的只读事务里读节点（见 queryNodesTx）。
 func (s *Store) queryNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
 	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	return queryNodesTx(ctx, tx, where, args...)
+}
+
+// queryNodesTx 是 store.Node 值的唯一来源（selectNodes 与 scanNodes 只在这里用）：where 是作用于 node n 的条件（空串即
+// 全部）。节点行与它们的标签在调用方的同一个只读事务里读出，两者与事务里先前读到的任何东西同属一个快照：两次独立查询
+// 之间插进一次 UpdateNode，节点行与标签就会是不同时刻的样子（TestNodeRowAndTagsComeFromOneSnapshot）。
+func queryNodesTx(ctx context.Context, tx *sql.Tx, where string, args ...any) ([]Node, error) {
 	rows, err := tx.QueryContext(ctx, selectNodes+where+nodeOrder, args...)
 	if err != nil {
 		return nil, err

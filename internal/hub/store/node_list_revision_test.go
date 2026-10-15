@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"runtime"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,5 +215,99 @@ func TestMinuteFlushBumpsOnlyWhenSourceChanges(t *testing.T) {
 	flush(720, "198.51.100.9")
 	if v := revisionOf(t, s); v == settled {
 		t.Fatal("来源变了，版本应推进")
+	}
+}
+
+func TestReadNodeListSkipsRowsWhenUnchanged(t *testing.T) {
+	t.Parallel()
+	s, id := nodeWithFacts(t)
+	ctx := t.Context()
+	full, err := s.ReadNodeList(ctx, NodeFilter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Unchanged || len(full.Nodes) != 1 || full.Nodes[0].ID != id {
+		t.Fatalf("无条件读取 = %+v", full)
+	}
+	var asked uint64
+	same, err := s.ReadNodeList(ctx, NodeFilter{}, func(rev uint64) bool { asked = rev; return rev == full.Revision })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != full.Revision || !same.Unchanged || same.Nodes != nil || same.Revision != full.Revision {
+		t.Fatalf("版本未变时应只回版本：asked=%d %+v", asked, same)
+	}
+	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "m", TrafficResetDay: 1}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := s.ReadNodeList(ctx, NodeFilter{}, func(rev uint64) bool { return rev == full.Revision })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Unchanged || len(changed.Nodes) != 1 || changed.Nodes[0].Name != "m" || changed.Revision == full.Revision {
+		t.Fatalf("改名后应整份返回新版本：%+v", changed)
+	}
+}
+
+// 同一个版本号只能对应一份内容：版本与节点行若读自两个快照，并发改名插进两次读之间时，同一个版本会配上两个名字。
+func TestNodeListRevisionAndRowsComeFromOneSnapshot(t *testing.T) {
+	s, id := nodeWithFacts(t)
+	ctx := t.Context()
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	defer func() { close(stop); wg.Wait() }()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 1; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: fmt.Sprint("n", i), TrafficResetDay: 1}); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	// 写者插进两次读之间才验证了东西：GOMAXPROCS 至少 2，读满 minReads 次且见过至少两个版本才停，到时限仍只见一个判为空过。
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(max(2, runtime.GOMAXPROCS(0))))
+	const minReads = 500
+	deadline := time.Now().Add(10 * time.Second)
+	seen := map[uint64]string{}
+	for reads := 0; reads < minReads || (len(seen) < 2 && time.Now().Before(deadline)); reads++ {
+		list, err := s.ReadNodeList(ctx, NodeFilter{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := list.Nodes[0].Name
+		if prev, ok := seen[list.Revision]; ok && prev != name {
+			t.Fatalf("版本 %d 先后配上 %q 与 %q：版本与节点行不是同一个快照", list.Revision, prev, name)
+		}
+		seen[list.Revision] = name
+	}
+	if len(seen) < 2 {
+		t.Fatal("期间只见到一个版本，写者没有插进来，用例空过")
+	}
+}
+
+func TestReadNodeListFiltersMatchListNodesByTags(t *testing.T) {
+	t.Parallel()
+	s, id := nodeWithFacts(t)
+	ctx := t.Context()
+	if _, _, err := s.CreateNode(ctx, NewNode{Name: "bare"}, hash(2)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 1, Tags: []string{"db"}}); err != nil {
+		t.Fatal(err)
+	}
+	tagged, err := s.ReadNodeList(ctx, NodeFilter{Tags: []string{"DB"}}, nil)
+	if err != nil || len(tagged.Nodes) != 1 || tagged.Nodes[0].ID != id {
+		t.Fatalf("按标签 = %+v %v", tagged, err)
+	}
+	untagged, err := s.ReadNodeList(ctx, NodeFilter{Untagged: true}, nil)
+	if err != nil || len(untagged.Nodes) != 1 || untagged.Nodes[0].Name != "bare" {
+		t.Fatalf("无标签 = %+v %v", untagged, err)
 	}
 }
