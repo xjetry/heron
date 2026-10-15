@@ -94,8 +94,8 @@ func TestMigration45DropsNullIdentity(t *testing.T) {
 func TestMigration45MatchesFreshSchema(t *testing.T) {
 	t.Parallel()
 	s := migrateFrom(t, 44, seedIdentityCerts)
-	if got := userVersion(t, s.r); got != 45 {
-		t.Fatalf("schema version = %d, want 45", got)
+	if got := userVersion(t, s.r); got != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, schemaVersion)
 	}
 }
 
@@ -194,8 +194,8 @@ func TestRestoreMetricsSnapshotFrom44(t *testing.T) {
 				t.Fatalf("%s changed during restore: got %v want %v", table, got, want)
 			}
 		}
-		if got := userVersion(t, s.r); got != 45 {
-			t.Fatalf("restored version = %d, want 45", got)
+		if got := userVersion(t, s.r); got != schemaVersion {
+			t.Fatalf("restored version = %d, want %d", got, schemaVersion)
 		}
 		s.Close()
 	}

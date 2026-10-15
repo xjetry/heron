@@ -70,6 +70,46 @@ var migrations = map[int]func(*sql.Tx) error{
 	43: migrateV43,
 	44: execAll(migrationV44Config),
 	45: migrateV45Config,
+	46: execAll(migrationV46Config),
+}
+
+// v46：节点资料版本表、种子行与推进它的触发器（含义见 schema.go 的 ddlNodeListRevision）。只建新对象、不改已有行；
+// 回滚边界同其它迁移：写入后旧二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV46Config = []string{
+	`CREATE TABLE node_list_revision (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 0)
+)`,
+	`INSERT INTO node_list_revision (id, revision) VALUES (1, 0)`,
+	`CREATE TRIGGER node_list_revision_node_insert AFTER INSERT ON node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_node_delete AFTER DELETE ON node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_node_update AFTER UPDATE ON node WHEN
+  OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.sort_order IS NOT NEW.sort_order OR OLD.public IS NOT NEW.public
+  OR OLD.note IS NOT NEW.note OR OLD.offline_grace_s IS NOT NEW.offline_grace_s OR OLD.traffic_reset_day IS NOT NEW.traffic_reset_day
+  OR OLD.created_at IS NOT NEW.created_at OR OLD.price IS NOT NEW.price OR OLD.currency IS NOT NEW.currency
+  OR OLD.billing_cycle IS NOT NEW.billing_cycle OR OLD.expires_on IS NOT NEW.expires_on OR OLD.auto_renew IS NOT NEW.auto_renew
+  OR OLD.last_source IS NOT NEW.last_source OR OLD.country IS NOT NEW.country OR OLD.country_ip IS NOT NEW.country_ip
+  OR OLD.country_pin IS NOT NEW.country_pin OR OLD.maintenance IS NOT NEW.maintenance OR OLD.public_remark IS NOT NEW.public_remark
+  OR OLD.traffic_quota_bytes IS NOT NEW.traffic_quota_bytes OR OLD.traffic_quota_mode IS NOT NEW.traffic_quota_mode
+  OR OLD.ipv4_pin IS NOT NEW.ipv4_pin OR OLD.ipv6_pin IS NOT NEW.ipv6_pin OR OLD.rented IS NOT NEW.rented
+BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_facts_insert AFTER INSERT ON node_facts BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_facts_delete AFTER DELETE ON node_facts BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_facts_update AFTER UPDATE ON node_facts WHEN
+  OLD.node_id IS NOT NEW.node_id OR OLD.hostname IS NOT NEW.hostname OR OLD.os IS NOT NEW.os OR OLD.kernel IS NOT NEW.kernel
+  OR OLD.arch IS NOT NEW.arch OR OLD.virtualization IS NOT NEW.virtualization OR OLD.cpu_model IS NOT NEW.cpu_model
+  OR OLD.cpu_cores IS NOT NEW.cpu_cores OR OLD.agent_version IS NOT NEW.agent_version OR OLD.icmp_available IS NOT NEW.icmp_available
+  OR OLD.updated_at IS NOT NEW.updated_at OR OLD.network IS NOT NEW.network OR OLD.diagnostics IS NOT NEW.diagnostics
+  OR OLD.execution IS NOT NEW.execution
+BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_node_tag_insert AFTER INSERT ON node_tag BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_node_tag_delete AFTER DELETE ON node_tag BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_node_tag_update AFTER UPDATE ON node_tag BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_tag_update AFTER UPDATE ON tag BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_tag_delete AFTER DELETE ON tag BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_token_node_insert AFTER INSERT ON api_token_node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_token_node_delete AFTER DELETE ON api_token_node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER node_list_revision_token_node_update AFTER UPDATE ON api_token_node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 }
 
 // 证书观测必须能绑定到配置身份；没有身份的存量观测无法补证，由迁移删除。

@@ -515,6 +515,8 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 					return fmt.Errorf("migrate config snapshot to 45: %w", err)
 				}
 			}
+		case 46:
+			// 节点资料版本表是运行态，不属于任一备份层；目标库自己的那一行由触发器随恢复的整表搬运推进。
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

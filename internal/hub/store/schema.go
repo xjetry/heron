@@ -197,12 +197,62 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeByTaskIndex(t))
 	}
-	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
+	out = append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
 		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
-		ddlHubCoordination, seedHubCoordination, ddlCleanupJob)
+		ddlHubCoordination, seedHubCoordination, ddlCleanupJob, ddlNodeListRevision, seedNodeListRevision)
+	// 触发器挂在 node、node_facts、node_tag、tag、api_token_node 上，放在全部建表之后。
+	return append(out, ddlNodeListRevisionTriggers...)
+}
+
+// node_list_revision 是节点资料的版本计数，ListNodes 的条件读取据它判断调用方手里那份列表是否仍成立（ReadNodeList）。
+// 不变式：凡改变 ListNodes 返回内容的写入，都在同一条语句里经下面的触发器把它加一，与写入一起提交或一起回滚；写者
+// 不必各自记得推进，动态表名的排序写入、分钟刷出、国家查询、续期扫描、离线子命令与恢复的整表搬运都落在触发器上。
+// 不推进的写入：只改 node.last_seen_at（实时状态，面板从快照取；分钟刷出每分钟写它）或 node.token_hash（不在
+// ListNodes 里）；只改 node_facts.facts_hash、facts_rev（摘要与字段集合版本，展示列变了它们才变）；新建标签行
+// （挂上节点时 node_tag 的插入已推进）。node 与 node_facts 的 UPDATE 触发器逐列比较新旧值，写回原值不推进；列的
+// 归类由 TestNodeListRevisionColumnClassification 逐列核对，加列必须在那里归类并改这里的 WHEN。
+// 只有一行（id = 1），建库时种子为 0；是运行态，不进任何备份层，恢复对 node 等表的 DELETE + INSERT 经触发器推进它。
+const ddlNodeListRevision = `CREATE TABLE node_list_revision (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 0)
+)`
+const seedNodeListRevision = `INSERT INTO node_list_revision (id, revision) VALUES (1, 0)`
+
+const bumpNodeListRevision = `UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1;`
+
+var ddlNodeListRevisionTriggers = []string{
+	`CREATE TRIGGER node_list_revision_node_insert AFTER INSERT ON node BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_node_delete AFTER DELETE ON node BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_node_update AFTER UPDATE ON node WHEN
+  OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.sort_order IS NOT NEW.sort_order OR OLD.public IS NOT NEW.public
+  OR OLD.note IS NOT NEW.note OR OLD.offline_grace_s IS NOT NEW.offline_grace_s OR OLD.traffic_reset_day IS NOT NEW.traffic_reset_day
+  OR OLD.created_at IS NOT NEW.created_at OR OLD.price IS NOT NEW.price OR OLD.currency IS NOT NEW.currency
+  OR OLD.billing_cycle IS NOT NEW.billing_cycle OR OLD.expires_on IS NOT NEW.expires_on OR OLD.auto_renew IS NOT NEW.auto_renew
+  OR OLD.last_source IS NOT NEW.last_source OR OLD.country IS NOT NEW.country OR OLD.country_ip IS NOT NEW.country_ip
+  OR OLD.country_pin IS NOT NEW.country_pin OR OLD.maintenance IS NOT NEW.maintenance OR OLD.public_remark IS NOT NEW.public_remark
+  OR OLD.traffic_quota_bytes IS NOT NEW.traffic_quota_bytes OR OLD.traffic_quota_mode IS NOT NEW.traffic_quota_mode
+  OR OLD.ipv4_pin IS NOT NEW.ipv4_pin OR OLD.ipv6_pin IS NOT NEW.ipv6_pin OR OLD.rented IS NOT NEW.rented
+BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_facts_insert AFTER INSERT ON node_facts BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_facts_delete AFTER DELETE ON node_facts BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_facts_update AFTER UPDATE ON node_facts WHEN
+  OLD.node_id IS NOT NEW.node_id OR OLD.hostname IS NOT NEW.hostname OR OLD.os IS NOT NEW.os OR OLD.kernel IS NOT NEW.kernel
+  OR OLD.arch IS NOT NEW.arch OR OLD.virtualization IS NOT NEW.virtualization OR OLD.cpu_model IS NOT NEW.cpu_model
+  OR OLD.cpu_cores IS NOT NEW.cpu_cores OR OLD.agent_version IS NOT NEW.agent_version OR OLD.icmp_available IS NOT NEW.icmp_available
+  OR OLD.updated_at IS NOT NEW.updated_at OR OLD.network IS NOT NEW.network OR OLD.diagnostics IS NOT NEW.diagnostics
+  OR OLD.execution IS NOT NEW.execution
+BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_node_tag_insert AFTER INSERT ON node_tag BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_node_tag_delete AFTER DELETE ON node_tag BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_node_tag_update AFTER UPDATE ON node_tag BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_tag_update AFTER UPDATE ON tag BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_tag_delete AFTER DELETE ON tag BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_token_node_insert AFTER INSERT ON api_token_node BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_token_node_delete AFTER DELETE ON api_token_node BEGIN ` + bumpNodeListRevision + ` END`,
+	`CREATE TRIGGER node_list_revision_token_node_update AFTER UPDATE ON api_token_node BEGIN ` + bumpNodeListRevision + ` END`,
 }
 
 // cleanup_job 是删除节点或探测任务后待清的时序行（cleanup.go）：kind 为 'node' 时 node_id 是被删节点、task_id 为 0，

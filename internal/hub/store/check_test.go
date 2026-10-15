@@ -41,6 +41,9 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 		{"hub_coordination", "id = 1", "INSERT INTO hub_coordination (id, offline_generation) VALUES (2, 0)"},
 		// 代数只增不减，负值没有含义；读侧另把负值当损坏报错（OfflineGeneration）。
 		{"hub_coordination", "offline_generation >= 0", "UPDATE hub_coordination SET offline_generation = -1"},
+		{"node_list_revision", "id = 1", "INSERT INTO node_list_revision (id, revision) VALUES (2, 0)"},
+		// 版本只经触发器加一，负值没有含义。
+		{"node_list_revision", "revision >= 0", "UPDATE node_list_revision SET revision = -1"},
 		// 基线计数是截到 MaxInt64 的内核计数，负值没有含义；读侧另按 CheckTrafficBaseline 拒收（快照的表不带 CHECK）。
 		{"traffic_baseline", "rx >= 0", "INSERT INTO traffic_baseline (node_id, iface, rx, tx) VALUES (1, '', -1, 0)"},
 		{"traffic_baseline", "tx >= 0", "INSERT INTO traffic_baseline (node_id, iface, rx, tx) VALUES (1, '', 0, -1)"},

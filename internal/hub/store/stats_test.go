@@ -77,6 +77,12 @@ func TestStorageStatsCoversEveryTableAndCountsRows(t *testing.T) {
 func TestStorageStatsReportsLogicalDatabaseSize(t *testing.T) {
 	t.Parallel()
 	s, path := openAt(t)
+	// 用例的区分力来自检查点前主文件落后于逻辑大小，所以写入期间关掉自动检查点：否则 WAL 攒到 1000 页就会合回主文件，
+	// 能否落后取决于每次写入改了几页（触发器、索引都会改变它）。写连接只有一条（Open 里 SetMaxOpenConns(1)）、
+	// 不按空闲回收，这条 PRAGMA 对之后的每次写入都生效。
+	if _, err := s.w.Exec("PRAGMA wal_autocheckpoint=0"); err != nil {
+		t.Fatal(err)
+	}
 	for i := range 200 {
 		if _, _, err := s.CreateNode(t.Context(), NewNode{Name: "n"}, hash(byte(i))); err != nil {
 			t.Fatal(err)
@@ -86,14 +92,14 @@ func TestStorageStatsReportsLogicalDatabaseSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 用例的区分力来自检查点前主文件落后于逻辑大小：此时按主文件大小算的实现给不出 DBBytes。
+	// 检查点前主文件落后于逻辑大小：此时按主文件大小算的实现给不出 DBBytes。
 	before, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if before.Size() >= stats.DBBytes {
 		t.Fatalf("main file before checkpoint = %d, db_bytes = %d: the WAL is no longer ahead of the main file "+
-			"(an automatic checkpoint ran), so this test cannot tell logical from physical size; use fewer nodes or disable wal_autocheckpoint",
+			"(a checkpoint ran despite wal_autocheckpoint=0), so this test cannot tell logical from physical size",
 			before.Size(), stats.DBBytes)
 	}
 	if _, err := s.w.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
