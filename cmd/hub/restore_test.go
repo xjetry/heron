@@ -353,16 +353,16 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 
 // 42 给 admin_session 加了签发时的来源地址列，在配置层。
 // 44 给 node 加了 rented，回填旧版本号前必须撤回，否则迁移 44 的 ADD COLUMN 撞上已有的列。
-// removeV47Config 撤掉迁移 47 的 api_token 失效时刻列。快照与整库都能用：47 的触发器挂在节点资料版本上，快照不带它，
-// 整库降级时由 removeV46Revision 按前缀连同 46 的触发器一起删。
-func removeV47Config(t *testing.T, config *sql.DB) {
-	t.Helper()
-	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
-}
-
 func removeV44Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE node DROP COLUMN rented")
+}
+
+// removeV47Config 撤掉迁移 47 的 api_token 失效时刻列，快照与整库都能用。47 的触发器不在这里删：快照按
+// CREATE TABLE … AS SELECT 拷数据，本来不带触发器；整库降级时由 removeV46Revision 按名字前缀连同 46 的触发器一起删。
+func removeV47Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
 }
 
 func removeV42Config(t *testing.T, config *sql.DB) {

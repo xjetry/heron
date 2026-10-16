@@ -220,14 +220,14 @@ func TestChangeRejectsExpiredTokenAndAcceptsRevived(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := store.WithPrincipal(t.Context(), p)
-	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now()); err != nil {
+	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now(), versionOf(t, s, p.ID)); err != nil {
 		t.Fatal(err)
 	}
 	c := newChange(store.ActionRotateNodeToken, store.Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "x", ResourceID: node})
 	if _, err := s.ChangeVersion(ctx, c); !errors.Is(err, store.ErrPermission) {
 		t.Fatalf("expired token previewed a change: %v", err)
 	}
-	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now().Add(time.Hour)); err != nil {
+	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now().Add(time.Hour), versionOf(t, s, p.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
@@ -235,5 +235,53 @@ func TestChangeRejectsExpiredTokenAndAcceptsRevived(t *testing.T) {
 	}
 	if err := s.SetTokenHash(store.WithChange(ctx, c), node, hash(1), hash(2)); err != nil {
 		t.Fatalf("revived token could not commit: %v", err)
+	}
+}
+
+// versionOf 是 id 当前的 Version()，编辑时带回；token 不存在时为空串。
+func versionOf(t *testing.T, s *store.Store, id int64) string {
+	t.Helper()
+	list, err := s.ListAPITokens(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range list {
+		if tok.ID == id {
+			return tok.Version()
+		}
+	}
+	return ""
+}
+
+// 编辑不换身份：回执按 token 的 id 与凭据身份归属，编辑前留下的回执在编辑后仍能按同一明文取回。
+func TestEditKeepsReceipts(t *testing.T) {
+	s, _, clk := openStore(t)
+	grant := &store.TokenGrant{Permissions: []store.Permission{store.PermissionCreate}}
+	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, grant, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := store.WithPrincipal(t.Context(), p)
+	c := newChange(store.ActionCreateNode, store.Operation{OwnerID: p.ID, RequestID: "before-edit", RequestHash: "x"})
+	if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateNode(store.WithChange(ctx, c), store.NewNode{Name: "created"}, hash(1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateAPIToken(t.Context(), p.ID, "renamed", grant, clk.Now().Add(time.Hour), versionOf(t, s, p.ID)); err != nil {
+		t.Fatal(err)
+	}
+	q, state, err := s.APITokenByHash(t.Context(), sha256.Sum256([]byte("writer")))
+	if err != nil || state != store.TokenLive || q.Name != "renamed" {
+		t.Fatalf("edited token: %+v %v %v", q, state, err)
+	}
+	ctx = store.WithPrincipal(t.Context(), q)
+	list, err := s.ListOperations(ctx, q.ID, "", 100)
+	if err != nil || len(list) != 1 || list[0].RequestID != "before-edit" {
+		t.Fatalf("receipts after edit: %+v %v", list, err)
+	}
+	if o, err := s.FindOperation(ctx, q.ID, "before-edit"); err != nil || o.ResourceID == 0 {
+		t.Fatalf("receipt lookup after edit: %+v %v", o, err)
 	}
 }

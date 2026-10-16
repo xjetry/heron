@@ -26,10 +26,12 @@ func apiTokenProto(t store.APIToken) *heronv1.ApiToken {
 	if !t.ExpiresAt.IsZero() {
 		out.ExpiresAt = proto.Int64(t.ExpiresAt.Unix())
 	}
+	out.Version = t.Version()
 	return out
 }
 
 // tokenGrant 把请求里的 grant 换成 store 的形状。缺失返回 nil，由 store 按全站只读处理（grantOrDefault），建与改同一缺省。
+// 这里只换权限枚举；形状与节点是否存在由 store 在写事务里校验（TokenGrant.validate），经 grantError 点名字段。
 func tokenGrant(g *heronv1.TokenGrant) (*store.TokenGrant, error) {
 	if g == nil {
 		return nil, nil
@@ -38,14 +40,20 @@ func tokenGrant(g *heronv1.TokenGrant) (*store.TokenGrant, error) {
 	for _, p := range g.Permissions {
 		v, ok := tokenPermissions[p]
 		if !ok {
-			return nil, invalid("grant.permissions: unknown permission")
+			return nil, invalid("grant.permissions: unknown permission %d", p)
 		}
 		grant.Permissions = append(grant.Permissions, v)
 	}
-	if g.AllNodes && len(g.NodeIds) != 0 {
-		return nil, invalid("grant: all_nodes and node_ids are mutually exclusive")
-	}
 	return grant, nil
+}
+
+// grantError 把 store 的 grant 校验失败写成请求里的字段路径；不是 grant 的错误返回 nil。
+func grantError(err error) error {
+	var ge *store.GrantError
+	if errors.As(err, &ge) {
+		return invalid("grant.%s: %s", ge.Field, ge.Reason)
+	}
+	return nil
 }
 
 // tokenExpiry 校验 expires_at：缺失返回零值（不过期）；给出时必须在 [1, store.MaxAPITokenExpiresAt] 内。新建另要求晚于
@@ -90,8 +98,8 @@ func (s *Service) CreateApiToken(ctx context.Context, req *connect.Request[heron
 		return nil, err
 	}
 	tok, plain, err := s.auth.CreateAPIToken(ctx, name, grant, expires)
-	if errors.Is(err, store.ErrInvalidGrant) {
-		return nil, invalid("grant: %v", err)
+	if gerr := grantError(err); gerr != nil {
+		return nil, gerr
 	}
 	if errors.Is(err, store.ErrAPITokenLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted,
@@ -138,12 +146,19 @@ func (s *Service) UpdateApiToken(ctx context.Context, req *connect.Request[heron
 	if err != nil {
 		return nil, err
 	}
-	tok, err := s.store.UpdateAPIToken(ctx, req.Msg.GetId(), name, grant, expires)
+	// 空的期望版本不能当作"不比对"：那样整体替换会静默拿走读到之后自动纳入的节点。
+	if req.Msg.GetExpectedVersion() == "" {
+		return nil, invalid("expected_version: required; send the ApiToken.version read from ListApiTokens")
+	}
+	tok, err := s.store.UpdateAPIToken(ctx, req.Msg.GetId(), name, grant, expires, req.Msg.GetExpectedVersion())
+	if gerr := grantError(err); gerr != nil {
+		return nil, gerr
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("API token %d does not exist", req.Msg.GetId()))
-	case errors.Is(err, store.ErrInvalidGrant):
-		return nil, invalid("grant: %v", err)
+	case errors.Is(err, store.ErrAPITokenChanged):
+		return nil, connect.NewError(connect.CodeAborted, fmt.Errorf("API token %d changed since it was read (edited, or a node it created or registered joined its scope); read it again with ListApiTokens and resubmit", req.Msg.GetId()))
 	case err != nil:
 		s.log.Error("updating API token failed", "err", err)
 		return nil, internalError("updating API token failed")

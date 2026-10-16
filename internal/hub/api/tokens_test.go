@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/hub/auth"
+	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/testwait"
 )
 
@@ -186,6 +188,10 @@ func TestAPITokenManagementValidation(t *testing.T) {
 	if err != nil || resp.Msg.GetApiToken().GetName() != "ci" || !strings.HasPrefix(resp.Msg.GetToken(), auth.APITokenPrefix) {
 		t.Fatalf("cleaned create: %v %v", resp, err)
 	}
+	_, err = h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "x", Grant: &heronv1.TokenGrant{NodeIds: []int64{999}}}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: grant.node_ids: node 999 does not exist" {
+		t.Fatalf("create with a missing node: %v", err)
+	}
 	for i := 1; i < auth.MaxAPITokens; i++ {
 		createToken(t, h, "n")
 	}
@@ -236,7 +242,7 @@ func TestExpiredTokenIsRefusedAtTheEntryAndRevivable(t *testing.T) {
 	h.login(t)
 	id, tok := createToken(t, h, "temp")
 	ctx := context.Background()
-	if _, err := h.store.UpdateAPIToken(ctx, id, "temp", nil, h.clk.Now()); err != nil {
+	if _, err := h.store.UpdateAPIToken(ctx, id, "temp", nil, h.clk.Now(), versionOf(t, h.store, id)); err != nil {
 		t.Fatal(err)
 	}
 	got := rawCall(t, h, "ListNodes", "{}", bearer(tok))
@@ -244,7 +250,7 @@ func TestExpiredTokenIsRefusedAtTheEntryAndRevivable(t *testing.T) {
 	if got.status != http.StatusUnauthorized || got.code != "unauthenticated" || got.message != want {
 		t.Fatalf("expired token: %+v", got)
 	}
-	if _, err := h.store.UpdateAPIToken(ctx, id, "temp", nil, h.clk.Now().Add(time.Hour)); err != nil {
+	if _, err := h.store.UpdateAPIToken(ctx, id, "temp", nil, h.clk.Now().Add(time.Hour), versionOf(t, h.store, id)); err != nil {
 		t.Fatal(err)
 	}
 	list, err := h.store.ListAPITokens(ctx)
@@ -276,7 +282,7 @@ func TestUpdateApiTokenKeepsPlaintextAndAppliesNextRequest(t *testing.T) {
 	id, tok := createToken(t, h, "agent")
 	expires := h.clk.Now().Add(time.Hour).Unix()
 	resp, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{
-		Id: id, Name: "renamed", Grant: &heronv1.TokenGrant{}, ExpiresAt: proto.Int64(expires),
+		Id: id, Name: "renamed", Grant: &heronv1.TokenGrant{}, ExpiresAt: proto.Int64(expires), ExpectedVersion: listedVersion(t, h, id),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -312,10 +318,14 @@ func TestUpdateApiTokenValidation(t *testing.T) {
 		"empty name":         {&heronv1.UpdateApiTokenRequest{Id: id, Name: " "}, connect.CodeInvalidArgument, ""},
 		"zero expiry":        {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(0)}, connect.CodeInvalidArgument, "expires_at"},
 		"expiry beyond 9999": {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(253402300800)}, connect.CodeInvalidArgument, "expires_at"},
-		"both scopes":        {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", Grant: &heronv1.TokenGrant{AllNodes: true, NodeIds: []int64{1}}}, connect.CodeInvalidArgument, "mutually exclusive"},
-		"missing node":       {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", Grant: &heronv1.TokenGrant{NodeIds: []int64{999}}}, connect.CodeInvalidArgument, "node 999 does not exist"},
+		"both scopes":        {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", Grant: &heronv1.TokenGrant{AllNodes: true, NodeIds: []int64{1}}}, connect.CodeInvalidArgument, "invalid_argument: grant.node_ids: must be empty when all_nodes is true"},
+		"missing node":       {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", Grant: &heronv1.TokenGrant{NodeIds: []int64{999}}}, connect.CodeInvalidArgument, "invalid_argument: grant.node_ids: node 999 does not exist"},
+		"no version":         {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x"}, connect.CodeInvalidArgument, "expected_version"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if name != "no version" {
+				tc.req.ExpectedVersion = listedVersion(t, h, id)
+			}
 			_, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(tc.req))
 			if connect.CodeOf(err) != tc.code || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %v containing %q", err, tc.code, tc.want)
@@ -323,7 +333,7 @@ func TestUpdateApiTokenValidation(t *testing.T) {
 		})
 	}
 	// 只改名时原样带回过去的时刻是合法的：编辑不要求有效期在未来。
-	if _, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(h.clk.Now().Unix() - 60)})); err != nil {
+	if _, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(h.clk.Now().Unix() - 60), ExpectedVersion: listedVersion(t, h, id)})); err != nil {
 		t.Fatalf("past expiry on edit: %v", err)
 	}
 }
@@ -367,5 +377,58 @@ func TestGetCallerForSessionAndScopedToken(t *testing.T) {
 	caller, err := h.admin.GetCaller(ctx, withBearer(&heronv1.GetCallerRequest{}, created.Msg.GetToken()))
 	if err != nil || caller.Msg.GetApiToken().GetName() != "scoped" || caller.Msg.GetApiToken().GetGrant().GetAllNodes() {
 		t.Fatalf("scoped caller: %+v %v", caller, err)
+	}
+}
+
+// versionOf 是 id 当前的 Version()，编辑时带回；token 不存在时为空串。
+func versionOf(t *testing.T, s *store.Store, id int64) string {
+	t.Helper()
+	list, err := s.ListAPITokens(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range list {
+		if tok.ID == id {
+			return tok.Version()
+		}
+	}
+	return ""
+}
+
+// listedVersion 是 ListApiTokens 给出的 version：面板从这里取，编辑时带回。
+func listedVersion(t *testing.T, h *harness, id int64) string {
+	t.Helper()
+	resp, err := h.admin.ListApiTokens(context.Background(), connect.NewRequest(&heronv1.ListApiTokensRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range resp.Msg.GetTokens() {
+		if tok.GetId() == id {
+			return tok.GetVersion()
+		}
+	}
+	t.Fatalf("API token %d not listed", id)
+	return ""
+}
+
+// 读到之后被改过的 token 拒绝整体替换，什么都不改；按新读到的版本再提交即成功。
+func TestUpdateApiTokenRejectsStaleVersion(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, _ := createToken(t, h, "agent")
+	read := listedVersion(t, h, id)
+	if _, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: id, Name: "first", ExpectedVersion: read})); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: id, Name: "second", ExpectedVersion: read}))
+	want := fmt.Sprintf("aborted: API token %d changed since it was read (edited, or a node it created or registered joined its scope); read it again with ListApiTokens and resubmit", id)
+	if connect.CodeOf(err) != connect.CodeAborted || err.Error() != want {
+		t.Fatalf("stale version: %v", err)
+	}
+	resp, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: id, Name: "second", ExpectedVersion: listedVersion(t, h, id)}))
+	if err != nil || resp.Msg.GetApiToken().GetName() != "second" || resp.Msg.GetApiToken().GetVersion() != listedVersion(t, h, id) {
+		t.Fatalf("current version: %v %v", resp, err)
 	}
 }

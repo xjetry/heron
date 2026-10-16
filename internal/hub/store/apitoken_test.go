@@ -170,7 +170,7 @@ func TestUpdateAPITokenKeepsCredentialAndReplacesGrant(t *testing.T) {
 	}
 	mustExec(t, s, "UPDATE api_token SET last_used_at = 5 WHERE id = ?", tok.ID)
 	expires := clk.Now().Add(time.Hour)
-	got, err := s.UpdateAPIToken(t.Context(), tok.ID, "renamed", &TokenGrant{NodeIDs: []int64{b}, Permissions: []Permission{PermissionDelete}}, expires)
+	got, err := s.UpdateAPIToken(t.Context(), tok.ID, "renamed", &TokenGrant{NodeIDs: []int64{b}, Permissions: []Permission{PermissionDelete}}, expires, versionOf(t, s, tok.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestUpdateAPITokenKeepsCredentialAndReplacesGrant(t *testing.T) {
 		t.Fatalf("stored row differs from returned row: %+v %v", list, err)
 	}
 	// 缺失的 grant 与新建相同，即全站只读；零值时刻即不过期。
-	got, err = s.UpdateAPIToken(t.Context(), tok.ID, "renamed", nil, time.Time{})
+	got, err = s.UpdateAPIToken(t.Context(), tok.ID, "renamed", nil, time.Time{}, versionOf(t, s, tok.ID))
 	if err != nil || !got.AllNodes || len(got.NodeIDs) != 0 || len(got.Permissions) != 0 || !got.ExpiresAt.IsZero() {
 		t.Fatalf("nil grant / zero expiry: %+v %v", got, err)
 	}
@@ -201,7 +201,7 @@ func TestUpdateAPITokenStoresPastExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	past := clk.Now().Add(-time.Minute)
-	got, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", nil, past)
+	got, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", nil, past, versionOf(t, s, tok.ID))
 	if err != nil || got.ExpiresAt.Unix() != past.Unix() {
 		t.Fatalf("past expiry: %+v %v", got, err)
 	}
@@ -233,7 +233,7 @@ func TestUpdateAPITokenScopeTransitions(t *testing.T) {
 	if visible() != 1 {
 		t.Fatal("explicit scope before edit")
 	}
-	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", &TokenGrant{AllNodes: true}, time.Time{}); err != nil {
+	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", &TokenGrant{AllNodes: true}, time.Time{}, versionOf(t, s, tok.ID)); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
@@ -243,7 +243,7 @@ func TestUpdateAPITokenScopeTransitions(t *testing.T) {
 	if visible() != 2 {
 		t.Fatal("all-nodes scope after edit")
 	}
-	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", &TokenGrant{}, time.Time{}); err != nil {
+	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", &TokenGrant{}, time.Time{}, versionOf(t, s, tok.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if visible() != 0 {
@@ -263,13 +263,13 @@ func TestUpdateAPITokenWithoutRegisterClosesItsWindow(t *testing.T) {
 	if err := s.SetRegisterWindow(WithPrincipal(t.Context(), tok), hash(2), clk.Now().Add(time.Hour), 5); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "renamed", register, time.Time{}); err != nil {
+	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "renamed", register, time.Time{}, versionOf(t, s, tok.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.RegisterNode(t.Context(), hash(2), "first", hash(3)); err != nil {
 		t.Fatalf("edit that kept register closed the window: %v", err)
 	}
-	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "renamed", &TokenGrant{AllNodes: true}, time.Time{}); err != nil {
+	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "renamed", &TokenGrant{AllNodes: true}, time.Time{}, versionOf(t, s, tok.ID)); err != nil {
 		t.Fatal(err)
 	}
 	var windows int
@@ -308,7 +308,7 @@ func TestUpdateAPITokenRejects(t *testing.T) {
 		"node that does not exist":  {tok.ID, TokenGrant{NodeIDs: []int64{node + 1}}, ErrInvalidGrant},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := s.UpdateAPIToken(t.Context(), tc.id, "changed", &tc.grant, time.Time{}); !errors.Is(err, tc.want) {
+			if _, err := s.UpdateAPIToken(t.Context(), tc.id, "changed", &tc.grant, time.Time{}, versionOf(t, s, tc.id)); !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
 		})
@@ -316,5 +316,104 @@ func TestUpdateAPITokenRejects(t *testing.T) {
 	after, err := s.ListAPITokens(t.Context())
 	if err != nil || !reflect.DeepEqual(after, before) {
 		t.Fatalf("rejected edits changed tokens: %+v -> %+v %v", before, after, err)
+	}
+}
+
+// 编辑按读到时的版本提交：打开编辑后 agent 经自己的窗口纳入的节点会改变版本，拿旧版本整体替换会静默拿走它，
+// 所以旧版本被拒、节点保留；刷新最近使用时刻不改版本，否则每次调用都会让正在进行的编辑失效。
+func TestUpdateAPITokenRejectsStaleVersion(t *testing.T) {
+	t.Parallel()
+	s, clk := open(t)
+	grant := &TokenGrant{Permissions: []Permission{PermissionRegister}}
+	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, grant, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := tok.Version()
+	mustExec(t, s, "UPDATE api_token SET last_used_at = 99 WHERE id = ?", tok.ID)
+	if list, err := s.ListAPITokens(t.Context()); err != nil || list[0].Version() != read {
+		t.Fatalf("touching last_used_at changed the version: %v", err)
+	}
+	if err := s.SetRegisterWindow(WithPrincipal(t.Context(), tok), hash(2), clk.Now().Add(time.Hour), 5); err != nil {
+		t.Fatal(err)
+	}
+	node, _, err := s.RegisterNode(t.Context(), hash(2), "registered", hash(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", grant, clk.Now().Add(time.Hour), read); !errors.Is(err, ErrAPITokenChanged) {
+		t.Fatalf("stale version accepted: %v", err)
+	}
+	list, err := s.ListAPITokens(t.Context())
+	if err != nil || !slices.Equal(list[0].NodeIDs, []int64{node}) || !list[0].ExpiresAt.IsZero() {
+		t.Fatalf("rejected edit changed the token: %+v %v", list, err)
+	}
+	got, err := s.UpdateAPIToken(t.Context(), tok.ID, "agent", &TokenGrant{Permissions: grant.Permissions, NodeIDs: list[0].NodeIDs}, clk.Now().Add(time.Hour), list[0].Version())
+	if err != nil || !slices.Equal(got.NodeIDs, []int64{node}) || got.Version() == list[0].Version() {
+		t.Fatalf("edit with the current version: %+v %v", got, err)
+	}
+	if _, err := s.UpdateAPIToken(t.Context(), tok.ID+1, "x", nil, time.Time{}, read); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing token: %v", err)
+	}
+}
+
+// versionOf 是 id 当前的 Version()，编辑时带回；token 不存在时为空串。
+func versionOf(t *testing.T, s *Store, id int64) string {
+	t.Helper()
+	list, err := s.ListAPITokens(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range list {
+		if tok.ID == id {
+			return tok.Version()
+		}
+	}
+	return ""
+}
+
+// grant 不合法时点名 TokenGrant 的字段与原因，api 据此写出请求里的字段路径；它仍是 ErrInvalidGrant。
+func TestInvalidGrantNamesTheField(t *testing.T) {
+	t.Parallel()
+	s, clk := open(t)
+	node, _, err := s.CreateNode(t.Context(), NewNode{Name: "node"}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		grant         TokenGrant
+		field, reason string
+	}{
+		"unknown permission":       {TokenGrant{Permissions: []Permission{"root"}}, "permissions", `unknown permission "root"`},
+		"all nodes with node list": {TokenGrant{AllNodes: true, NodeIDs: []int64{node}}, "node_ids", "must be empty when all_nodes is true"},
+		"node that does not exist": {TokenGrant{NodeIDs: []int64{node + 1}}, "node_ids", fmt.Sprintf("node %d does not exist", node+1)},
+	} {
+		_, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &tc.grant, time.Time{})
+		var ge *GrantError
+		if !errors.As(err, &ge) || ge.Field != tc.field || ge.Reason != tc.reason || !errors.Is(err, ErrInvalidGrant) {
+			t.Errorf("%s: %v, want field %q reason %q", name, err, tc.field, tc.reason)
+		}
+	}
+}
+
+// 建返回的值就是库里的那一行：节点按 id 排序、去重，Version() 与此后的读取相同——面板拿它的列表版本编辑。
+func TestCreateAPITokenReturnsTheStoredRow(t *testing.T) {
+	t.Parallel()
+	s, clk := open(t)
+	a, _, err := s.CreateNode(t.Context(), NewNode{Name: "a"}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := s.CreateNode(t.Context(), NewNode{Name: "b"}, hash(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{b, a, b}}, clk.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListAPITokens(t.Context())
+	if err != nil || len(list) != 1 || !reflect.DeepEqual(list[0], got) || list[0].Version() != got.Version() {
+		t.Fatalf("returned %+v, stored %+v %v", got, list, err)
 	}
 }

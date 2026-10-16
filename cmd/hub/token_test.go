@@ -128,7 +128,7 @@ func TestTokenListShowsExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.UpdateAPIToken(context.Background(), toks[0].ID, "temp", nil, time.Date(2001, 2, 3, 4, 5, 0, 0, time.UTC)); err != nil {
+	if _, err := st.UpdateAPIToken(context.Background(), toks[0].ID, "temp", nil, time.Date(2001, 2, 3, 4, 5, 0, 0, time.UTC), toks[0].Version()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {

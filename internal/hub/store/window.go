@@ -46,9 +46,10 @@ func (s *Store) RegisterWindow(ctx context.Context) (Window, bool, error) {
 
 // RegisterNode 在一个事务里判定窗口、比对 key、建节点、消耗名额。
 //
-// ErrNoWindow 覆盖"没有窗口 / 已过期 / 名额用尽"，ErrBadKey 只表示窗口开着
+// ErrNoWindow 覆盖"没有窗口 / 已过期 / 名额用尽 / 窗口主人已过期或不再有注册权限"，ErrBadKey 只表示窗口开着
 // 但 key 不对：调用方对外把两者映射成同一响应，但只对后者计失败次数——
-// 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
+// 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。判断"窗口开着"不看窗口主人的状态：
+// 主人过期的窗口不删（吊销与去掉注册权限会删），主人复活后照常可认领，key 仍是可猜的秘密，错 key 照样计数。
 //
 // 建节点与 CreateNode 走同一个 insertNode：同样检查继承的任务上限、推进任务版本，返回新节点的探测清单。
 func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, NewNodeTasks, error) {

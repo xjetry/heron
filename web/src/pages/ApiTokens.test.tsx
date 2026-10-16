@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { ListApiTokensResponseSchema, TokenPermission, type TokenGrant, type UpdateApiTokenRequest } from "../gen/heron/v1/admin_pb";
@@ -240,9 +240,10 @@ it("没有 token 时不画只有表头的空表，空态与接入方式各自成
 
 const HUB_NOW = 1_800_000_000n;
 const timed = create(ListApiTokensResponseSchema, { now: HUB_NOW, tokens: [
-  { id: 5n, name: "forever", createdAt: 1n, grant: { allNodes: true, permissions: [], nodeIds: [] } },
-  { id: 6n, name: "later", createdAt: 1n, expiresAt: HUB_NOW + 3600n, grant: { allNodes: false, permissions: [TokenPermission.CONFIGURE], nodeIds: [11n] } },
-  { id: 7n, name: "gone", createdAt: 1n, expiresAt: HUB_NOW - 60n, grant: { allNodes: true, permissions: [], nodeIds: [] } },
+  { id: 5n, name: "forever", createdAt: 1n, version: "v5", grant: { allNodes: true, permissions: [], nodeIds: [] } },
+  { id: 6n, name: "later", createdAt: 1n, expiresAt: HUB_NOW + 3600n, version: "v6", grant: { allNodes: false, permissions: [TokenPermission.CONFIGURE], nodeIds: [11n] } },
+  { id: 7n, name: "gone", createdAt: 1n, expiresAt: HUB_NOW - 60n, version: "v7", grant: { allNodes: true, permissions: [], nodeIds: [] } },
+  { id: 8n, name: "soon", createdAt: 1n, expiresAt: HUB_NOW + 60n, version: "v8", grant: { allNodes: true, permissions: [], nodeIds: [] } },
 ] });
 
 it("有效期按 hub 时刻判断，不看浏览器时钟", async () => {
@@ -273,6 +274,7 @@ it("编辑预填当前授权，保存时整体替换且默认保持有效期", a
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(sent).toBeDefined());
   expect(sent?.id).toBe(6n);
+  expect(sent?.expectedVersion).toBe("v6");
   expect(sent?.grant?.nodeIds).toEqual([11n, 12n]);
   expect(sent?.grant?.permissions).toEqual([TokenPermission.CONFIGURE]);
   expect(sent?.expiresAt).toBe(HUB_NOW + 3600n);
@@ -321,4 +323,72 @@ it("新建默认不过期，选了预设才带有效期", async () => {
   fireEvent.change(within(form).getByLabelText("有效期"), { target: { value: "1h" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(sent).toEqual([undefined, HUB_NOW + 3600n]));
+});
+
+it("已过期的行弱化显示，有效的不弱化", async () => {
+  render({ listApiTokens: async () => timed });
+  const row = async (name: string) => (await screen.findByRole("cell", { name })).closest("tr")!;
+  expect(await row("gone")).toHaveClass("is-expired");
+  expect(await row("later")).not.toHaveClass("is-expired");
+  expect(await row("forever")).not.toHaveClass("is-expired");
+});
+
+it("列表与编辑抽屉对现在的判断一致，都计入取回列表以来经过的时间", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1_000_000);
+  render({ listApiTokens: async () => timed });
+  const soon = (await screen.findByRole("cell", { name: "soon" })).closest("tr")!;
+  expect(within(soon).getByText(/^至 /)).toBeInTheDocument();
+  vi.setSystemTime(1_000_000 + 120_000);
+  await openRowAction("soon（#8）", "编辑");
+  expect(within(soon).getByText(/^已过期（/)).toBeInTheDocument();
+  expect(soon).toHaveClass("is-expired");
+  const option = within(screen.getByRole("dialog")).getByRole("option", { name: /^保持当前/ });
+  expect(option.textContent).toMatch(/^保持当前（已过期（/);
+});
+
+it("打开编辑之后 token 有变化时提示重新打开，并刷新列表", async () => {
+  let lists = 0;
+  render({
+    listApiTokens: async () => { lists += 1; return timed; },
+    listNodes: async () => ({ nodes: [{ id: 11n, name: "边缘节点" }] }),
+    updateApiToken: async () => { throw new ConnectError("API token 6 changed since it was read", Code.Aborted); },
+  });
+  await openRowAction("later（#6）", "编辑");
+  const before = lists;
+  const form = within(screen.getByRole("dialog")).getByRole("form", { name: "编辑 API token" });
+  expect(await within(form).findByLabelText("边缘节点（#11）")).toBeChecked();
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  expect(await within(form).findByRole("alert")).toHaveTextContent("关闭后重新打开编辑");
+  await waitFor(() => expect(lists).toBeGreaterThan(before));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+it("抽屉自己重绘时不另取时刻：保持当前与列表那一行仍然一致", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1_000_000);
+  render({ listApiTokens: async () => timed });
+  const soon = (await screen.findByRole("cell", { name: "soon" })).closest("tr")!;
+  vi.setSystemTime(1_000_000 + 30_000);
+  await openRowAction("soon（#8）", "编辑");
+  const form = within(screen.getByRole("dialog")).getByRole("form", { name: "编辑 API token" });
+  const keep = () => within(form).getByRole("option", { name: /^保持当前/ }).textContent;
+  expect(within(soon).getByText(/^至 /)).toBeInTheDocument();
+  expect(keep()).toMatch(/^保持当前（至 /);
+  // 只改抽屉里的草稿：页面不重绘，列表那一行仍按打开时的时刻写"至"。
+  vi.setSystemTime(1_000_000 + 120_000);
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "soon-renamed" } });
+  expect(within(soon).getByText(/^至 /)).toBeInTheDocument();
+  expect(keep()).toMatch(/^保持当前（至 /);
+});
+
+it("页面开着时到期的行随定时器变成已过期", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  vi.setSystemTime(1_000_000);
+  render({ listApiTokens: async () => timed });
+  const soon = (await screen.findByRole("cell", { name: "soon" })).closest("tr")!;
+  expect(within(soon).getByText(/^至 /)).toBeInTheDocument();
+  await act(async () => { vi.advanceTimersByTime(75_000); });
+  expect(within(soon).getByText(/^已过期（/)).toBeInTheDocument();
+  expect(soon).toHaveClass("is-expired");
 });

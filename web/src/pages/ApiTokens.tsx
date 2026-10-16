@@ -1,6 +1,7 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
@@ -16,7 +17,7 @@ import { withId } from "../lib/ids";
 import { dateTime, day } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
 import { downloadText } from "../lib/download";
-import { EXPIRY_PRESETS, expiryText, resolveExpiry, type ExpiryChoice } from "../lib/tokenExpiry";
+import { EXPIRY_PRESETS, expiryText, isExpired, resolveExpiry, type ExpiryChoice } from "../lib/tokenExpiry";
 
 const permissionChoices = [
   [TokenPermission.CONFIGURE, "监控配置"],
@@ -57,33 +58,43 @@ export function ApiTokens() {
     ...mutationOptions,
     onSuccess: refresh,
   });
+  // 失败也刷新：被拒的编辑（尤其是版本不符）说明列表已经过时。
   const update = useMutation(AdminService.method.updateApiToken, {
     ...mutationOptions,
-    onSuccess: refresh,
+    onSettled: refresh,
   });
   const remove = useMutation(AdminService.method.deleteApiToken, {
     ...mutationOptions,
     onSuccess: refresh,
   });
   const reference = useMutation(AdminService.method.getApiReference, { ...mutationOptions, onSuccess: (r) => downloadText("SKILL.md", r.guide) });
+  // 页面上的"现在"是 hub 的 now 加上自取回列表以来经过的时间；经过的时间按浏览器时钟两次读数之差计，与浏览器和 hub
+  // 之间的偏差无关。渲染须是纯的，时钟只在事件与定时器里读，存进 clock：列表与抽屉的"保持当前"都用这一次读数，同一枚
+  // token 不会一处显示有效、一处显示已过期；定时器让页面开着时到期的行也变成已过期。提交时的预设在提交那一刻另取读数。
+  const [clock, setClock] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
   const gate = queryGate(list);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  // 自取回列表以来经过的时间按浏览器时钟的两次读数之差计，与浏览器和 hub 之间的偏差无关。
-  const hubNow = () => gate.data.now + BigInt(Math.max(0, Math.floor((Date.now() - list.dataUpdatedAt) / 1000)));
+  const hubAt = (at: number) => gate.data.now + BigInt(Math.max(0, Math.floor((at - list.dataUpdatedAt) / 1000)));
+  const now = hubAt(clock);
+  const hubNow = () => hubAt(Date.now());
   return (
     <section>
       {gate.banner}
       <PageHeader title="API token" description={<>供 agent 与脚本使用的预授权凭据：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。</>} actions={
-        <button type="button" className="primary-button" onClick={(e) => { create.reset(); setDrawer({ kind: "create", opener: e.currentTarget }); }}>新建 API token</button>
+        <button type="button" className="primary-button" onClick={(e) => { create.reset(); setClock(Date.now()); setDrawer({ kind: "create", opener: e.currentTarget }); }}>新建 API token</button>
       } />
       {drawer && <ApiTokenDrawer key={drawer.kind === "edit" ? `edit-${drawer.token.id}` : "create"} opener={drawer.opener}
-        initial={drawer.kind === "edit" ? drawer.token : undefined} hubNow={hubNow}
+        initial={drawer.kind === "edit" ? drawer.token : undefined} now={now} hubNow={hubNow}
         pending={drawer.kind === "edit" ? update.isPending : create.isPending} error={drawer.kind === "edit" ? update.error : create.error}
         onClose={() => { setDrawer(null); create.reset(); update.reset(); }}
         onCreate={(fields) => create.mutateAsync(fields)}
         onUpdate={async (fields) => {
           if (drawer.kind !== "edit") return;
-          await update.mutateAsync({ id: drawer.token.id, ...fields });
+          await update.mutateAsync({ id: drawer.token.id, expectedVersion: drawer.token.version, ...fields });
           setDrawer(null);
         }} />}
       {!drawer && error != null && <p role="alert" className="error">{errorText(error)}</p>}
@@ -92,16 +103,16 @@ export function ApiTokens() {
           <thead><tr><th>名称</th><th>权限 / 范围</th><th>创建于</th><th>最后使用</th><th>有效期</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>
             {gate.data.tokens.map((t) => (
-              <tr key={String(t.id)}>
+              <tr key={String(t.id)} className={isExpired(t.expiresAt, now) ? "is-expired" : undefined}>
                 <td data-label="名称">{t.name}</td>
                 <td data-label="权限 / 范围" className="wrap-text">{t.grant?.permissions.length ? t.grant.permissions.map((p) => permissionChoices.find(([v]) => v === p)?.[1] ?? "未知权限").join("、") : "只读"}<br />
                   {t.grant?.allNodes !== false ? "全站" : t.grant.nodeIds.length ? t.grant.nodeIds.map((id) => `#${id}`).join("、") : "无现有节点"}</td>
                 <td data-label="创建于" className="muted">{day(t.createdAt)}</td>
                 <td data-label="最后使用" className="muted">{t.lastUsedAt == null ? "从未使用" : dateTime(t.lastUsedAt)}</td>
-                <td data-label="有效期" className="muted">{expiryText(t.expiresAt, gate.data.now)}</td>
+                <td data-label="有效期" className="muted">{expiryText(t.expiresAt, now)}</td>
                 <td data-label="操作">
                   <RowMenu label={withId(t.name, t.id)} items={[
-                    { label: "编辑", disabled: update.isPending, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", token: t, opener: trigger }); } },
+                    { label: "编辑", disabled: update.isPending, onSelect: (trigger) => { update.reset(); setClock(Date.now()); setDrawer({ kind: "edit", token: t, opener: trigger }); } },
                     { label: "查看操作记录", onSelect: () => setAuditOwner(t.id) },
                     { label: "吊销", danger: true, confirm: `确认吊销 ${withId(t.name, t.id)}`, note: "用它的请求立即失效",
                       disabled: remove.isPending, onSelect: () => remove.mutate({ id: t.id }) },
@@ -135,8 +146,8 @@ export function ApiTokens() {
 
 type TokenFields = { name: string; grant: { permissions: TokenPermission[]; allNodes: boolean; nodeIds: bigint[] }; expiresAt?: bigint };
 
-function ApiTokenDrawer({ opener, initial, hubNow, pending, error, onClose, onCreate, onUpdate }: {
-  opener: HTMLElement; initial?: ApiToken; hubNow: () => bigint; pending: boolean; error: unknown; onClose: () => void;
+function ApiTokenDrawer({ opener, initial, now, hubNow, pending, error, onClose, onCreate, onUpdate }: {
+  opener: HTMLElement; initial?: ApiToken; now: bigint; hubNow: () => bigint; pending: boolean; error: unknown; onClose: () => void;
   onCreate: (fields: TokenFields) => Promise<CreateApiTokenResponse>; onUpdate: (fields: TokenFields) => Promise<void>;
 }) {
   const editing = initial !== undefined;
@@ -178,7 +189,10 @@ function ApiTokenDrawer({ opener, initial, hubNow, pending, error, onClose, onCr
       <footer className="modal-footer"><button type="button" disabled={pending} onClick={onClose}>完成</button></footer>
     </> : <form aria-label={title} onSubmit={(e) => void submit(e)}>
       <div className="modal-body">
-        {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+        {error != null && <p role="alert" className="error">
+          {error instanceof ConnectError && error.code === Code.Aborted && <>打开编辑之后这枚 token 已有变化（例如它创建或注册的节点已自动纳入范围），列表已刷新；关闭后重新打开编辑，在最新的授权上修改。<br /></>}
+          {errorText(error)}
+        </p>}
         <label>名称<input required maxLength={64} value={name} onChange={(e) => setName(e.target.value)} /></label>
         <fieldset className="picks"><legend>允许的写操作</legend>
           {permissionChoices.map(([value, label]) => <label key={value}><input type="checkbox" checked={permissions.includes(value)} onChange={(e) => setPermissions((current) => e.target.checked ? [...current, value] : current.filter((p) => p !== value))} />{label}</label>)}
@@ -192,7 +206,7 @@ function ApiTokenDrawer({ opener, initial, hubNow, pending, error, onClose, onCr
           <p className="muted">未选择节点表示不能访问现有节点。此凭据创建或注册的节点自动纳入范围；标签不改变授权。</p>
         </>}
         <label>有效期<select value={choice} onChange={(e) => setChoice(e.target.value as ExpiryChoice)}>
-          {editing && <option value="keep">保持当前（{expiryText(initial.expiresAt, hubNow())}）</option>}
+          {editing && <option value="keep">保持当前（{expiryText(initial.expiresAt, now)}）</option>}
           <option value="never">不过期</option>
           {EXPIRY_PRESETS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           <option value="custom">自定义</option>

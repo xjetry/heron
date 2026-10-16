@@ -2,10 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 )
 
@@ -20,6 +21,30 @@ type APIToken struct {
 }
 
 var ErrAPITokenLimit = errors.New("API token limit reached")
+
+// ErrAPITokenChanged 是编辑带来的版本与写事务里读到的不同：读到之后有人改过它，或它自己创建、注册的节点被自动纳入了
+// 范围。整体替换只能基于调用方看过的那一版，否则会静默拿走对方刚得到的节点。
+var ErrAPITokenChanged = errors.New("API token changed since it was read")
+
+// Version 是 token 授权的版本：名称、权限、全站开关、节点集合（含自动纳入的）与失效时刻的摘要，不含最近使用时刻——
+// 每次鉴权都可能刷新它，计入版本会让任何正在进行的编辑失效。UpdateAPIToken 要求调用方带回它。
+//
+// 摘要按字段的 Go 值序列化，nil 与空切片算出的不同；所以只对从库里读出的行求它：store 交出的每个 APIToken 都经
+// scanAPIToken（建与改也回读），同一行的切片形状总是相同。
+func (t APIToken) Version() string {
+	b, err := json.Marshal(struct {
+		Name        string
+		Permissions []Permission
+		AllNodes    bool
+		NodeIDs     []int64
+		ExpiresAt   int64
+	}{t.Name, t.Permissions, t.AllNodes, t.NodeIDs, unixOrZero(t.ExpiresAt).Unix()})
+	if err != nil {
+		panic(err) // 只含字符串、布尔与整数，不会失败
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
 
 // MaxAPITokenExpiresAt 是 expires_at 的上限：9999-12-31T23:59:59Z。更晚的时刻在 RFC 3339 与面板的日期格式里写不成四位年份。
 const MaxAPITokenExpiresAt int64 = 253402300799
@@ -82,8 +107,9 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 				return err
 			}
 		}
-		out = APIToken{TokenGrant: g, Identity: fmt.Sprintf("%X", hash), ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0).UTC(), ExpiresAt: unixOrZero(expiresAt)}
-		return nil
+		// 回读而不是按入参拼：节点按 id 排序、去重后才与此后任何一次读取相同，Version() 也才一致。
+		out, _, err = lookupAPIToken(tx.QueryRow, "id = ?", id, now)
+		return err
 	})
 	return out, err
 }
@@ -93,12 +119,24 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 //   - 授权与新建经同一个 validate；节点集合整体替换，包括它自己创建或经自己窗口接入而自动纳入的节点。
 //   - 新授权不含注册权限时，同一事务删掉它的注册窗口，与 DeleteAPIToken 一致；认领时仍按 token 当前状态重查。
 //   - expiresAt 不要求晚于当前时间：早于或等于即保存为已过期，晚于即有效（已过期的随之恢复）。
+//   - expectedVersion 是调用方读到的 Version()，在写事务里比对：不同即 ErrAPITokenChanged，什么都不改。整体替换只能
+//     基于调用方看过的那一版——它打开编辑之后自动纳入的节点不在它提交的集合里。
 //
 // 不存在返回 ErrNotFound。
-func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant *TokenGrant, expiresAt time.Time) (APIToken, error) {
+func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant *TokenGrant, expiresAt time.Time, expectedVersion string) (APIToken, error) {
 	g := grantOrDefault(grant)
 	var out APIToken
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		current, state, err := lookupAPIToken(tx.QueryRow, "id = ?", id, s.clk.Now())
+		if err != nil {
+			return err
+		}
+		if state == TokenMissing {
+			return ErrNotFound
+		}
+		if current.Version() != expectedVersion {
+			return ErrAPITokenChanged
+		}
 		if err := g.validate(tx); err != nil {
 			return err
 		}
@@ -106,15 +144,9 @@ func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant
 		if err != nil {
 			return err
 		}
-		res, err := tx.Exec("UPDATE api_token SET name = ?, permissions = ?, all_nodes = ?, expires_at = ? WHERE id = ?",
-			name, string(permissions), g.AllNodes, nullableUnix(expiresAt), id)
-		if err != nil {
+		if _, err := tx.Exec("UPDATE api_token SET name = ?, permissions = ?, all_nodes = ?, expires_at = ? WHERE id = ?",
+			name, string(permissions), g.AllNodes, nullableUnix(expiresAt), id); err != nil {
 			return err
-		}
-		if n, err := res.RowsAffected(); err != nil {
-			return err
-		} else if n == 0 {
-			return ErrNotFound
 		}
 		if _, err := tx.Exec("DELETE FROM api_token_node WHERE token_id = ?", id); err != nil {
 			return err
@@ -198,7 +230,8 @@ func (t APIToken) Expired(now time.Time) bool {
 // 四处同时生效；后两处发生在之后、不经过该 token 的请求，入口判过一次替代不了它们。
 // TokenExpired 时返回的仍是完整的行，入口据此在错误里写出过期时刻；其余读者把过期当作不存在。
 // now 由调用方从 Store 的时钟取；零值会让每一枚 token 都显得未过期，按错误拒绝。
-// TestScanAPITokenOnlyInLookupAndList 在源码上守着"只经它取"：scanAPIToken 只出现在这里与 ListAPITokens。
+// TestScanAPITokenOnlyInLookupAndList 在源码上守着 scanAPIToken 只出现在这里与 ListAPITokens；手写 SELECT 读 api_token
+// 而不调 scanAPIToken 的读者不在它的检查范围内。
 func lookupAPIToken(row func(query string, args ...any) *sql.Row, where string, arg any, now time.Time) (APIToken, TokenState, error) {
 	if now.IsZero() {
 		return APIToken{}, TokenMissing, errors.New("lookupAPIToken: zero time would treat every token as unexpired")

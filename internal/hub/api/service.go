@@ -369,11 +369,13 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 				s.log.Error("API token lookup failed", "err", err)
 				return nil, internalError("API token lookup failed")
 			}
+			// 只放行明确有效的那一种状态，以后新增的状态缺省即拒绝。
 			switch state {
-			case store.TokenMissing:
-				return nil, unauthenticated("API token unknown or revoked")
+			case store.TokenLive:
 			case store.TokenExpired:
 				return nil, unauthenticated(fmt.Sprintf("API token expired at %s; an administrator can extend it with UpdateApiToken or issue a new one", principal.ExpiresAt.UTC().Format(time.RFC3339)))
+			default:
+				return nil, unauthenticated("API token unknown or revoked")
 			}
 			if level != heronv1.Access_ACCESS_READ && !(level == heronv1.Access_ACCESS_CHANGE && len(principal.Permissions) > 0) {
 				if level == heronv1.Access_ACCESS_LOGIN {

@@ -1692,6 +1692,9 @@ message ApiToken {
   // 失效的第一个时刻，Unix 秒：hub 墙钟到达它起，这枚 token 的每个请求都返回 Unauthenticated（message 写明这个时刻），
   // 它开的注册窗口不可认领，排队中的更新在下发时撤下。缺失表示不过期。过期不删除 token，UpdateApiToken 改到未来即恢复。
   optional int64 expires_at = 6;
+  // 授权的版本，不透明字符串：名称、权限、节点范围（含自动纳入的节点）或有效期变化即不同，最近使用时刻不计入。
+  // UpdateApiTokenRequest.expected_version 带回它。
+  string version = 7;
 }
 
 message ListApiTokensRequest {}
@@ -1722,6 +1725,9 @@ message UpdateApiTokenRequest {
   // 整体替换：缺失表示不过期。取值 1–253402300799，不要求晚于当前时间：不晚于 hub 当前时间即保存为已过期，晚于即有效
   // （已过期的随之恢复）。只改名字时原样带回 ApiToken.expires_at。
   optional int64 expires_at = 4;
+  // 必填：读到的 ApiToken.version。与当前不同返回 Aborted，什么都不改——读到之后它被改过，或它创建、经自己注册窗口接入的
+  // 节点已自动纳入范围；整体替换基于旧版本会静默拿走这些节点。重新读取后再提交。
+  string expected_version = 5;
 }
 message UpdateApiTokenResponse {
   // 保存后的值。

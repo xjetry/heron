@@ -10671,7 +10671,10 @@ type ApiToken struct {
 	Grant      *TokenGrant `protobuf:"bytes,5,opt,name=grant,proto3" json:"grant,omitempty"`
 	// 失效的第一个时刻，Unix 秒：hub 墙钟到达它起，这枚 token 的每个请求都返回 Unauthenticated（message 写明这个时刻），
 	// 它开的注册窗口不可认领，排队中的更新在下发时撤下。缺失表示不过期。过期不删除 token，UpdateApiToken 改到未来即恢复。
-	ExpiresAt     *int64 `protobuf:"varint,6,opt,name=expires_at,json=expiresAt,proto3,oneof" json:"expires_at,omitempty"`
+	ExpiresAt *int64 `protobuf:"varint,6,opt,name=expires_at,json=expiresAt,proto3,oneof" json:"expires_at,omitempty"`
+	// 授权的版本，不透明字符串：名称、权限、节点范围（含自动纳入的节点）或有效期变化即不同，最近使用时刻不计入。
+	// UpdateApiTokenRequest.expected_version 带回它。
+	Version       string `protobuf:"bytes,7,opt,name=version,proto3" json:"version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -10746,6 +10749,13 @@ func (x *ApiToken) GetExpiresAt() int64 {
 		return *x.ExpiresAt
 	}
 	return 0
+}
+
+func (x *ApiToken) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
 }
 
 type ListApiTokensRequest struct {
@@ -10912,9 +10922,12 @@ type UpdateApiTokenRequest struct {
 	Grant *TokenGrant `protobuf:"bytes,3,opt,name=grant,proto3" json:"grant,omitempty"`
 	// 整体替换：缺失表示不过期。取值 1–253402300799，不要求晚于当前时间：不晚于 hub 当前时间即保存为已过期，晚于即有效
 	// （已过期的随之恢复）。只改名字时原样带回 ApiToken.expires_at。
-	ExpiresAt     *int64 `protobuf:"varint,4,opt,name=expires_at,json=expiresAt,proto3,oneof" json:"expires_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ExpiresAt *int64 `protobuf:"varint,4,opt,name=expires_at,json=expiresAt,proto3,oneof" json:"expires_at,omitempty"`
+	// 必填：读到的 ApiToken.version。与当前不同返回 Aborted，什么都不改——读到之后它被改过，或它创建、经自己注册窗口接入的
+	// 节点已自动纳入范围；整体替换基于旧版本会静默拿走这些节点。重新读取后再提交。
+	ExpectedVersion string `protobuf:"bytes,5,opt,name=expected_version,json=expectedVersion,proto3" json:"expected_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UpdateApiTokenRequest) Reset() {
@@ -10973,6 +10986,13 @@ func (x *UpdateApiTokenRequest) GetExpiresAt() int64 {
 		return *x.ExpiresAt
 	}
 	return 0
+}
+
+func (x *UpdateApiTokenRequest) GetExpectedVersion() string {
+	if x != nil {
+		return x.ExpectedVersion
+	}
+	return ""
 }
 
 type UpdateApiTokenResponse struct {
@@ -12945,7 +12965,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"httpStatus\x88\x01\x01B\x0f\n" +
 	"\r_delivered_atB\x0e\n" +
 	"\f_http_statusJ\x04\b\x04\x10\x05R\n" +
-	"last_error\"\xe4\x01\n" +
+	"last_error\"\xfe\x01\n" +
 	"\bApiToken\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
@@ -12955,7 +12975,8 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"lastUsedAt\x88\x01\x01\x12*\n" +
 	"\x05grant\x18\x05 \x01(\v2\x14.heron.v1.TokenGrantR\x05grant\x12\"\n" +
 	"\n" +
-	"expires_at\x18\x06 \x01(\x03H\x01R\texpiresAt\x88\x01\x01B\x0f\n" +
+	"expires_at\x18\x06 \x01(\x03H\x01R\texpiresAt\x88\x01\x01\x12\x18\n" +
+	"\aversion\x18\a \x01(\tR\aversionB\x0f\n" +
 	"\r_last_used_atB\r\n" +
 	"\v_expires_at\"\x16\n" +
 	"\x14ListApiTokensRequest\"U\n" +
@@ -12967,13 +12988,14 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x05grant\x18\x02 \x01(\v2\x14.heron.v1.TokenGrantR\x05grant\x12\"\n" +
 	"\n" +
 	"expires_at\x18\x03 \x01(\x03H\x00R\texpiresAt\x88\x01\x01B\r\n" +
-	"\v_expires_at\"\x9a\x01\n" +
+	"\v_expires_at\"\xc5\x01\n" +
 	"\x15UpdateApiTokenRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12*\n" +
 	"\x05grant\x18\x03 \x01(\v2\x14.heron.v1.TokenGrantR\x05grant\x12\"\n" +
 	"\n" +
-	"expires_at\x18\x04 \x01(\x03H\x00R\texpiresAt\x88\x01\x01B\r\n" +
+	"expires_at\x18\x04 \x01(\x03H\x00R\texpiresAt\x88\x01\x01\x12)\n" +
+	"\x10expected_version\x18\x05 \x01(\tR\x0fexpectedVersionB\r\n" +
 	"\v_expires_at\"I\n" +
 	"\x16UpdateApiTokenResponse\x12/\n" +
 	"\tapi_token\x18\x01 \x01(\v2\x12.heron.v1.ApiTokenR\bapiToken\"_\n" +

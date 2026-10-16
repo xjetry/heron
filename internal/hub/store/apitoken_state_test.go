@@ -92,7 +92,7 @@ func TestTokenExpiryAppliesToEveryReader(t *testing.T) {
 		{"at the expiry instant", func() time.Time { return clk.Now().Add(time.Minute) }, time.Minute, false},
 		{"revived", func() time.Time { return clk.Now().Add(time.Hour) }, 0, true},
 	} {
-		if _, err := s.UpdateAPIToken(t.Context(), tok.ID, tok.Name, grant, step.expires()); err != nil {
+		if _, err := s.UpdateAPIToken(t.Context(), tok.ID, tok.Name, grant, step.expires(), versionOf(t, s, tok.ID)); err != nil {
 			t.Fatal(err)
 		}
 		clk.Advance(step.advance)
@@ -157,5 +157,46 @@ func TestScanAPITokenOnlyInLookupAndList(t *testing.T) {
 	}
 	if seen["lookupAPIToken"] == 0 || seen["ListAPITokens"] == 0 {
 		t.Fatalf("scan did not find the legitimate uses (%v); it is not looking at the store sources", seen)
+	}
+}
+
+// 下发时按 token 此刻的授权重判，不只看吊销与过期：编辑去掉更新权限或把节点移出范围，排队的更新同样撤下。
+func TestEditNarrowingWithdrawsQueuedUpdate(t *testing.T) {
+	t.Parallel()
+	for name, narrowed := range map[string]func(node int64) *TokenGrant{
+		"update permission removed": func(node int64) *TokenGrant { return &TokenGrant{NodeIDs: []int64{node}} },
+		"node removed from scope":   func(int64) *TokenGrant { return &TokenGrant{Permissions: []Permission{PermissionUpdate}} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, clk := open(t)
+			node, _, err := s.CreateNode(t.Context(), NewNode{Name: "node"}, hash(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{node}, Permissions: []Permission{PermissionUpdate}}, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := WithPrincipal(t.Context(), tok)
+			c := &Change{Operation: Operation{OwnerID: tok.ID, RequestID: "update", RequestHash: "x", ResourceID: node}, Action: ActionStartUpdate, Policy: permitPolicy{}}
+			if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			status := &heronv1.UpdateStatus{Supported: true, Task: &heronv1.UpdateTask{Id: "task", State: "queued"}}
+			if err := s.StartNodeUpdate(WithChange(ctx, c), node, status); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.UpdateAPIToken(t.Context(), tok.ID, tok.Name, narrowed(node), time.Time{}, tok.Version()); err != nil {
+				t.Fatal(err)
+			}
+			status.Task.State = "dispatched"
+			if err := s.SaveNodeUpdate(t.Context(), node, status); err != nil {
+				t.Fatal(err)
+			}
+			if status.Task.State == "dispatched" {
+				t.Fatalf("queued update dispatched after the grant was narrowed: %+v", status.Task)
+			}
+		})
 	}
 }

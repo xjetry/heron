@@ -23,19 +23,19 @@ var schemaV40 = append(slices.Clone(schemaV39),
 
 // removeV44Config 把当前版本的配置层快照撤回到 v43 的结构：回填更早的版本号之前必须撤掉，
 // 否则迁移 44 的 ADD COLUMN 会撞上已有的列。
-// removeV47Config 把配置层快照撤回到 v46 的结构：去掉 api_token 的失效时刻列，否则回填更早的版本号后迁移 47 再加一次。
-// 快照不带触发器，只有列要撤。
-func removeV47Config(t *testing.T, db *sql.DB) {
-	t.Helper()
-	if _, err := db.Exec("ALTER TABLE api_token DROP COLUMN expires_at"); err != nil {
-		t.Fatalf("drop expires_at: %v", err)
-	}
-}
-
 func removeV44Config(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec("ALTER TABLE node DROP COLUMN rented"); err != nil {
 		t.Fatalf("drop rented: %v", err)
+	}
+}
+
+// removeV47Config 把配置层快照撤回到 v46 的结构：去掉 api_token 的失效时刻列，否则回填更早的版本号后迁移 47 再加一次。
+// 只有列要撤：快照按 CREATE TABLE … AS SELECT 拷数据，不带触发器。
+func removeV47Config(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec("ALTER TABLE api_token DROP COLUMN expires_at"); err != nil {
+		t.Fatalf("drop expires_at: %v", err)
 	}
 }
 

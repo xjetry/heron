@@ -116,7 +116,8 @@ BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 
 // v47：API token 的失效时刻。只加可空列，已有 token 取 NULL（不过期），行为不变。范围可以编辑之后，api_token.all_nodes
 // 的变化会改变 ListNodes 对该 token 的内容，节点资料版本须随之推进（含义见 schema.go 的 ddlNodeListRevision）。
-// 列与触发器分两组登记：快照恢复只迁移配置层的列，触发器挂在运行态的版本表上，不进任何快照（restore.go 的 migrateSnapshot）。
+// 列与触发器分两组登记：快照经 CREATE TABLE … AS SELECT 逐表拷数据（snapshot.go 的 Store.snapshot），不带触发器、约束与
+// 索引，恢复时目标库的触发器由它自己的 createSchema 与迁移建好；所以 restore.go 的 migrateSnapshot 只补配置层的列。
 // 回滚边界同其它迁移：写入后旧二进制不能直接启动，回退须恢复升级前的自动备份。
 var migrationV47Config = []string{`ALTER TABLE api_token ADD COLUMN expires_at INTEGER CHECK (expires_at IS NULL OR expires_at > 0)`}
 

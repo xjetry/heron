@@ -525,7 +525,8 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 		case 46:
 			// 节点资料版本表是运行态，不属于任一备份层；目标库自己的那一行由触发器随恢复的整表搬运推进。
 		case 47:
-			// token 失效时刻列在配置层；推进节点资料版本的触发器挂在运行态的版本表上，不进快照，目标库自己建。
+			// token 失效时刻列在配置层，要补；推进节点资料版本的触发器不用：快照按 CREATE TABLE … AS SELECT 拷数据，
+			// 本来就不带触发器，目标库的触发器由它自己的迁移建好。
 			if layer == "config" {
 				statements = migrationV47Config
 			}

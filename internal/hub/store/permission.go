@@ -24,8 +24,17 @@ const (
 var ErrPermission = errors.New("operation or resource is outside the API token grant")
 
 // ErrInvalidGrant 是建或改 token 时 grant 本身不合法（未知权限位、全部节点与显式节点并存、引用不存在的节点）。
-// 它是输入校验，不是授权拒绝，与授权哨兵分开。
+// 它是输入校验，不是授权拒绝，与授权哨兵分开。具体原因由 *GrantError 携带。
 var ErrInvalidGrant = errors.New("invalid API token grant")
+
+// GrantError 是 grant 不合法的具体原因：Field 是 TokenGrant 的字段（permissions、node_ids），api 据此写出请求里的
+// 字段路径。errors.Is(err, ErrInvalidGrant) 对它成立。
+type GrantError struct{ Field, Reason string }
+
+func (e *GrantError) Error() string {
+	return ErrInvalidGrant.Error() + ": " + e.Field + ": " + e.Reason
+}
+func (e *GrantError) Is(target error) bool { return target == ErrInvalidGrant }
 
 type TokenGrant struct {
 	Permissions []Permission
@@ -84,11 +93,11 @@ func (g TokenGrant) validate(tx *sql.Tx) error {
 		switch p {
 		case PermissionConfigure, PermissionCreate, PermissionRegister, PermissionRotate, PermissionDelete, PermissionUpdate:
 		default:
-			return ErrInvalidGrant
+			return &GrantError{"permissions", fmt.Sprintf("unknown permission %q", p)}
 		}
 	}
 	if g.AllNodes && len(g.NodeIDs) != 0 {
-		return ErrInvalidGrant
+		return &GrantError{"node_ids", "must be empty when all_nodes is true"}
 	}
 	for _, id := range g.NodeIDs {
 		ok, err := nodeExistsTx(tx, id)
@@ -96,7 +105,7 @@ func (g TokenGrant) validate(tx *sql.Tx) error {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("%w: node %d does not exist", ErrInvalidGrant, id)
+			return &GrantError{"node_ids", fmt.Sprintf("node %d does not exist", id)}
 		}
 	}
 	return nil
@@ -113,9 +122,11 @@ func Principal(ctx context.Context) (APIToken, bool) {
 }
 func OwnerID(ctx context.Context) int64 { t, _ := Principal(ctx); return t.ID }
 
-// 范围从数据库关系表读取，建节点后同一请求的回读也能看见刚获得的授权；空列表不放宽。不判过期：请求在入口
-// （APITokenByHash）已按此刻准入，单个请求之内过期的窗口只有几秒，与吊销对执行中请求的处理相同；写入在事务里经
-// lookupAPIToken 重判。
+// 范围从数据库关系表读取，建节点后同一请求的回读也能看见刚获得的授权；空列表不放宽。这里不判过期：
+//   - 请求在入口（APITokenByHash）按当时的墙钟准入；服务端不给处理时长设上界（cmd/hub/serve.go 只限读请求的时长），
+//     准入后才到期的只读请求读到结束。
+//   - 这里只看 api_token 行与授权行在不在：吊销删行，此后的范围过滤立即为空；过期不删行，范围照旧。
+//   - 写入不靠这里：ExecuteChange 在写事务里经 lookupAPIToken 重判（txReader.APIToken）。
 func nodeScopeSQL(ctx context.Context, column string) string {
 	t, ok := Principal(ctx)
 	if !ok {
