@@ -86,11 +86,7 @@ func (m *systemMachine) Current(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, m.bin, "version")
 	// 版本查询不需要 root 权限；执行文件必须先确认由 root 管理且不可被服务用户写入。
 	cmd.SysProcAttr = credentials(m.uid, m.gid)
-	b, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(b)), nil
+	return commandOutput(cmd, m.bin)
 }
 
 // Go flag 同时接受单横线与双横线；按实际参数顺序解析，不能漏掉后面的别名覆盖或位置参数截断。
