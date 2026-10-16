@@ -215,7 +215,8 @@ func schemaStatements() []string {
 // node_facts.facts_hash（agent 对整份 Facts 算的摘要）或 facts_rev（hub 的持久化字段集合版本）；新建标签行（挂上节点时
 // node_tag 的插入已推进）。这几列都不在 ListNodes 里。node 与 node_facts 的 UPDATE 触发器逐列比较新旧值，写回原值不推进；列的
 // 归类由 TestNodeListRevisionColumnClassification 逐列核对，加列必须在那里归类并改这里的 WHEN。
-// 只有一行（id = 1），建库时种子为 0；是运行态，不进任何备份层，恢复对 node 等表的 DELETE + INSERT 经触发器推进它。
+// 只有一行（id = 1），建库时种子为 0；是运行态，不进任何备份层。恢复在目标库缺这一行时补种、已有的保留计数，随后对
+// node 等表的 DELETE + INSERT 经触发器推进它。
 const ddlNodeListRevision = `CREATE TABLE node_list_revision (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   revision INTEGER NOT NULL CHECK (revision >= 0)

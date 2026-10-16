@@ -14,6 +14,7 @@ import (
 // 新表的归属由分类完备性测试约束，不能在快照时静默跳过不存在的表。
 // node_update 是本次运行的安装授权，不进备份；Restore 同时清除目标库的残留授权。
 // hub_coordination 是运行中的 hub 与离线写者之间的协调状态，不进备份；Restore 把目标库的那一行重新种子为 0。
+// node_list_revision 是节点资料版本，不进备份；Restore 在目标库缺这一行时补种，已有的保留计数。
 var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "traffic_baseline", "probe_task", "probe_task_node", "probe_meta", "probe_cert", "probe_cert_presented",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_baseline", "alert_event", "alert_delivery",

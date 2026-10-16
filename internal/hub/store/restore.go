@@ -120,6 +120,13 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if _, err = tx.ExecContext(ctx, seedHubCoordination); err != nil {
 		return result, err
 	}
+	// 节点资料版本同样不进备份。目标库缺这一行时补种：nodeListRevision 把缺行当库损坏，触发器对缺行的 UPDATE 又不报错地
+	// 什么都不改，不补就一直缺。已有的行保留计数而不归零：下面对 node 等表的整表搬运经触发器在它之上推进，库里的版本
+	// 仍守 ddlNodeListRevision 的"严格增大"，不靠 hub 重启换纪元来兜（TestRestoreAdvancesNodeListRevision）。补种放在
+	// 搬运之前，缺行时搬运的推进也落在补出来的这一行上。
+	if _, err = tx.ExecContext(ctx, seedNodeListRevision+" ON CONFLICT (id) DO NOTHING"); err != nil {
+		return result, err
+	}
 	for _, src := range sources {
 		for _, table := range src.tables {
 			columns, e := restoreColumnList(ctx, tx, table)

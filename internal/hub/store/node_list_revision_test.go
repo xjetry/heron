@@ -316,6 +316,13 @@ func TestRestoreAdvancesNodeListRevision(t *testing.T) {
 	if err := s.SnapshotConfig(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
+	// 先把计数推到远高于一次恢复搬运的推进量：恢复若把计数归零再推进，结果会落回这之下。
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE node_list_revision SET revision = revision + 1000 WHERE id = 1")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	before := revisionOf(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

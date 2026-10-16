@@ -275,3 +275,61 @@ func TestRestoreWaitsForConcurrentTargetWriter(t *testing.T) {
 		t.Fatalf("restore after the concurrent writer committed: %v", err)
 	}
 }
+
+// 不进任何备份层、新库一建好就有行的运行态表（hub_coordination、node_list_revision 等），恢复之后都要有行：读它们的
+// 代码把缺行当库损坏而报错，恢复是修库的入口，不能把目标库里缺的那一行原样留下。表的集合从新库现算，以后再加这类
+// 表自动纳入；sqlite_sequence 是分配簿记，由 restoreSequences 另行接管，不在此列。
+func TestRestoreReseedsRuntimeRowsMissingFromTarget(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source, _ := open(t)
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := source.SnapshotConfig(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	target, path := openAt(t)
+	layered := append(slices.Clone(configSnapshotTables), metricsSnapshotTables...)
+	seeded := map[string]int{}
+	for _, table := range tableNames(t, target.r) {
+		if slices.Contains(layered, table) || table == "sqlite_sequence" {
+			continue
+		}
+		var n int
+		if err := target.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			seeded[table] = n
+		}
+	}
+	for _, want := range []string{"hub_coordination", "node_list_revision"} {
+		if _, ok := seeded[want]; !ok {
+			t.Fatalf("a fresh database has no %s row; seeded runtime tables = %v", want, seeded)
+		}
+	}
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", dsn(path, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	for table := range seeded {
+		if _, err := raw.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Restore(ctx, path, config, "", "", source.clk.Now(), slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	for table, want := range seeded {
+		var n int
+		if err := raw.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != want {
+			t.Errorf("%s has %d rows after restore, want %d as in a fresh database", table, n, want)
+		}
+	}
+}
