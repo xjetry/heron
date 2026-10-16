@@ -40,7 +40,7 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release, pending, drain := st.HoldWriterForTest()
+	release, pending, drain := st.HoldWriterForTest(t)
 	defer release()
 	clk.Advance(time.Minute)
 	type authentication struct {

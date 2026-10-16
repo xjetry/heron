@@ -3,9 +3,11 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xjetry/heron/internal/clock"
 )
@@ -99,5 +101,62 @@ func TestExternalWriteRollsBackWithoutCoordinationRow(t *testing.T) {
 	// hub 自己的写不碰协调行，缺行不影响它。
 	if _, _, err := hub.CreateNode(ctx, NewNode{Name: "online"}, hash(1)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// 运行中的 hub 与离线子命令是同一个库的两个写者，谁先开写事务都一样：先开的一方读过之后，另一方要提交就得等它提交，
+// 先开的一方随后的写不得因快照已被对方的提交淘汰而失败（SQLITE_BUSY_SNAPSHOT 不经 busy_timeout 等待，直接报错）。
+func TestWriterThatReadFirstIsNotRefusedByConcurrentWriter(t *testing.T) {
+	t.Parallel()
+	for _, externalFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("external_first=%v", externalFirst), func(t *testing.T) {
+			t.Parallel()
+			hub, external, _ := openPair(t)
+			ctx := t.Context()
+			if _, _, err := hub.CreateNode(ctx, NewNode{Name: "n"}, hash(1)); err != nil {
+				t.Fatal(err)
+			}
+			first, second := hub, external
+			if externalFirst {
+				first, second = external, hub
+			}
+			secondDone := make(chan error, 1)
+			var secondErr error
+			returned := false
+			err := first.write(ctx, func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow("SELECT COUNT(*) FROM node").Scan(&n); err != nil {
+					return err
+				}
+				go func() {
+					secondDone <- second.write(ctx, func(tx *sql.Tx) error {
+						_, err := tx.Exec("UPDATE node SET note = 'second' WHERE name = 'n'")
+						return err
+					})
+				}()
+				// 另一方若能插进这个事务的读与写之间提交，几毫秒内就会返回；等待取远短于 busyTimeout 的一段，
+				// 它被挡住时这段时间之后本事务提交、它随即拿到锁，仍在它自己的 busyTimeout 之内。
+				select {
+				case secondErr = <-secondDone:
+					returned = true
+				case <-time.After(busyTimeout / 5):
+				}
+				_, err := tx.Exec("UPDATE node SET note = 'first' WHERE name = 'n'")
+				return err
+			})
+			if !returned {
+				secondErr = <-secondDone
+			}
+			if err != nil {
+				t.Fatalf("writer that read first: %v", err)
+			}
+			if secondErr != nil {
+				t.Fatalf("concurrent writer: %v", secondErr)
+			}
+			var note string
+			if err := hub.r.QueryRowContext(ctx, "SELECT note FROM node WHERE name = 'n'").Scan(&note); err != nil || note != "second" {
+				t.Fatalf("note = %q, %v; want the concurrent writer's value, written after the first commit", note, err)
+			}
+		})
 	}
 }

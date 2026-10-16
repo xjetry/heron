@@ -78,9 +78,7 @@ type writeReq struct {
 //   - 驻留内存 = 连接数 × 每连接 page cache。连接数见 readPoolSize / historyPoolSize / evaluationPoolSize 加 statsDB 的一条，
 //     每连接 cache 取驱动默认（cache_size -2000，约 2 MiB），没有按宿主内存分档；mmap 保持关闭（mmap_size 0），开着时
 //     热页同时留在页缓存与映射里，RSS 随库文件增长而命中率不涨。两个默认值都是 modernc.org/sqlite v1.59.0 的实测。
-//   - 不用 cache=shared：共享缓存是表级锁，busy_timeout 对它无效。_txlock=immediate 防的是多个写者之间的锁升级死锁，
-//     运行期的写都在 runWriter 一个协程里串行，没有第二个写者，w 不需要它。进程之间的写者只在建库与迁移时相遇，
-//     那一步用自己的连接并以 BEGIN IMMEDIATE 开事务，见 migrate。
+//   - 不用 cache=shared：共享缓存是表级锁，busy_timeout 对它无效。写事务怎么开见 writeTxLock。
 //   - 检查点若要做：写协程在事务之外按 -wal 文件大小阈值执行 wal_checkpoint(TRUNCATE)，平时短等待、超阈值才给长等待；
 //     触发条件用文件大小，不用连接数——挡住重置的是持着快照的读事务（持得久的只有大扫描池里的长查询），空闲连接不
 //     持事务。是否启用由实测决定，当前不做：modernc.org/sqlite v1.59.0（SQLite 3.53.4），Apple M4 Max、macOS 26.3.1，
@@ -105,6 +103,15 @@ const walSizeLimit = 16 << 20
 
 // busyTimeout 是每条连接等别的连接放锁的上限（busy_timeout），也是 enableWAL 自己重试的总时长上限。
 const busyTimeout = 5 * time.Second
+
+// writeTxLock 让连接上的显式事务以 BEGIN IMMEDIATE 开始，写锁在 begin 时就拿到。同一个库可能同时有不止一个进程在写：
+// 运行中的 hub、它旁边的离线子命令（ExternalWriter）、恢复、另一个进程的建库或迁移。默认的 BEGIN DEFERRED 先只开
+// 读事务，到第一次写才升级；升级前另一个写者已提交时以 SQLITE_BUSY_SNAPSHOT 失败，正持着锁时以 SQLITE_BUSY 失败，
+// 两种都不经 busy_timeout 等待：已在读事务中的连接，SQLite 不为它调 busy handler（modernc.org/sqlite v1.59.0 实测，
+// 前者见 TestWriterThatReadFirstIsNotRefusedByConcurrentWriter，后者见 TestRestoreWaitsForConcurrentTargetWriter）。
+// begin 时取锁，等待就落在 begin 上，由 busy_timeout 兜住，事务读到的也一定是取锁之后的最新状态。所以凡在可能有
+// 别的进程写的库上开写事务的连接都带它：写连接 w、migrate 的 schemaDB、Restore 的目标库连接。
+const writeTxLock = "&_txlock=immediate"
 
 func dsn(path string, extra string) string {
 	// path 是文件名而非 URI；编码路径部分，避免 #、? 和 % 改变实际打开的数据库。
@@ -157,7 +164,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	if err := migrate(path, policy, log, cfg.backups); err != nil {
 		return nil, err
 	}
-	w, err := sql.Open("sqlite", dsn(path, ""))
+	w, err := sql.Open("sqlite", dsn(path, writeTxLock))
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +502,7 @@ func logSchemaCreated(log *slog.Logger) {
 //
 // 不变式：据以建库或迁移的那次准入、迁移前备份、建库或迁移本身，都在同一段写锁之内，锁从 BEGIN 起持有。同一个库
 // 可能同时被两个进程首次打开或迁移（serve 与 passwd、两个 serve、serve 与在线更新器起的候选 hub），版本号只在持写锁
-// 时改变，所以持锁读到的版本就是备份与动手时的版本。保证它的是 schemaDB 的 _txlock=immediate：inTx 以 BEGIN
+// 时改变，所以持锁读到的版本就是备份与动手时的版本。保证它的是 schemaDB 的 writeTxLock：inTx 以 BEGIN
 // IMMEDIATE 开始，begin 时取 RESERVED 锁，后到的进程在 begin 处按 busy_timeout 等先到的提交，拿到锁后读到当前版本，
 // 既不备份也不迁移。两种别的写法都会让并发打开失败：默认的 DEFERRED 事务读版本时只持 SHARED 锁，两个进程都读到
 // 旧版本，后写的那个从读锁升级写锁时不等 busy_timeout、立即得到 SQLITE_BUSY（modernc.org/sqlite v1.59.0 实测）；
@@ -511,7 +518,7 @@ func logSchemaCreated(log *slog.Logger) {
 //
 // 锁外的那次准入只决定库已在当前版本时直接返回、不取写锁：运行中的 hub 旁边执行离线命令是常态，不该去等它的写。
 func migrate(path string, policy SchemaPolicy, log *slog.Logger, backups backupFiles) error {
-	schemaDB, err := sql.Open("sqlite", dsn(path, "&_txlock=immediate"))
+	schemaDB, err := sql.Open("sqlite", dsn(path, writeTxLock))
 	if err != nil {
 		return err
 	}

@@ -229,3 +229,49 @@ func TestRestoreRecordUnion(t *testing.T) {
 		t.Errorf("two restores in the same second must retain two distinct records: %v", ids)
 	}
 }
+
+// 恢复的写事务在开始时就拿目标库的写锁：目标库此刻被另一个写者持着锁时，恢复等它提交后再校验与写入，而不是
+// 先读、到第一次写时才发现锁被占或快照已过时而失败。
+func TestRestoreWaitsForConcurrentTargetWriter(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source, _ := open(t)
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := source.SnapshotConfig(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	target, path := openAt(t)
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := sql.Open("sqlite", dsn(path, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	conn, err := holder.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	restored := make(chan error, 1)
+	go func() {
+		_, err := Restore(ctx, path, config, "", "", source.clk.Now(), slog.Default())
+		restored <- err
+	}()
+	// 持锁一段远短于 busyTimeout 的时间：恢复走到写事务时锁仍被占着，放锁之后它仍在自己的 busyTimeout 之内。
+	select {
+	case err := <-restored:
+		t.Fatalf("restore returned while the target's write lock was held: %v", err)
+	case <-time.After(busyTimeout / 5):
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-restored; err != nil {
+		t.Fatalf("restore after the concurrent writer committed: %v", err)
+	}
+}

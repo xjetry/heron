@@ -85,7 +85,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	client := heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL)
-	release, pending, drain := st.HoldWriterForTest()
+	release, pending, drain := st.HoldWriterForTest(t)
 	defer release()
 	saved := make(chan error, 1)
 	go func() {

@@ -91,7 +91,7 @@ func waitRegistryMutex(t *testing.T, id, method string, progressed func() bool) 
 func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 	t.Parallel()
 	r, st, id := registryRaceStore(t)
-	release, pending, drain := st.HoldWriterForTest()
+	release, pending, drain := st.HoldWriterForTest(t)
 	defer release()
 	type result struct {
 		detail probe.Detail
@@ -142,7 +142,7 @@ func TestRegistryDeleteSerializesFollowingSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release, pending, drain := st.HoldWriterForTest()
+	release, pending, drain := st.HoldWriterForTest(t)
 	defer release()
 	deleted := make(chan error, 1)
 	go func() { _, err := r.Delete(t.Context(), d.Task.Id); deleted <- err }()

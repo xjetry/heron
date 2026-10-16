@@ -69,7 +69,7 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 			return result, err
 		}
 	}
-	db, err := sql.Open("sqlite", dsn(path, "&mode=rw"))
+	db, err := sql.Open("sqlite", dsn(path, "&mode=rw"+writeTxLock))
 	if err != nil {
 		return result, err
 	}
