@@ -23,8 +23,8 @@ const (
 // PermissionDenied。store 只定义它，不在任何分支里作出拒绝。
 var ErrPermission = errors.New("operation or resource is outside the API token grant")
 
-// ErrInvalidGrant 是建 token 时 grant 本身的形状不合法（未知权限位、全部节点与显式节点并存）。它是输入校验，
-// 不是授权拒绝，与授权哨兵分开。
+// ErrInvalidGrant 是建或改 token 时 grant 本身不合法（未知权限位、全部节点与显式节点并存、引用不存在的节点）。
+// 它是输入校验，不是授权拒绝，与授权哨兵分开。
 var ErrInvalidGrant = errors.New("invalid API token grant")
 
 type TokenGrant struct {
@@ -96,7 +96,7 @@ func (g TokenGrant) validate(tx *sql.Tx) error {
 			return err
 		}
 		if !ok {
-			return ErrNotFound
+			return fmt.Errorf("%w: node %d does not exist", ErrInvalidGrant, id)
 		}
 	}
 	return nil

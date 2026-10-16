@@ -21,14 +21,30 @@ type APIToken struct {
 
 var ErrAPITokenLimit = errors.New("API token limit reached")
 
+// MaxAPITokenExpiresAt 是 expires_at 的上限：9999-12-31T23:59:59Z。更晚的时刻在 RFC 3339 与面板的日期格式里写不成四位年份。
+const MaxAPITokenExpiresAt int64 = 253402300799
+
+// grantOrDefault 是建与改共用的缺省：没有给出 grant 即全站只读。
+func grantOrDefault(g *TokenGrant) TokenGrant {
+	if g == nil {
+		return TokenGrant{AllNodes: true}
+	}
+	return *g
+}
+
+// nullableUnix 把零值时刻存成 NULL：expires_at 的 NULL 表示不过期，0 会被列上的 CHECK 拒绝。
+func nullableUnix(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.Unix()
+}
+
 // CreateAPIToken 在同一写事务里计数并插入：写协程串行执行事务，并发创建不会都看到
 // limit−1 而一起越过上限。
 func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, now time.Time, limit int, grant *TokenGrant) (APIToken, error) {
 	var out APIToken
-	g := TokenGrant{AllNodes: true}
-	if grant != nil {
-		g = *grant
-	}
+	g := grantOrDefault(grant)
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := g.validate(tx); err != nil {
 			return err
@@ -59,6 +75,53 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 		}
 		out = APIToken{TokenGrant: g, Identity: fmt.Sprintf("%X", hash), ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0).UTC()}
 		return nil
+	})
+	return out, err
+}
+
+// UpdateAPIToken 整体替换 token 的名称、授权与失效时刻（零值表示不过期）。明文哈希、身份、created_at 与 last_used_at
+// 不变：持有者不用换配置，按身份归属的回执随之延续；鉴权每次都查库，下一个请求即按新授权。
+//   - 授权与新建经同一个 validate；节点集合整体替换，包括它自己创建或经自己窗口接入而自动纳入的节点。
+//   - 新授权不含注册权限时，同一事务删掉它的注册窗口，与 DeleteAPIToken 一致；认领时仍按 token 当前状态重查。
+//   - expiresAt 不要求晚于当前时间：早于或等于即保存为已过期，晚于即有效（已过期的随之恢复）。
+//
+// 不存在返回 ErrNotFound。
+func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant *TokenGrant, expiresAt time.Time) (APIToken, error) {
+	g := grantOrDefault(grant)
+	var out APIToken
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := g.validate(tx); err != nil {
+			return err
+		}
+		permissions, err := json.Marshal(g.Permissions)
+		if err != nil {
+			return err
+		}
+		res, err := tx.Exec("UPDATE api_token SET name = ?, permissions = ?, all_nodes = ?, expires_at = ? WHERE id = ?",
+			name, string(permissions), g.AllNodes, nullableUnix(expiresAt), id)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrNotFound
+		}
+		if _, err := tx.Exec("DELETE FROM api_token_node WHERE token_id = ?", id); err != nil {
+			return err
+		}
+		for _, node := range g.NodeIDs {
+			if err := grantNode(tx, id, node); err != nil {
+				return err
+			}
+		}
+		if !g.Allows(PermissionRegister) {
+			if _, err := tx.Exec("DELETE FROM register_window WHERE owner_id = ?", id); err != nil {
+				return err
+			}
+		}
+		out, err = scanAPIToken(tx.QueryRow(selectAPIToken+" WHERE id = ?", id).Scan)
+		return err
 	})
 	return out, err
 }
