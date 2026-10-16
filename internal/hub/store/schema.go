@@ -203,7 +203,7 @@ func schemaStatements() []string {
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
 		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
 		ddlHubCoordination, seedHubCoordination, ddlCleanupJob, ddlNodeListRevision, seedNodeListRevision)
-	// 触发器挂在 node、node_facts、node_tag、tag、api_token_node 上，放在全部建表之后。
+	// 触发器挂在 node、node_facts、node_tag、tag、api_token、api_token_node 上，放在全部建表之后。
 	return append(out, ddlNodeListRevisionTriggers...)
 }
 
@@ -213,7 +213,8 @@ func schemaStatements() []string {
 // 扫描、离线子命令与恢复的整表搬运都落在触发器上。
 // 不推进的写入：只改 node.last_seen_at（实时状态，面板从快照取；分钟刷出每分钟写它）或 node.token_hash；只改
 // node_facts.facts_hash（agent 对整份 Facts 算的摘要）或 facts_rev（hub 的持久化字段集合版本）；新建标签行（挂上节点时
-// node_tag 的插入已推进）。这几列都不在 ListNodes 里。node 与 node_facts 的 UPDATE 触发器逐列比较新旧值，写回原值不推进；列的
+// node_tag 的插入已推进）；改 api_token 除 id 与 all_nodes 之外的列（名称、哈希、时间、权限位、有效期都不改变 token 的范围）。
+// 这几列都不在 ListNodes 里。node、node_facts 与 api_token 的 UPDATE 触发器逐列比较新旧值，写回原值不推进；列的
 // 归类由 TestNodeListRevisionColumnClassification 逐列核对，加列必须在那里归类并改这里的 WHEN。
 // 只有一行（id = 1），建库时种子为 0；是运行态，不进任何备份层。恢复在目标库缺这一行时补种、已有的保留计数，随后对
 // node 等表的 DELETE + INSERT 经触发器推进它。
@@ -255,6 +256,11 @@ BEGIN ` + bumpNodeListRevision + ` END`,
 	`CREATE TRIGGER node_list_revision_token_node_insert AFTER INSERT ON api_token_node BEGIN ` + bumpNodeListRevision + ` END`,
 	`CREATE TRIGGER node_list_revision_token_node_delete AFTER DELETE ON api_token_node BEGIN ` + bumpNodeListRevision + ` END`,
 	`CREATE TRIGGER node_list_revision_token_node_update AFTER UPDATE ON api_token_node BEGIN ` + bumpNodeListRevision + ` END`,
+	// ListNodes 对 token 的结果取决于它的范围：nodeScopeSQL 按 api_token.id 找到行、读 all_nodes 与 api_token_node。
+	// token 行的增删不改变任何仍能调用者的结果：新 token 没有拿过版本号，删掉的 token 不再能调用。
+	`CREATE TRIGGER node_list_revision_token_update AFTER UPDATE ON api_token WHEN
+  OLD.id IS NOT NEW.id OR OLD.all_nodes IS NOT NEW.all_nodes
+BEGIN ` + bumpNodeListRevision + ` END`,
 }
 
 // cleanup_job 是删除节点或探测任务后待清的时序行（cleanup.go）：kind 为 'node' 时 node_id 是被删节点、task_id 为 0，
@@ -678,7 +684,9 @@ const ddlAPIToken = `CREATE TABLE api_token (
   -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。
   last_used_at INTEGER,
   permissions TEXT NOT NULL DEFAULT '[]',
-  all_nodes INTEGER NOT NULL DEFAULT 1 CHECK (all_nodes IN (0, 1))
+  all_nodes INTEGER NOT NULL DEFAULT 1 CHECK (all_nodes IN (0, 1)),
+  -- 失效的第一个时刻（Unix 秒）；NULL 表示不过期。列序与迁移 47 的 ADD COLUMN 结果一致。
+  expires_at INTEGER CHECK (expires_at IS NULL OR expires_at > 0)
 )`
 
 const ddlAPITokenNode = `CREATE TABLE api_token_node (

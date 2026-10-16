@@ -40,9 +40,10 @@ func v8Fixture(t *testing.T, dir string) string {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 		t.Fatal(err)
 	}
-	if freshVersion != 46 {
-		t.Fatalf("fixture user_version = %d, want 46; rebuild the v8 fixture for the new version", freshVersion)
+	if freshVersion != 47 {
+		t.Fatalf("fixture user_version = %d, want 47; rebuild the v8 fixture for the new version", freshVersion)
 	}
+	removeV47Config(t, raw)
 	removeV46Revision(t, raw)
 	removeV45Config(t, raw)
 	removeV44Config(t, raw)
@@ -133,7 +134,7 @@ func v8Fixture(t *testing.T, dir string) string {
 	return path
 }
 
-// removeV46Revision 撤掉迁移 46 建的节点资料版本表与推进它的触发器。触发器按名字前缀从 sqlite_schema 取：
+// removeV46Revision 撤掉迁移 46 建的节点资料版本表与推进它的触发器（含迁移 47 挂在 api_token 上的那一个，同一前缀）。触发器按名字前缀从 sqlite_schema 取：
 // 它们挂在 node、node_facts 等更早的表上，只删表会留下引用不存在之表的触发器，再迁移时撞上同名对象。
 func removeV46Revision(t *testing.T, db *sql.DB) {
 	t.Helper()

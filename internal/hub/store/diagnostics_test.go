@@ -174,6 +174,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 			removeV40Config(t, db)
 			removeV39Config(t, db)
 			for _, q := range []string{
+				"ALTER TABLE api_token DROP COLUMN expires_at",
 				"ALTER TABLE node DROP COLUMN rented",
 				"ALTER TABLE node DROP COLUMN traffic_quota_bytes", "ALTER TABLE node DROP COLUMN traffic_quota_mode",
 				"DROP TABLE probe_cert_presented",

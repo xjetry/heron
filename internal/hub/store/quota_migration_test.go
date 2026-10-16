@@ -67,6 +67,7 @@ func TestTrafficQuotaSnapshotRestore(t *testing.T) {
 							t.Fatal(err)
 						}
 						if path == config {
+							removeV47Config(t, db)
 							removeV44Config(t, db)
 							removeV41Config(t, db)
 							removeV40Config(t, db)

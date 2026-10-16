@@ -51,7 +51,7 @@ func TestCertAlertStateAfterIdentityCleanup(t *testing.T) {
 	must(t, f.st.Close())
 	db, err := sql.Open("sqlite", f.path)
 	must(t, err)
-	// 44 与当前库的差别是证书表的身份列（45）与节点资料版本表及其触发器（46）：撤掉后者、重建可空身份列并回退版本，
+	// 44 与当前库的差别是证书表的身份列（45）、节点资料版本表及其触发器（46）与 token 失效时刻列（47）：撤掉后两者、重建可空身份列并回退版本，
 	// 构造迁移前的持久化状态。触发器按名字前缀取，它们挂在更早的表上，只删表会让再迁移撞上同名对象。
 	var triggers []string
 	found, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'node\_list\_revision\_%' ESCAPE '\'`)
@@ -70,6 +70,7 @@ func TestCertAlertStateAfterIdentityCleanup(t *testing.T) {
 		must(t, err)
 	}
 	_, err = db.Exec(`DROP TABLE node_list_revision;
+		ALTER TABLE api_token DROP COLUMN expires_at;
 		CREATE TABLE probe_cert_old (node_id INTEGER NOT NULL, task_id INTEGER NOT NULL, not_after INTEGER NOT NULL, observed_at INTEGER NOT NULL, config_id BLOB, PRIMARY KEY (node_id, task_id)) WITHOUT ROWID;
 		INSERT INTO probe_cert_old SELECT node_id, task_id, not_after, observed_at, NULL FROM probe_cert;
 		DROP TABLE probe_cert;

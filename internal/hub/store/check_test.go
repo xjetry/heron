@@ -23,6 +23,8 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 	fresh, _ := open(t)
 	checkViolations := []struct{ table, check, write string }{
 		{"api_token", "all_nodes IN (0, 1)", "INSERT INTO api_token (name,token_hash,created_at,all_nodes) VALUES ('x',x'00',0,2)"},
+		// 不过期用 NULL 表示；0 不是一个失效时刻，按 1970 年读会让 token 一建出来就过期。
+		{"api_token", "expires_at IS NULL OR expires_at > 0", "INSERT INTO api_token (name,token_hash,created_at,expires_at) VALUES ('x',x'01',0,0)"},
 		// 单行表：第二行插不进去。
 		{"admin", "id = 1", "INSERT INTO admin (id, password_hash, updated_at) VALUES (2, 'x', 0)"},
 		{"admin_security", "id = 1", "INSERT INTO admin_security (id) VALUES (2)"},

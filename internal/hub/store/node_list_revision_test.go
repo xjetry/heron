@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -77,6 +78,12 @@ var nodeListColumns = map[string]map[string]bool{
 		"virtualization": true, "cpu_model": true, "cpu_cores": true, "agent_version": true, "icmp_available": true,
 		"updated_at": true, "network": true, "diagnostics": true, "execution": true, "facts_rev": false,
 	},
+	// api_token：ListNodes 对 token 的结果只取决于范围，nodeScopeSQL 按 id 找到这一行、读 all_nodes（显式节点在
+	// api_token_node，那张表的任何写入都推进）。名称、哈希、时间、权限位与有效期都不改变范围。
+	"api_token": {
+		"id": true, "all_nodes": true, "name": false, "token_hash": false, "created_at": false,
+		"last_used_at": false, "permissions": false, "expires_at": false,
+	},
 }
 
 func TestNodeListRevisionColumnClassification(t *testing.T) {
@@ -111,8 +118,16 @@ func TestNodeListRevisionColumnClassification(t *testing.T) {
 				t.Parallel()
 				s, id := nodeWithFacts(t)
 				key := "id"
-				if table == "node_facts" {
+				switch table {
+				case "node_facts":
 					key = "node_id"
+				case "api_token":
+					// 指定节点的 token：all_nodes 为 0，下面 +1 改成 1 仍满足 CHECK (all_nodes IN (0, 1))。
+					tok, err := s.CreateAPIToken(t.Context(), "scoped", sha256.Sum256([]byte("scoped")), time.Unix(1, 0), 100, &TokenGrant{NodeIDs: []int64{id}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					id = tok.ID
 				}
 				before := revisionOf(t, s)
 				mustExec(t, s, fmt.Sprintf("UPDATE %s SET %s = %s WHERE %s = ?", table, column, column, key), id)
@@ -126,6 +141,26 @@ func TestNodeListRevisionColumnClassification(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// "指定节点、列表为空"改为"全站"不碰任何 api_token_node 行，只有 api_token 上的触发器能让条件读取看到变化。
+func TestNodeListRevisionBumpsWhenTokenScopeWidens(t *testing.T) {
+	t.Parallel()
+	s, _ := nodeWithFacts(t)
+	tok, err := s.CreateAPIToken(t.Context(), "narrow", sha256.Sum256([]byte("narrow")), time.Unix(1, 0), 100, &TokenGrant{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithPrincipal(t.Context(), tok)
+	first, err := s.ReadNodeList(ctx, NodeFilter{}, func(uint64) bool { return false })
+	if err != nil || len(first.Nodes) != 0 {
+		t.Fatalf("empty explicit scope listed nodes: %+v %v", first, err)
+	}
+	mustExec(t, s, "UPDATE api_token SET all_nodes = 1 WHERE id = ?", tok.ID)
+	second, err := s.ReadNodeList(ctx, NodeFilter{}, func(r uint64) bool { return r == first.Revision })
+	if err != nil || second.Unchanged || len(second.Nodes) != 1 {
+		t.Fatalf("widened scope still reported unchanged: %+v %v", second, err)
 	}
 }
 

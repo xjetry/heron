@@ -181,6 +181,10 @@ func TestRestoredOldFactsAreRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 迁移 47 的 api_token 失效时刻列同理，否则回填 33 后迁移 47 撞上已有的列。
+	if _, err := raw.Exec("ALTER TABLE api_token DROP COLUMN expires_at"); err != nil {
+		t.Fatal(err)
+	}
 	// 迁移 44 的 rented 列同理，否则回填 33 后迁移 44 撞上已有的列。
 	if _, err := raw.Exec("ALTER TABLE node DROP COLUMN rented"); err != nil {
 		t.Fatal(err)

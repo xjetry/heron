@@ -16,6 +16,7 @@ type APIToken struct {
 	Name       string
 	CreatedAt  time.Time
 	LastUsedAt time.Time // 零值表示从未使用
+	ExpiresAt  time.Time // 失效的第一个时刻；零值表示不过期
 }
 
 var ErrAPITokenLimit = errors.New("API token limit reached")
@@ -65,9 +66,9 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 func scanAPIToken(scan func(...any) error) (APIToken, error) {
 	var t APIToken
 	var created int64
-	var used sql.NullInt64
+	var used, expires sql.NullInt64
 	var permissions, nodes string
-	if err := scan(&t.ID, &t.Name, &created, &used, &permissions, &t.AllNodes, &nodes, &t.Identity); err != nil {
+	if err := scan(&t.ID, &t.Name, &created, &used, &permissions, &t.AllNodes, &nodes, &t.Identity, &expires); err != nil {
 		return APIToken{}, err
 	}
 	if err := json.Unmarshal([]byte(permissions), &t.Permissions); err != nil {
@@ -80,11 +81,14 @@ func scanAPIToken(scan func(...any) error) (APIToken, error) {
 	if used.Valid {
 		t.LastUsedAt = time.Unix(used.Int64, 0).UTC()
 	}
+	if expires.Valid {
+		t.ExpiresAt = time.Unix(expires.Int64, 0).UTC()
+	}
 	return t, nil
 }
 
 const selectAPIToken = `SELECT id, name, created_at, last_used_at, permissions, all_nodes,
- (SELECT json_group_array(node_id) FROM (SELECT node_id FROM api_token_node WHERE token_id = api_token.id ORDER BY node_id)), hex(token_hash) FROM api_token`
+ (SELECT json_group_array(node_id) FROM (SELECT node_id FROM api_token_node WHERE token_id = api_token.id ORDER BY node_id)), hex(token_hash), expires_at FROM api_token`
 
 func (s *Store) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 	rows, err := s.r.QueryContext(ctx, selectAPIToken+" ORDER BY id")

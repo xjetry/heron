@@ -160,6 +160,7 @@ func TestRestoreV42MetricsSnapshotAddsTCPRateColumns(t *testing.T) {
 			dropTCPRateColumns(t, db)
 		}
 		if layer == "config" {
+			removeV47Config(t, db)
 			removeV44Config(t, db)
 		}
 		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=42"); err != nil {

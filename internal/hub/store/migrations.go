@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -71,6 +72,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	44: execAll(migrationV44Config),
 	45: migrateV45Config,
 	46: execAll(migrationV46Config),
+	47: execAll(migrationV47),
 }
 
 // v46：节点资料版本表、种子行与推进它的触发器（含义见 schema.go 的 ddlNodeListRevision）。只建新对象、不改已有行；
@@ -111,6 +113,18 @@ BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER node_list_revision_token_node_delete AFTER DELETE ON api_token_node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER node_list_revision_token_node_update AFTER UPDATE ON api_token_node BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 }
+
+// v47：API token 的失效时刻。只加可空列，已有 token 取 NULL（不过期），行为不变。范围可以编辑之后，api_token.all_nodes
+// 的变化会改变 ListNodes 对该 token 的内容，节点资料版本须随之推进（含义见 schema.go 的 ddlNodeListRevision）。
+// 列与触发器分两组登记：快照恢复只迁移配置层的列，触发器挂在运行态的版本表上，不进任何快照（restore.go 的 migrateSnapshot）。
+// 回滚边界同其它迁移：写入后旧二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV47Config = []string{`ALTER TABLE api_token ADD COLUMN expires_at INTEGER CHECK (expires_at IS NULL OR expires_at > 0)`}
+
+var migrationV47Runtime = []string{`CREATE TRIGGER node_list_revision_token_update AFTER UPDATE ON api_token WHEN
+  OLD.id IS NOT NEW.id OR OLD.all_nodes IS NOT NEW.all_nodes
+BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`}
+
+var migrationV47 = append(slices.Clone(migrationV47Config), migrationV47Runtime...)
 
 // 证书观测必须能绑定到配置身份；没有身份的存量观测无法补证，由迁移删除。
 // 告警状态不在本迁移中改写，无读数时由到期评估保留，等待下一次有效观测。

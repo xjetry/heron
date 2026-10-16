@@ -524,6 +524,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			}
 		case 46:
 			// 节点资料版本表是运行态，不属于任一备份层；目标库自己的那一行由触发器随恢复的整表搬运推进。
+		case 47:
+			// token 失效时刻列在配置层；推进节点资料版本的触发器挂在运行态的版本表上，不进快照，目标库自己建。
+			if layer == "config" {
+				statements = migrationV47Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
