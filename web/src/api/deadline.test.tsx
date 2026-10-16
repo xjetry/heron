@@ -17,7 +17,7 @@ const reads = [
   "ListOperations", "ListNotifyChannelRefs", "GetUpdates", "ListNodes", "ListTags", "GetRegisterWindow", "GetSnapshot",
   "QueryMetrics", "GetTraffic", "ListProbeTasks", "QueryProbes", "ListProbeComparisonNodes", "QueryProbeComparison",
   "ListProbeCertificates", "ListAlertRules", "ListSilences", "ListAlertEvents", "GetSettings", "GetBackupStatus",
-  "GetHeartbeatStatus", "GetStorageStats", "GetApiReference", "ListRestoreRecords",
+  "GetHeartbeatStatus", "GetStorageStats", "GetApiReference", "ListRestoreRecords", "GetCaller",
 ];
 const others = [
   "ExecuteChange", "StartUpdate", "CancelUpdate", "Login", "BeginPasskeyLogin", "FinishPasskeyLogin", "GetSecurity",
@@ -27,7 +27,7 @@ const others = [
   "SaveSilence", "DeleteSilence", "GetAlertDeliveryError", "ListNotifyChannels", "SaveNotifyChannel", "DeleteNotifyChannel",
   "TestNotifyChannel", "UpdateSettings", "UploadTheme", "ListThemes", "EnableTheme", "DeleteTheme", "GetThemePreview",
   "DeleteThemeVersion", "ListThemeReleases", "InstallThemeRelease", "PreviewTheme", "GetThemePackage", "ListApiTokens",
-  "CreateApiToken", "DeleteApiToken",
+  "CreateApiToken", "UpdateApiToken", "DeleteApiToken",
 ];
 const publicReads = ["GetSite", "GetSnapshot", "QueryMetrics", "QueryProbes", "ListProbeComparisonNodes", "QueryProbeComparison"];
 const json = (value: unknown = {}) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });

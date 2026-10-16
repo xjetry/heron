@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { ListApiTokensResponseSchema, TokenPermission, type TokenGrant } from "../gen/heron/v1/admin_pb";
+import { ListApiTokensResponseSchema, TokenPermission, type TokenGrant, type UpdateApiTokenRequest } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { ApiTokens } from "./ApiTokens";
 import { expectEmptyState } from "../test/empty";
@@ -236,4 +236,89 @@ it("没有 token 时不画只有表头的空表，空态与接入方式各自成
   const integrations = screen.getByRole("region", { name: "接入方式" });
   expect(within(integrations).getByRole("button", { name: "下载 SKILL.md" })).toBeInTheDocument();
   expect(within(integrations).getByRole("button", { name: "复制油猴脚本" })).toBeInTheDocument();
+});
+
+const HUB_NOW = 1_800_000_000n;
+const timed = create(ListApiTokensResponseSchema, { now: HUB_NOW, tokens: [
+  { id: 5n, name: "forever", createdAt: 1n, grant: { allNodes: true, permissions: [], nodeIds: [] } },
+  { id: 6n, name: "later", createdAt: 1n, expiresAt: HUB_NOW + 3600n, grant: { allNodes: false, permissions: [TokenPermission.CONFIGURE], nodeIds: [11n] } },
+  { id: 7n, name: "gone", createdAt: 1n, expiresAt: HUB_NOW - 60n, grant: { allNodes: true, permissions: [], nodeIds: [] } },
+] });
+
+it("有效期按 hub 时刻判断，不看浏览器时钟", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(0);
+  render({ listApiTokens: async () => timed });
+  const row = async (name: string) => (await screen.findByRole("cell", { name })).closest("tr")!;
+  expect(within(await row("forever")).getByText("不过期")).toBeInTheDocument();
+  expect(within(await row("later")).getByText(/^至 /)).toBeInTheDocument();
+  expect(within(await row("gone")).getByText(/^已过期（/)).toBeInTheDocument();
+});
+
+it("编辑预填当前授权，保存时整体替换且默认保持有效期", async () => {
+  let sent: UpdateApiTokenRequest | undefined;
+  render({
+    listApiTokens: async () => timed,
+    listNodes: async () => ({ nodes: [{ id: 11n, name: "边缘节点" }, { id: 12n, name: "新节点" }] }),
+    updateApiToken: async (req) => { sent = req; return { apiToken: { id: req.id, name: req.name } }; },
+  });
+  await openRowAction("later（#6）", "编辑");
+  const form = within(screen.getByRole("dialog")).getByRole("form", { name: "编辑 API token" });
+  expect(within(form).getByLabelText("名称")).toHaveValue("later");
+  expect(within(form).getByLabelText("监控配置")).toBeChecked();
+  expect(within(form).getByLabelText("节点范围")).toHaveValue("selected");
+  expect(await within(form).findByLabelText("边缘节点（#11）")).toBeChecked();
+  expect(within(form).getByLabelText("有效期")).toHaveValue("keep");
+  fireEvent.click(within(form).getByLabelText("新节点（#12）"));
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent).toBeDefined());
+  expect(sent?.id).toBe(6n);
+  expect(sent?.grant?.nodeIds).toEqual([11n, 12n]);
+  expect(sent?.grant?.permissions).toEqual([TokenPermission.CONFIGURE]);
+  expect(sent?.expiresAt).toBe(HUB_NOW + 3600n);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("过期 token 只改名时原样带回过去的时刻", async () => {
+  let sent: UpdateApiTokenRequest | undefined;
+  render({ listApiTokens: async () => timed, updateApiToken: async (req) => { sent = req; return { apiToken: { id: req.id, name: req.name } }; } });
+  await openRowAction("gone（#7）", "编辑");
+  const form = within(screen.getByRole("dialog")).getByRole("form", { name: "编辑 API token" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "gone-renamed" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent).toBeDefined());
+  expect(sent?.name).toBe("gone-renamed");
+  expect(sent?.expiresAt).toBe(HUB_NOW - 60n);
+});
+
+it("预设从 hub 时刻起算：浏览器时钟偏差不进入请求", async () => {
+  let sent: UpdateApiTokenRequest | undefined;
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(5_000_000_000_000);
+  render({ listApiTokens: async () => timed, updateApiToken: async (req) => { sent = req; return { apiToken: { id: req.id, name: req.name } }; } });
+  await openRowAction("gone（#7）", "编辑");
+  const form = within(screen.getByRole("dialog")).getByRole("form", { name: "编辑 API token" });
+  fireEvent.change(within(form).getByLabelText("有效期"), { target: { value: "7d" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent).toBeDefined());
+  expect(sent?.expiresAt).toBe(HUB_NOW + 604_800n);
+});
+
+it("新建默认不过期，选了预设才带有效期", async () => {
+  const sent: (bigint | undefined)[] = [];
+  render({
+    listApiTokens: async () => timed,
+    createApiToken: async (req) => { sent.push(req.expiresAt); return { apiToken: { id: 9n, name: req.name }, token: "heron_at_x" }; },
+  });
+  let form = await openCreate();
+  expect(within(form).getByLabelText("有效期")).toHaveValue("never");
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "a" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(sent).toEqual([undefined]));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "完成" }));
+  form = await openCreate();
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "b" } });
+  fireEvent.change(within(form).getByLabelText("有效期"), { target: { value: "1h" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(sent).toEqual([undefined, HUB_NOW + 3600n]));
 });

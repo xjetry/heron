@@ -19,7 +19,8 @@ import { access, Access } from "../gen/heron/v1/access_pb";
 // GetSettings/GetHeartbeatStatus: api/settings.go -> store/心跳内存态；GetBackupStatus: api/backup_status.go -> store/备份态；
 // ListRestoreRecords: api/restore_records.go -> store/restore_record.go；
 // GetStorageStats: api/settings.go -> store/stats.go 全表 COUNT 与文件 stat；
-// GetApiReference: api/reference.go 嵌入文件；GetSite: api/public.go -> store.SiteSettings。
+// GetApiReference: api/reference.go 嵌入文件；GetCaller: api/tokens.go 取入口鉴权读到的主体，不另读库；
+// GetSite: api/public.go -> store.SiteSettings。
 // 上述方法的本地锁、SQL、文件读取与序列化均无硬上界，不能把无外呼当作零耗时。
 // 两个 QueryClient 共用 retryQuery（再试两次）及 TanStack 默认退避 1s、2s：连续挂住
 // 在 3 * 30s + 1s + 2s = 93s 后最终报错。前提是页面前台、在线、事件循环未冻结；
