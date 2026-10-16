@@ -307,7 +307,7 @@ func (s *Store) listAlertRules(ctx context.Context, visibleOnly bool) ([]AlertRu
 	if p, ok := Principal(ctx); ok && visibleOnly {
 		visible := out[:0]
 		for _, r := range out {
-			ok, err := RuleInScope(txReader{tx}, p.TokenGrant, ChangeAlert, r.ID)
+			ok, err := RuleInScope(ruleScopeReader{tx}, p.TokenGrant, ChangeAlert, r.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -808,7 +808,7 @@ func checkAlertReferences(ctx context.Context, tx *sql.Tx, query string, kind Ob
 			return err
 		}
 		if bearer {
-			ok, err := RuleInScope(txReader{tx}, p.TokenGrant, ChangeAlert, ref.ID)
+			ok, err := RuleInScope(ruleScopeReader{tx}, p.TokenGrant, ChangeAlert, ref.ID)
 			if err != nil {
 				return err
 			}

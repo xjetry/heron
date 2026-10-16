@@ -41,15 +41,15 @@ func TestAuthenticateAPIToken(t *testing.T) {
 		{"no prefix", strings.TrimPrefix(plain, APITokenPrefix), false},
 		{"empty", "", false},
 	} {
-		if ok, err := a.AuthenticateAPIToken(ctx, c.plain); err != nil || (ok != nil) != c.want {
-			t.Errorf("%s: ok=%v err=%v, want %v", c.name, ok, err, c.want)
+		if _, state, err := a.AuthenticateAPIToken(ctx, c.plain); err != nil || (state == store.TokenLive) != c.want {
+			t.Errorf("%s: state=%v err=%v, want live=%v", c.name, state, err, c.want)
 		}
 	}
 	if _, err := st.DeleteAPIToken(ctx, tok.ID); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := a.AuthenticateAPIToken(ctx, plain); err != nil || ok != nil {
-		t.Fatalf("revoked token accepted: %v %v", ok, err)
+	if _, state, err := a.AuthenticateAPIToken(ctx, plain); err != nil || state != store.TokenMissing {
+		t.Fatalf("revoked token accepted: %v %v", state, err)
 	}
 }
 

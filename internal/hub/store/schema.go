@@ -685,7 +685,8 @@ const ddlAPIToken = `CREATE TABLE api_token (
   last_used_at INTEGER,
   permissions TEXT NOT NULL DEFAULT '[]',
   all_nodes INTEGER NOT NULL DEFAULT 1 CHECK (all_nodes IN (0, 1)),
-  -- 失效的第一个时刻（Unix 秒）；NULL 表示不过期。列序与迁移 47 的 ADD COLUMN 结果一致。
+  -- 失效的第一个时刻（Unix 秒）；NULL 表示不过期。过期不删行，改到未来即恢复。是否有效只由 lookupAPIToken
+  -- （apitoken.go）判定。列序与迁移 47 的 ADD COLUMN 结果一致。
   expires_at INTEGER CHECK (expires_at IS NULL OR expires_at > 0)
 )`
 

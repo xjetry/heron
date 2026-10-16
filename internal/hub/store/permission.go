@@ -59,7 +59,7 @@ func (g TokenGrant) AllowsSelector(all bool, tags []string, ids []int64) bool {
 // 的作用域裁决过，删除之后的写后授权读到无行即放行；读侧只对事务里读到的现存行调用它。告警规则的 task_id 没有
 // 外键，引用的探测任务不存在时同样为真。
 // 变更策略与读侧可见性过滤（告警规则列表、引用错误里的隐藏规则）共用这一个判定，二者口径不会分叉。
-func RuleInScope(r ChangeReader, g TokenGrant, kind ChangeKind, id int64) (bool, error) {
+func RuleInScope(r RuleScopeReader, g TokenGrant, kind ChangeKind, id int64) (bool, error) {
 	if g.AllNodes {
 		return true, nil
 	}
@@ -113,7 +113,9 @@ func Principal(ctx context.Context) (APIToken, bool) {
 }
 func OwnerID(ctx context.Context) int64 { t, _ := Principal(ctx); return t.ID }
 
-// 范围从数据库关系表读取，建节点后同一请求的回读也能看见刚获得的授权；空列表不放宽。
+// 范围从数据库关系表读取，建节点后同一请求的回读也能看见刚获得的授权；空列表不放宽。不判过期：请求在入口
+// （APITokenByHash）已按此刻准入，单个请求之内过期的窗口只有几秒，与吊销对执行中请求的处理相同；写入在事务里经
+// lookupAPIToken 重判。
 func nodeScopeSQL(ctx context.Context, column string) string {
 	t, ok := Principal(ctx)
 	if !ok {

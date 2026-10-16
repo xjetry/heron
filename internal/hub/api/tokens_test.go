@@ -226,3 +226,31 @@ func TestListApiTokensShowsLastUse(t *testing.T) {
 		return true
 	}, "last use never recorded")
 }
+
+// 经真实 HTTP 入口。UpdateAPIToken 走同一个写协程，排在它之前入队的异步刷新之后，所以拿它当屏障断言"过期的请求没有
+// 刷新使用时刻"。
+func TestExpiredTokenIsRefusedAtTheEntryAndRevivable(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	id, tok := createToken(t, h, "temp")
+	ctx := context.Background()
+	if _, err := h.store.UpdateAPIToken(ctx, id, "temp", nil, h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got := rawCall(t, h, "ListNodes", "{}", bearer(tok))
+	want := "API token expired at 2026-01-01T00:00:00Z; an administrator can extend it with UpdateApiToken or issue a new one"
+	if got.status != http.StatusUnauthorized || got.code != "unauthenticated" || got.message != want {
+		t.Fatalf("expired token: %+v", got)
+	}
+	if _, err := h.store.UpdateAPIToken(ctx, id, "temp", nil, h.clk.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	list, err := h.store.ListAPITokens(ctx)
+	if err != nil || len(list) != 1 || !list[0].LastUsedAt.IsZero() {
+		t.Fatalf("expired request counted as a use: %+v %v", list, err)
+	}
+	if got := rawCall(t, h, "ListNodes", "{}", bearer(tok)); got.status != http.StatusOK {
+		t.Fatalf("revived token: %+v", got)
+	}
+}

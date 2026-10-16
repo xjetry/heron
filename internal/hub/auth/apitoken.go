@@ -33,15 +33,17 @@ func (a *Auth) CreateAPIToken(ctx context.Context, name string, grant *store.Tok
 	return tok, plain, nil
 }
 
-// AuthenticateAPIToken 每次都查库、不缓存：吊销在下一个请求即生效，包括 heron-hub 在另一进程里的删除。
-// 最近使用时刻与会话同一口径——从未使用或距已落库值满 touchEvery 才异步刷新，刷新只 UPDATE。
-func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (*store.APIToken, error) {
+// AuthenticateAPIToken 每次都查库、不缓存：吊销与过期在下一个请求即生效，包括 heron-hub 在另一进程里的删除。
+// 状态由 store.APITokenByHash 给出；只有有效的 token 才刷新最近使用时刻，过期的请求不算一次使用。
+// 刷新与会话同一口径——从未使用或距已落库值满 touchEvery 才异步刷新，刷新只 UPDATE。不带前缀的明文不是 API token，
+// 不查库，返回 TokenMissing。
+func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (store.APIToken, store.TokenState, error) {
 	if !strings.HasPrefix(plain, APITokenPrefix) {
-		return nil, nil
+		return store.APIToken{}, store.TokenMissing, nil
 	}
-	tok, ok, err := a.store.APITokenByHash(ctx, HashToken(plain))
-	if err != nil || !ok {
-		return nil, err
+	tok, state, err := a.store.APITokenByHash(ctx, HashToken(plain))
+	if err != nil || state != store.TokenLive {
+		return tok, state, err
 	}
 	now := a.clk.Now()
 	if tok.LastUsedAt.IsZero() || now.Sub(tok.LastUsedAt) >= touchEvery {
@@ -51,5 +53,5 @@ func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (*store.A
 			}
 		})
 	}
-	return &tok, nil
+	return tok, state, nil
 }

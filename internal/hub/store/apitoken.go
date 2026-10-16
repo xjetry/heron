@@ -120,7 +120,7 @@ func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant
 				return err
 			}
 		}
-		out, err = scanAPIToken(tx.QueryRow(selectAPIToken+" WHERE id = ?", id).Scan)
+		out, _, err = lookupAPIToken(tx.QueryRow, "id = ?", id, s.clk.Now())
 		return err
 	})
 	return out, err
@@ -170,17 +170,46 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 	return out, rows.Err()
 }
 
-// APITokenByHash 每次鉴权都直接读库，不经缓存：删行即吊销，且对另一进程的删除同样立即生效。
-func (s *Store) APITokenByHash(ctx context.Context, hash [32]byte) (APIToken, bool, error) {
-	row := s.r.QueryRowContext(ctx, selectAPIToken+" WHERE token_hash = ?", hash[:])
-	t, err := scanAPIToken(row.Scan)
+// TokenState 是一枚 token 在某一时刻的状态，由 lookupAPIToken 给出。
+type TokenState int
+
+const (
+	TokenMissing TokenState = iota // 没有这一行：从未存在或已吊销
+	TokenExpired                   // 行在，但 now 已到 expires_at
+	TokenLive
+)
+
+// Expired 报告 now 时 token 是否已过期：ExpiresAt 是失效的第一个时刻，零值表示不过期。
+func (t APIToken) Expired(now time.Time) bool {
+	return !t.ExpiresAt.IsZero() && !now.Before(t.ExpiresAt)
+}
+
+// lookupAPIToken 是"token 此刻是否有效"的唯一判定。请求入口（APITokenByHash）、ExecuteChange 事务内的重读
+// （txReader.APIToken）、注册窗口认领（RegisterNode）与更新下发（saveNodeUpdate）都只经它取 token，过期判定写在这里，
+// 四处同时生效；后两处发生在之后、不经过该 token 的请求，入口判过一次替代不了它们。
+// TokenExpired 时返回的仍是完整的行，入口据此在错误里写出过期时刻；其余读者把过期当作不存在。
+// now 由调用方从 Store 的时钟取；零值会让每一枚 token 都显得未过期，按错误拒绝。
+// TestScanAPITokenOnlyInLookupAndList 在源码上守着"只经它取"：scanAPIToken 只出现在这里与 ListAPITokens。
+func lookupAPIToken(row func(query string, args ...any) *sql.Row, where string, arg any, now time.Time) (APIToken, TokenState, error) {
+	if now.IsZero() {
+		return APIToken{}, TokenMissing, errors.New("lookupAPIToken: zero time would treat every token as unexpired")
+	}
+	t, err := scanAPIToken(row(selectAPIToken+" WHERE "+where, arg).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return APIToken{}, false, nil
+		return APIToken{}, TokenMissing, nil
 	}
 	if err != nil {
-		return APIToken{}, false, err
+		return APIToken{}, TokenMissing, err
 	}
-	return t, true, nil
+	if t.Expired(now) {
+		return t, TokenExpired, nil
+	}
+	return t, TokenLive, nil
+}
+
+// APITokenByHash 每次鉴权都直接读库，不经缓存：删行即吊销，且对另一进程的删除同样立即生效；过期按 Store 的时钟判定。
+func (s *Store) APITokenByHash(ctx context.Context, hash [32]byte) (APIToken, TokenState, error) {
+	return lookupAPIToken(func(q string, args ...any) *sql.Row { return s.r.QueryRowContext(ctx, q, args...) }, "token_hash = ?", hash[:], s.clk.Now())
 }
 
 func (s *Store) DeleteAPIToken(ctx context.Context, id int64) (bool, error) {

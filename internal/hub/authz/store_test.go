@@ -140,8 +140,8 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	actual, ok, err := restored.APITokenByHash(t.Context(), sha256.Sum256([]byte("source")))
-	if err != nil || !ok || actual.Identity != p.Identity {
+	actual, state, err := restored.APITokenByHash(t.Context(), sha256.Sum256([]byte("source")))
+	if err != nil || state != store.TokenLive || actual.Identity != p.Identity {
 		t.Fatalf("restored credential identity changed: %+v %v", actual, err)
 	}
 	ctx := store.WithPrincipal(t.Context(), actual)
@@ -204,5 +204,36 @@ func TestCreateGrantsNewNodeToCreator(t *testing.T) {
 	rotate.ResourceID = foreign
 	if _, err := s.ChangeVersion(ctx, rotate); !errors.Is(err, store.ErrPermission) {
 		t.Fatalf("creator reached a node outside its grant: %v", err)
+	}
+}
+
+// 过期的 token 在写事务里被拒绝，复活后放行：ExecuteChange 的裁决经 ChangeReader 重读，不信入口缓存的主体。
+func TestChangeRejectsExpiredTokenAndAcceptsRevived(t *testing.T) {
+	s, _, clk := openStore(t)
+	node, _, err := s.CreateNode(t.Context(), store.NewNode{Name: "node"}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := &store.TokenGrant{NodeIDs: []int64{node}, Permissions: []store.Permission{store.PermissionRotate}}
+	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := store.WithPrincipal(t.Context(), p)
+	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	c := newChange(store.ActionRotateNodeToken, store.Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "x", ResourceID: node})
+	if _, err := s.ChangeVersion(ctx, c); !errors.Is(err, store.ErrPermission) {
+		t.Fatalf("expired token previewed a change: %v", err)
+	}
+	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
+		t.Fatalf("revived token rejected: %v", err)
+	}
+	if err := s.SetTokenHash(store.WithChange(ctx, c), node, hash(1), hash(2)); err != nil {
+		t.Fatalf("revived token could not commit: %v", err)
 	}
 }

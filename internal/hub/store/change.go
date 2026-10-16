@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -242,8 +243,13 @@ type Change struct {
 // ChangeReader 是策略在写事务内（或 ChangeVersion 的读事务内）可做的全部读取。策略只经它读库，裁决与写
 // 看到的是同一份快照；接口只列策略需要的读，不暴露事务本身。
 type ChangeReader interface {
-	// APIToken 读 token 的当前行；不存在时返回 ErrNotFound。
+	// APIToken 读 token 此刻的状态（lookupAPIToken）；不存在或已过期都返回 ErrNotFound。
 	APIToken(id int64) (APIToken, error)
+	RuleScopeReader
+}
+
+// RuleScopeReader 读带节点选择器的资源的作用域；RuleInScope 只需要它。
+type RuleScopeReader interface {
 	// RuleScope 读探测任务或告警规则的当前作用域；不存在时返回 ErrNotFound。
 	RuleScope(kind ChangeKind, id int64) (RuleScope, error)
 }
@@ -269,18 +275,32 @@ type ChangePolicy interface {
 	Resource(ctx context.Context, r ChangeReader, c *Change, token *APIToken) error
 }
 
-// txReader 在调用方的事务上实现 ChangeReader。
-type txReader struct{ tx *sql.Tx }
+// ruleScopeReader 在调用方的事务上只读作用域、不读 token：告警列表与引用检查只需要它，也就不需要时钟。
+type ruleScopeReader struct{ tx *sql.Tx }
 
-func (r txReader) APIToken(id int64) (APIToken, error) {
-	t, err := scanAPIToken(r.tx.QueryRow(selectAPIToken+" WHERE id = ?", id).Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return APIToken{}, ErrNotFound
-	}
-	return t, err
+// txReader 在调用方的事务上实现 ChangeReader。now 是这次裁决判定 token 是否过期的时刻，由 Store.changeReader 从
+// Store 的时钟取；零值的 txReader 读 token 时由 lookupAPIToken 报错，不会把每枚 token 都当作未过期。
+type txReader struct {
+	ruleScopeReader
+	now time.Time
 }
 
-func (r txReader) RuleScope(kind ChangeKind, id int64) (RuleScope, error) {
+func (s *Store) changeReader(tx *sql.Tx) txReader {
+	return txReader{ruleScopeReader{tx}, s.clk.Now()}
+}
+
+func (r txReader) APIToken(id int64) (APIToken, error) {
+	t, state, err := lookupAPIToken(r.tx.QueryRow, "id = ?", id, r.now)
+	if err != nil {
+		return APIToken{}, err
+	}
+	if state != TokenLive {
+		return APIToken{}, ErrNotFound
+	}
+	return t, nil
+}
+
+func (r ruleScopeReader) RuleScope(kind ChangeKind, id int64) (RuleScope, error) {
 	q := changeKinds[kind].scope
 	if q == nil {
 		return RuleScope{}, fmt.Errorf("change kind %s has no rule scope", kind)
@@ -387,7 +407,7 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 		if err != nil {
 			return err
 		}
-		r := txReader{tx}
+		r := s.changeReader(tx)
 		token, err := c.Policy.Principal(ctx, r, c)
 		if err != nil {
 			c.Err = err
@@ -522,7 +542,7 @@ func (s *Store) ChangeVersion(ctx context.Context, c *Change) (string, error) {
 		return "", err
 	}
 	defer tx.Rollback()
-	r := txReader{tx}
+	r := s.changeReader(tx)
 	token, err := c.Policy.Principal(ctx, r, c)
 	if err != nil {
 		return "", err

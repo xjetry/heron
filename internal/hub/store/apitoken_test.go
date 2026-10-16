@@ -21,9 +21,9 @@ func TestAPITokenLifecycle(t *testing.T) {
 	if err != nil || tok.ID == 0 || tok.Name != "ci" || !tok.CreatedAt.Equal(clk.Now().Truncate(time.Second)) || !tok.LastUsedAt.IsZero() {
 		t.Fatalf("create: %+v %v", tok, err)
 	}
-	got, ok, err := s.APITokenByHash(ctx, h)
-	if err != nil || !ok || got.ID != tok.ID {
-		t.Fatalf("by hash: %+v %v %v", got, ok, err)
+	got, state, err := s.APITokenByHash(ctx, h)
+	if err != nil || state != TokenLive || got.ID != tok.ID {
+		t.Fatalf("by hash: %+v %v %v", got, state, err)
 	}
 	if list, err := s.ListAPITokens(ctx); err != nil || len(list) != 1 || list[0].ID != tok.ID {
 		t.Fatalf("list: %+v %v", list, err)
@@ -31,8 +31,8 @@ func TestAPITokenLifecycle(t *testing.T) {
 	if found, err := s.DeleteAPIToken(ctx, tok.ID); err != nil || !found {
 		t.Fatalf("delete: %v %v", found, err)
 	}
-	if _, ok, err := s.APITokenByHash(ctx, h); err != nil || ok {
-		t.Fatalf("deleted token still resolves: %v %v", ok, err)
+	if _, state, err := s.APITokenByHash(ctx, h); err != nil || state != TokenMissing {
+		t.Fatalf("deleted token still resolves: %v %v", state, err)
 	}
 	if found, err := s.DeleteAPIToken(ctx, tok.ID); err != nil || found {
 		t.Fatalf("second delete reported found=%v err=%v", found, err)

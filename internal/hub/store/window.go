@@ -76,14 +76,12 @@ func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, t
 			return ErrNoWindow
 		}
 		if owner != 0 {
-			t, err := scanAPIToken(tx.QueryRow(selectAPIToken+" WHERE id = ?", owner).Scan)
-			if err == sql.ErrNoRows {
-				return ErrNoWindow
-			}
+			// 窗口主人吊销或过期都让窗口不可认领：认领发生在之后、不经过那枚 token 的请求，只能在这里判。
+			t, state, err := lookupAPIToken(tx.QueryRow, "id = ?", owner, s.clk.Now())
 			if err != nil {
 				return err
 			}
-			if !t.Allows(PermissionRegister) {
+			if state != TokenLive || !t.Allows(PermissionRegister) {
 				return ErrNoWindow
 			}
 		}

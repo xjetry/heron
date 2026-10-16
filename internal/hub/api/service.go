@@ -364,13 +364,16 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			if err != nil {
 				return nil, unauthenticated(err.Error() + "; send exactly one Authorization: Bearer <API token>")
 			}
-			principal, err := s.auth.AuthenticateAPIToken(ctx, tok)
+			principal, state, err := s.auth.AuthenticateAPIToken(ctx, tok)
 			if err != nil {
 				s.log.Error("API token lookup failed", "err", err)
 				return nil, internalError("API token lookup failed")
 			}
-			if principal == nil {
+			switch state {
+			case store.TokenMissing:
 				return nil, unauthenticated("API token unknown or revoked")
+			case store.TokenExpired:
+				return nil, unauthenticated(fmt.Sprintf("API token expired at %s; an administrator can extend it with UpdateApiToken or issue a new one", principal.ExpiresAt.UTC().Format(time.RFC3339)))
 			}
 			if level != heronv1.Access_ACCESS_READ && !(level == heronv1.Access_ACCESS_CHANGE && len(principal.Permissions) > 0) {
 				if level == heronv1.Access_ACCESS_LOGIN {
@@ -381,7 +384,7 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			if !principal.AllNodes && !scopedReadAllowed(req.Spec().Procedure) && level != heronv1.Access_ACCESS_CHANGE {
 				return nil, permissionDenied("this method requires a site-wide API token")
 			}
-			return next(store.WithPrincipal(ctx, *principal), req)
+			return next(store.WithPrincipal(ctx, principal), req)
 		}
 		if level == heronv1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。

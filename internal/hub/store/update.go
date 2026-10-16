@@ -92,15 +92,15 @@ func (s *Store) saveNodeUpdate(ctx context.Context, id int64, status *heronv1.Up
 		if old.GetTask().GetId() != saved.GetTask().GetId() {
 			owner = OwnerID(ctx)
 		}
-		// 排队授权在真正下发的事务内再检查；已下发任务不能假称可以撤回。
+		// 排队授权在真正下发的事务内再检查（吊销与过期都撤下）；已下发任务不能假称可以撤回。
 		if owner != 0 && old.GetTask().GetState() == "queued" && saved.GetTask().GetState() == "dispatched" {
-			t, err := scanAPIToken(tx.QueryRow(selectAPIToken+" WHERE id=?", owner).Scan)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t, state, err := lookupAPIToken(tx.QueryRow, "id = ?", owner, s.clk.Now())
+			if err != nil {
 				return err
 			}
-			if errors.Is(err, sql.ErrNoRows) || !t.Allows(PermissionUpdate) || !t.AllowsNode(id) {
+			if state != TokenLive || !t.Allows(PermissionUpdate) || !t.AllowsNode(id) {
 				saved.Task.State = "cancelled"
-				saved.Task.Error = "API token authorization revoked before dispatch"
+				saved.Task.Error = "API token authorization revoked or expired before dispatch"
 			}
 		}
 		data, err := protojson.Marshal(saved)
