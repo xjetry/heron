@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -63,7 +64,7 @@ func reviewAPITokens(ctx context.Context, st *store.Store, w io.Writer, ask func
 		return err
 	}
 	fmt.Fprintln(w, "API tokens are not revoked by a password change. Existing tokens:")
-	if err := printAPITokens(w, list); err != nil {
+	if err := printAPITokens(w, list, time.Now()); err != nil {
 		return err
 	}
 	if ask == nil {

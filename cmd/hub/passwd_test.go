@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xjetry/heron/internal/hub/auth"
 )
@@ -51,7 +52,7 @@ func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := a.CreateAPIToken(context.Background(), "ci", nil); err != nil {
+	if _, _, err := a.CreateAPIToken(context.Background(), "ci", nil, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

@@ -329,8 +329,14 @@ service AdminService {
   rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
+  // 建一个 API token，以 Authorization: Bearer <token> 调用：缺省全站只读，grant 预授权 ExecuteChange 的写操作与节点范围，
+  // expires_at 设有效期。
   rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 整体替换 token 的名称、授权与有效期，明文不变：持有者不用换配置，下一个请求即按新授权鉴权，回执历史随明文延续。
+  // 已过期的 token 改到未来即恢复。只限会话：token 不能改自己。
+  rpc UpdateApiToken(UpdateApiTokenRequest) returns (UpdateApiTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
   // 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
@@ -339,6 +345,11 @@ service AdminService {
   }
   // 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
   rpc GetApiReference(GetApiReferenceRequest) returns (GetApiReferenceResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
+  // 试错；会话返回 session。指定节点的 token 也能调用。
+  rpc GetCaller(GetCallerRequest) returns (GetCallerResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
 }
@@ -1675,15 +1686,20 @@ message ApiToken {
   string name = 2;
   // Unix 秒。
   int64 created_at = 3;
-  // 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。
+  // 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。过期之后的请求不算使用。
   optional int64 last_used_at = 4;
   TokenGrant grant = 5;
+  // 失效的第一个时刻，Unix 秒：hub 墙钟到达它起，这枚 token 的每个请求都返回 Unauthenticated（message 写明这个时刻），
+  // 它开的注册窗口不可认领，排队中的更新在下发时撤下。缺失表示不过期。过期不删除 token，UpdateApiToken 改到未来即恢复。
+  optional int64 expires_at = 6;
 }
 
 message ListApiTokensRequest {}
 message ListApiTokensResponse {
   // 按 id 升序。
   repeated ApiToken tokens = 1;
+  // hub 墙钟，Unix 秒；expires_at 不晚于它的 token 已过期。客户端据此判断与计算有效期，不依赖自己的时钟。
+  int64 now = 2;
 }
 
 message CreateApiTokenRequest {
@@ -1691,6 +1707,25 @@ message CreateApiTokenRequest {
   string name = 1;
   // 缺失保持全站只读。显式 grant 的 all_nodes=false 且 node_ids 为空表示没有现有节点权限。
   TokenGrant grant = 2;
+  // 失效时刻，Unix 秒；缺失表示不过期。必须晚于 hub 当前时间，且不晚于 253402300799（9999-12-31T23:59:59Z）。
+  optional int64 expires_at = 3;
+}
+
+message UpdateApiTokenRequest {
+  int64 id = 1;
+  // 整体替换，规则同 CreateApiTokenRequest.name。
+  string name = 2;
+  // 整体替换：缺失即全站只读，与 CreateApiTokenRequest.grant 相同；显式 grant 的 all_nodes=false 且 node_ids 为空表示
+  // 没有现有节点权限。节点集合整体替换，其中也包括这枚 token 自己创建或经自己注册窗口接入而自动纳入的节点。
+  // 不含 TOKEN_PERMISSION_REGISTER 时，它开着的注册窗口随之关闭。引用不存在的节点返回 InvalidArgument。
+  TokenGrant grant = 3;
+  // 整体替换：缺失表示不过期。取值 1–253402300799，不要求晚于当前时间：不晚于 hub 当前时间即保存为已过期，晚于即有效
+  // （已过期的随之恢复）。只改名字时原样带回 ApiToken.expires_at。
+  optional int64 expires_at = 4;
+}
+message UpdateApiTokenResponse {
+  // 保存后的值。
+  ApiToken api_token = 1;
 }
 message CreateApiTokenResponse {
   ApiToken api_token = 1;
@@ -1702,6 +1737,17 @@ message DeleteApiTokenRequest {
   int64 id = 1;
 }
 message DeleteApiTokenResponse {}
+
+message GetCallerRequest {}
+message GetCallerResponse {
+  oneof caller {
+    // 浏览器会话：拥有全部权限，没有 grant。
+    SessionCaller session = 1;
+    // 本次请求的 API token：入口鉴权时读到的那一行（每个请求都重新读库）。
+    ApiToken api_token = 2;
+  }
+}
+message SessionCaller {}
 
 message GetApiReferenceRequest {}
 message GetApiReferenceResponse {

@@ -135,7 +135,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
-	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &TokenGrant{Permissions: []Permission{PermissionRegister, PermissionUpdate}})
+	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &TokenGrant{Permissions: []Permission{PermissionRegister, PermissionUpdate}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

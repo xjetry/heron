@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xjetry/heron/internal/hub/store"
 )
@@ -20,7 +21,7 @@ func seedTokens(t *testing.T, db string, names ...string) []store.APIToken {
 	defer st.Close()
 	var out []store.APIToken
 	for _, n := range names {
-		tok, _, err := a.CreateAPIToken(context.Background(), n, nil)
+		tok, _, err := a.CreateAPIToken(context.Background(), n, nil, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -37,7 +38,7 @@ func TestTokenListAndRevoke(t *testing.T) {
 	if err := runTokenWith([]string{"list", "--db", db}, &out, &errOut); err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"ID", "NAME", "LAST USED", "ci", "laptop", "never"} {
+	for _, s := range []string{"ID", "NAME", "LAST USED", "EXPIRES", "ci", "laptop", "never"} {
 		if !strings.Contains(out.String(), s) {
 			t.Errorf("list output lacks %q:\n%s", s, out.String())
 		}
@@ -115,5 +116,45 @@ func TestReviewAPITokensQuotesDBPathForShell(t *testing.T) {
 	want := "to revoke them: heron-hub token revoke --all --db '/var/lib/o'\\''brien hub/heron.db'\n"
 	if !strings.Contains(w.String(), want) {
 		t.Fatalf("revoke hint %q, want substring %q", w.String(), want)
+	}
+}
+
+// LAST USED 也会显示 never，所以按行、按列断言 EXPIRES：过期的写出时刻并标 (expired)，不过期的是 never。
+func TestTokenListShowsExpiry(t *testing.T) {
+	t.Parallel()
+	db := filepath.Join(t.TempDir(), "hub.db")
+	toks := seedTokens(t, db, "temp", "forever")
+	st, _, err := openOffline(db, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateAPIToken(context.Background(), toks[0].ID, "temp", nil, time.Date(2001, 2, 3, 4, 5, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if err := runTokenWith([]string{"list", "--db", db}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 || !strings.HasSuffix(strings.TrimSpace(lines[0]), "EXPIRES") {
+		t.Fatalf("list output:\n%s", out.String())
+	}
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		switch fields[1] {
+		case "temp":
+			if !strings.Contains(line, "2001-02-03 04:05Z (expired)") {
+				t.Errorf("expired token line: %q", line)
+			}
+		case "forever":
+			if fields[len(fields)-1] != "never" {
+				t.Errorf("non-expiring token line: %q", line)
+			}
+		default:
+			t.Errorf("unexpected line: %q", line)
+		}
 	}
 }

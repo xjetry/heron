@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/xjetry/heron/internal/hub/store"
 )
@@ -41,7 +42,8 @@ func runTokenWith(args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return printAPITokens(out, list)
+		// 离线命令跑在 hub 所在的主机上，判过期用的墙钟就是 hub 用的那一个。
+		return printAPITokens(out, list, time.Now())
 	case "revoke":
 		switch {
 		case *all && *id != 0:
@@ -71,9 +73,9 @@ func runTokenWith(args []string, out, errOut io.Writer) error {
 	}
 }
 
-func printAPITokens(w io.Writer, list []store.APIToken) error {
+func printAPITokens(w io.Writer, list []store.APIToken, now time.Time) error {
 	tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tPERMISSIONS\tSCOPE\tCREATED\tLAST USED")
+	fmt.Fprintln(tw, "ID\tNAME\tPERMISSIONS\tSCOPE\tCREATED\tLAST USED\tEXPIRES")
 	for _, t := range list {
 		used := "never"
 		if !t.LastUsedAt.IsZero() {
@@ -91,7 +93,14 @@ func printAPITokens(w io.Writer, list []store.APIToken) error {
 		if t.AllNodes {
 			scope = "all nodes"
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", t.ID, t.Name, access, scope, t.CreatedAt.Format("2006-01-02 15:04Z"), used)
+		expires := "never"
+		if !t.ExpiresAt.IsZero() {
+			expires = t.ExpiresAt.Format("2006-01-02 15:04Z")
+			if t.Expired(now) {
+				expires += " (expired)"
+			}
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", t.ID, t.Name, access, scope, t.CreatedAt.Format("2006-01-02 15:04Z"), used, expires)
 	}
 	return tw.Flush()
 }

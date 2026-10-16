@@ -23,7 +23,7 @@ func TestTokenExpiryAppliesToEveryReader(t *testing.T) {
 	s, clk := open(t)
 	h := sha256.Sum256([]byte("agent"))
 	grant := &TokenGrant{AllNodes: true, Permissions: []Permission{PermissionRegister, PermissionUpdate}}
-	tok, err := s.CreateAPIToken(t.Context(), "agent", h, clk.Now(), 100, grant)
+	tok, err := s.CreateAPIToken(t.Context(), "agent", h, clk.Now(), 100, grant, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestTokenExpiryAppliesToEveryReader(t *testing.T) {
 func TestLookupAPITokenRejectsZeroTime(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
-	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, nil)
+	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

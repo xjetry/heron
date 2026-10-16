@@ -123,7 +123,7 @@ func TestNodeListRevisionColumnClassification(t *testing.T) {
 					key = "node_id"
 				case "api_token":
 					// 指定节点的 token：all_nodes 为 0，下面 +1 改成 1 仍满足 CHECK (all_nodes IN (0, 1))。
-					tok, err := s.CreateAPIToken(t.Context(), "scoped", sha256.Sum256([]byte("scoped")), time.Unix(1, 0), 100, &TokenGrant{NodeIDs: []int64{id}})
+					tok, err := s.CreateAPIToken(t.Context(), "scoped", sha256.Sum256([]byte("scoped")), time.Unix(1, 0), 100, &TokenGrant{NodeIDs: []int64{id}}, time.Time{})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -148,7 +148,7 @@ func TestNodeListRevisionColumnClassification(t *testing.T) {
 func TestNodeListRevisionBumpsWhenTokenScopeWidens(t *testing.T) {
 	t.Parallel()
 	s, _ := nodeWithFacts(t)
-	tok, err := s.CreateAPIToken(t.Context(), "narrow", sha256.Sum256([]byte("narrow")), time.Unix(1, 0), 100, &TokenGrant{})
+	tok, err := s.CreateAPIToken(t.Context(), "narrow", sha256.Sum256([]byte("narrow")), time.Unix(1, 0), 100, &TokenGrant{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

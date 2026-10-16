@@ -13,7 +13,7 @@ import (
 // 指定节点凭据只进入已经实现资源过滤的读方法；新方法不因 ACCESS_READ 自动获得范围豁免。
 func scopedReadAllowed(procedure string) bool {
 	switch strings.TrimPrefix(procedure, "/heron.v1.AdminService/") {
-	case "ListNodes", "GetRegisterWindow", "GetSnapshot", "QueryMetrics", "GetTraffic", "ListTags", "ListProbeTasks", "QueryProbes", "ListAlertRules", "ListAlertEvents", "GetUpdates", "ListOperations", "ListNotifyChannelRefs", "GetApiReference", "GetHeartbeatStatus", "ListProbeComparisonNodes", "QueryProbeComparison", "ListProbeCertificates":
+	case "ListNodes", "GetRegisterWindow", "GetSnapshot", "QueryMetrics", "GetTraffic", "ListTags", "ListProbeTasks", "QueryProbes", "ListAlertRules", "ListAlertEvents", "GetUpdates", "ListOperations", "ListNotifyChannelRefs", "GetApiReference", "GetHeartbeatStatus", "ListProbeComparisonNodes", "QueryProbeComparison", "ListProbeCertificates", "GetCaller":
 		return true
 	default:
 		return false

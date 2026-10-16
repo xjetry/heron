@@ -32,6 +32,14 @@ func grantOrDefault(g *TokenGrant) TokenGrant {
 	return *g
 }
 
+// unixOrZero 把时刻截到秒并转成 UTC，零值保持零值：与 scanAPIToken 从库里读回的值逐字段相等。
+func unixOrZero(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Time{}
+	}
+	return time.Unix(t.Unix(), 0).UTC()
+}
+
 // nullableUnix 把零值时刻存成 NULL：expires_at 的 NULL 表示不过期，0 会被列上的 CHECK 拒绝。
 func nullableUnix(t time.Time) any {
 	if t.IsZero() {
@@ -42,7 +50,7 @@ func nullableUnix(t time.Time) any {
 
 // CreateAPIToken 在同一写事务里计数并插入：写协程串行执行事务，并发创建不会都看到
 // limit−1 而一起越过上限。
-func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, now time.Time, limit int, grant *TokenGrant) (APIToken, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, now time.Time, limit int, grant *TokenGrant, expiresAt time.Time) (APIToken, error) {
 	var out APIToken
 	g := grantOrDefault(grant)
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -60,7 +68,8 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 		if err != nil {
 			return err
 		}
-		res, err := tx.Exec("INSERT INTO api_token (name, token_hash, created_at, permissions, all_nodes) VALUES (?, ?, ?, ?, ?)", name, hash[:], now.Unix(), string(permissions), g.AllNodes)
+		res, err := tx.Exec("INSERT INTO api_token (name, token_hash, created_at, permissions, all_nodes, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+			name, hash[:], now.Unix(), string(permissions), g.AllNodes, nullableUnix(expiresAt))
 		if err != nil {
 			return err
 		}
@@ -73,7 +82,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 				return err
 			}
 		}
-		out = APIToken{TokenGrant: g, Identity: fmt.Sprintf("%X", hash), ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0).UTC()}
+		out = APIToken{TokenGrant: g, Identity: fmt.Sprintf("%X", hash), ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0).UTC(), ExpiresAt: unixOrZero(expiresAt)}
 		return nil
 	})
 	return out, err

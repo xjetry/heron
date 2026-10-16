@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/hub/auth"
@@ -252,5 +253,119 @@ func TestExpiredTokenIsRefusedAtTheEntryAndRevivable(t *testing.T) {
 	}
 	if got := rawCall(t, h, "ListNodes", "{}", bearer(tok)); got.status != http.StatusOK {
 		t.Fatalf("revived token: %+v", got)
+	}
+}
+
+// withBearer 让这次请求以 API token 鉴权：bearer 先于 cookie 判定，harness 客户端 jar 里的会话不参与。
+func withBearer[T any](msg *T, tok string) *connect.Request[T] {
+	req := connect.NewRequest(msg)
+	req.Header().Set("Authorization", "Bearer "+tok)
+	return req
+}
+
+// 编辑不换明文：同一个 bearer 继续鉴权，下一个请求即按新授权读，GetCaller 读到的是保存后的授权。
+func TestUpdateApiTokenKeepsPlaintextAndAppliesNextRequest(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	node, err := h.admin.CreateNode(ctx, connect.NewRequest(&heronv1.CreateNodeRequest{Name: "n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, tok := createToken(t, h, "agent")
+	expires := h.clk.Now().Add(time.Hour).Unix()
+	resp, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{
+		Id: id, Name: "renamed", Grant: &heronv1.TokenGrant{}, ExpiresAt: proto.Int64(expires),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Msg.GetApiToken(); got.GetName() != "renamed" || got.GetGrant().GetAllNodes() || got.GetExpiresAt() != expires {
+		t.Fatalf("update response: %+v", got)
+	}
+	caller, err := h.admin.GetCaller(ctx, withBearer(&heronv1.GetCallerRequest{}, tok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := caller.Msg.GetApiToken(); got.GetId() != id || got.GetName() != "renamed" || got.GetGrant().GetAllNodes() || got.GetExpiresAt() != expires {
+		t.Fatalf("caller after edit: %+v", caller.Msg)
+	}
+	listed, err := h.admin.ListNodes(ctx, withBearer(&heronv1.ListNodesRequest{}, tok))
+	if err != nil || len(listed.Msg.GetNodes()) != 0 {
+		t.Fatalf("narrowed scope still lists node %d: %+v %v", node.Msg.GetNode().GetId(), listed, err)
+	}
+}
+
+func TestUpdateApiTokenValidation(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, _ := createToken(t, h, "agent")
+	for name, tc := range map[string]struct {
+		req  *heronv1.UpdateApiTokenRequest
+		code connect.Code
+		want string
+	}{
+		"missing token":      {&heronv1.UpdateApiTokenRequest{Id: id + 1, Name: "x"}, connect.CodeNotFound, "does not exist"},
+		"empty name":         {&heronv1.UpdateApiTokenRequest{Id: id, Name: " "}, connect.CodeInvalidArgument, ""},
+		"zero expiry":        {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(0)}, connect.CodeInvalidArgument, "expires_at"},
+		"expiry beyond 9999": {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(253402300800)}, connect.CodeInvalidArgument, "expires_at"},
+		"both scopes":        {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", Grant: &heronv1.TokenGrant{AllNodes: true, NodeIds: []int64{1}}}, connect.CodeInvalidArgument, "mutually exclusive"},
+		"missing node":       {&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", Grant: &heronv1.TokenGrant{NodeIds: []int64{999}}}, connect.CodeInvalidArgument, "node 999 does not exist"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(tc.req))
+			if connect.CodeOf(err) != tc.code || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %v containing %q", err, tc.code, tc.want)
+			}
+		})
+	}
+	// 只改名时原样带回过去的时刻是合法的：编辑不要求有效期在未来。
+	if _, err := h.admin.UpdateApiToken(ctx, connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: id, Name: "x", ExpiresAt: proto.Int64(h.clk.Now().Unix() - 60)})); err != nil {
+		t.Fatalf("past expiry on edit: %v", err)
+	}
+}
+
+func TestCreateApiTokenExpiryMustBeInTheFuture(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	now := h.clk.Now().Unix()
+	if _, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "x", ExpiresAt: proto.Int64(now)})); connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "expires_at") {
+		t.Fatalf("expiry at now: %v", err)
+	}
+	created, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "x", ExpiresAt: proto.Int64(now + 1)}))
+	if err != nil || created.Msg.GetApiToken().GetExpiresAt() != now+1 {
+		t.Fatalf("expiry in one second: %+v %v", created, err)
+	}
+	list, err := h.admin.ListApiTokens(ctx, connect.NewRequest(&heronv1.ListApiTokensRequest{}))
+	if err != nil || list.Msg.GetNow() != now || list.Msg.GetTokens()[0].GetExpiresAt() != now+1 {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+}
+
+// 指定节点的 token 也能读自己：GetCaller 在 scopedReadAllowed 里，不被"requires a site-wide API token"挡掉。
+func TestGetCallerForSessionAndScopedToken(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	session, err := h.admin.GetCaller(ctx, connect.NewRequest(&heronv1.GetCallerRequest{}))
+	if err != nil || session.Msg.GetSession() == nil {
+		t.Fatalf("session caller: %+v %v", session, err)
+	}
+	created, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "scoped", Grant: &heronv1.TokenGrant{}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rawCall(t, h, "GetCaller", "{}", bearer(created.Msg.GetToken())); got.status != http.StatusOK {
+		t.Fatalf("scoped token refused: %+v", got)
+	}
+	caller, err := h.admin.GetCaller(ctx, withBearer(&heronv1.GetCallerRequest{}, created.Msg.GetToken()))
+	if err != nil || caller.Msg.GetApiToken().GetName() != "scoped" || caller.Msg.GetApiToken().GetGrant().GetAllNodes() {
+		t.Fatalf("scoped caller: %+v %v", caller, err)
 	}
 }

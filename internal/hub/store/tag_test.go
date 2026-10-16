@@ -162,7 +162,7 @@ func TestNodeFilterUntagged(t *testing.T) {
 	}
 
 	// 带主体范围：范围 {n0,n1,n2} 含两个无标签节点与一个已挂标签的节点，范围外的无标签节点 n3 不出现。
-	p, err := s.CreateAPIToken(t.Context(), "reader", sha256.Sum256([]byte("reader")), clk.Now(), 100, &TokenGrant{NodeIDs: ids[:3]})
+	p, err := s.CreateAPIToken(t.Context(), "reader", sha256.Sum256([]byte("reader")), clk.Now(), 100, &TokenGrant{NodeIDs: ids[:3]}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	"github.com/xjetry/heron/internal/hub/store"
 )
@@ -24,9 +25,9 @@ func NewAPIToken() (string, [32]byte) {
 }
 
 // CreateAPIToken 的 name 由调用方清洗与校验；这里只负责生成、限额与落库。
-func (a *Auth) CreateAPIToken(ctx context.Context, name string, grant *store.TokenGrant) (store.APIToken, string, error) {
+func (a *Auth) CreateAPIToken(ctx context.Context, name string, grant *store.TokenGrant, expiresAt time.Time) (store.APIToken, string, error) {
 	plain, hash := NewAPIToken()
-	tok, err := a.store.CreateAPIToken(ctx, name, hash, a.clk.Now(), MaxAPITokens, grant)
+	tok, err := a.store.CreateAPIToken(ctx, name, hash, a.clk.Now(), MaxAPITokens, grant, expiresAt)
 	if err != nil {
 		return store.APIToken{}, "", err
 	}

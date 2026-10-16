@@ -51,7 +51,7 @@ func TestChangeRechecksRevocationInsideTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &store.TokenGrant{NodeIDs: []int64{node}, Permissions: []store.Permission{store.PermissionRotate}})
+	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &store.TokenGrant{NodeIDs: []int64{node}, Permissions: []store.Permission{store.PermissionRotate}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAgenticReplayAfterScopeRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &store.TokenGrant{NodeIDs: []int64{node}, Permissions: []store.Permission{store.PermissionDelete}})
+	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &store.TokenGrant{NodeIDs: []int64{node}, Permissions: []store.Permission{store.PermissionDelete}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 	target, targetPath, _ := openStore(t)
 	create := func(s *store.Store, name string, hashByte byte) store.APIToken {
 		t.Helper()
-		p, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &store.TokenGrant{Permissions: []store.Permission{store.PermissionCreate}})
+		p, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &store.TokenGrant{Permissions: []store.Permission{store.PermissionCreate}}, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,7 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 // 创建授予：建节点时 ResourceID 为 0，作用域放行；写事务把新节点授予创建者，同一 token 随后能改它、不能改别人的。
 func TestCreateGrantsNewNodeToCreator(t *testing.T) {
 	s, _, clk := openStore(t)
-	p, err := s.CreateAPIToken(t.Context(), "creator", sha256.Sum256([]byte("creator")), clk.Now(), 100, &store.TokenGrant{Permissions: []store.Permission{store.PermissionCreate, store.PermissionRotate}})
+	p, err := s.CreateAPIToken(t.Context(), "creator", sha256.Sum256([]byte("creator")), clk.Now(), 100, &store.TokenGrant{Permissions: []store.Permission{store.PermissionCreate, store.PermissionRotate}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestChangeRejectsExpiredTokenAndAcceptsRevived(t *testing.T) {
 		t.Fatal(err)
 	}
 	grant := &store.TokenGrant{NodeIDs: []int64{node}, Permissions: []store.Permission{store.PermissionRotate}}
-	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, grant)
+	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, grant, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -231,12 +231,17 @@ const (
 	// AdminServiceCreateApiTokenProcedure is the fully-qualified name of the AdminService's
 	// CreateApiToken RPC.
 	AdminServiceCreateApiTokenProcedure = "/heron.v1.AdminService/CreateApiToken"
+	// AdminServiceUpdateApiTokenProcedure is the fully-qualified name of the AdminService's
+	// UpdateApiToken RPC.
+	AdminServiceUpdateApiTokenProcedure = "/heron.v1.AdminService/UpdateApiToken"
 	// AdminServiceDeleteApiTokenProcedure is the fully-qualified name of the AdminService's
 	// DeleteApiToken RPC.
 	AdminServiceDeleteApiTokenProcedure = "/heron.v1.AdminService/DeleteApiToken"
 	// AdminServiceGetApiReferenceProcedure is the fully-qualified name of the AdminService's
 	// GetApiReference RPC.
 	AdminServiceGetApiReferenceProcedure = "/heron.v1.AdminService/GetApiReference"
+	// AdminServiceGetCallerProcedure is the fully-qualified name of the AdminService's GetCaller RPC.
+	AdminServiceGetCallerProcedure = "/heron.v1.AdminService/GetCaller"
 )
 
 // AdminServiceClient is a client for the heron.v1.AdminService service.
@@ -411,12 +416,19 @@ type AdminServiceClient interface {
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
-	// 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
+	// 建一个 API token，以 Authorization: Bearer <token> 调用：缺省全站只读，grant 预授权 ExecuteChange 的写操作与节点范围，
+	// expires_at 设有效期。
 	CreateApiToken(context.Context, *connect.Request[v1.CreateApiTokenRequest]) (*connect.Response[v1.CreateApiTokenResponse], error)
+	// 整体替换 token 的名称、授权与有效期，明文不变：持有者不用换配置，下一个请求即按新授权鉴权，回执历史随明文延续。
+	// 已过期的 token 改到未来即恢复。只限会话：token 不能改自己。
+	UpdateApiToken(context.Context, *connect.Request[v1.UpdateApiTokenRequest]) (*connect.Response[v1.UpdateApiTokenResponse], error)
 	// 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
 	DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error)
 	// 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
 	GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error)
+	// 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
+	// 试错；会话返回 session。指定节点的 token 也能调用。
+	GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the heron.v1.AdminService service. By default, it
@@ -850,6 +862,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("CreateApiToken")),
 			connect.WithClientOptions(opts...),
 		),
+		updateApiToken: connect.NewClient[v1.UpdateApiTokenRequest, v1.UpdateApiTokenResponse](
+			httpClient,
+			baseURL+AdminServiceUpdateApiTokenProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("UpdateApiToken")),
+			connect.WithClientOptions(opts...),
+		),
 		deleteApiToken: connect.NewClient[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse](
 			httpClient,
 			baseURL+AdminServiceDeleteApiTokenProcedure,
@@ -860,6 +878,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceGetApiReferenceProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("GetApiReference")),
+			connect.WithClientOptions(opts...),
+		),
+		getCaller: connect.NewClient[v1.GetCallerRequest, v1.GetCallerResponse](
+			httpClient,
+			baseURL+AdminServiceGetCallerProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetCaller")),
 			connect.WithClientOptions(opts...),
 		),
 	}
@@ -937,8 +961,10 @@ type adminServiceClient struct {
 	getStorageStats          *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
 	listApiTokens            *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
 	createApiToken           *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
+	updateApiToken           *connect.Client[v1.UpdateApiTokenRequest, v1.UpdateApiTokenResponse]
 	deleteApiToken           *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
 	getApiReference          *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
+	getCaller                *connect.Client[v1.GetCallerRequest, v1.GetCallerResponse]
 }
 
 // ExecuteChange calls heron.v1.AdminService.ExecuteChange.
@@ -1291,6 +1317,11 @@ func (c *adminServiceClient) CreateApiToken(ctx context.Context, req *connect.Re
 	return c.createApiToken.CallUnary(ctx, req)
 }
 
+// UpdateApiToken calls heron.v1.AdminService.UpdateApiToken.
+func (c *adminServiceClient) UpdateApiToken(ctx context.Context, req *connect.Request[v1.UpdateApiTokenRequest]) (*connect.Response[v1.UpdateApiTokenResponse], error) {
+	return c.updateApiToken.CallUnary(ctx, req)
+}
+
 // DeleteApiToken calls heron.v1.AdminService.DeleteApiToken.
 func (c *adminServiceClient) DeleteApiToken(ctx context.Context, req *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error) {
 	return c.deleteApiToken.CallUnary(ctx, req)
@@ -1299,6 +1330,11 @@ func (c *adminServiceClient) DeleteApiToken(ctx context.Context, req *connect.Re
 // GetApiReference calls heron.v1.AdminService.GetApiReference.
 func (c *adminServiceClient) GetApiReference(ctx context.Context, req *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error) {
 	return c.getApiReference.CallUnary(ctx, req)
+}
+
+// GetCaller calls heron.v1.AdminService.GetCaller.
+func (c *adminServiceClient) GetCaller(ctx context.Context, req *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error) {
+	return c.getCaller.CallUnary(ctx, req)
 }
 
 // AdminServiceHandler is an implementation of the heron.v1.AdminService service.
@@ -1473,12 +1509,19 @@ type AdminServiceHandler interface {
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
-	// 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
+	// 建一个 API token，以 Authorization: Bearer <token> 调用：缺省全站只读，grant 预授权 ExecuteChange 的写操作与节点范围，
+	// expires_at 设有效期。
 	CreateApiToken(context.Context, *connect.Request[v1.CreateApiTokenRequest]) (*connect.Response[v1.CreateApiTokenResponse], error)
+	// 整体替换 token 的名称、授权与有效期，明文不变：持有者不用换配置，下一个请求即按新授权鉴权，回执历史随明文延续。
+	// 已过期的 token 改到未来即恢复。只限会话：token 不能改自己。
+	UpdateApiToken(context.Context, *connect.Request[v1.UpdateApiTokenRequest]) (*connect.Response[v1.UpdateApiTokenResponse], error)
 	// 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
 	DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error)
 	// 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
 	GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error)
+	// 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
+	// 试错；会话返回 session。指定节点的 token 也能调用。
+	GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1908,6 +1951,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("CreateApiToken")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceUpdateApiTokenHandler := connect.NewUnaryHandler(
+		AdminServiceUpdateApiTokenProcedure,
+		svc.UpdateApiToken,
+		connect.WithSchema(adminServiceMethods.ByName("UpdateApiToken")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceDeleteApiTokenHandler := connect.NewUnaryHandler(
 		AdminServiceDeleteApiTokenProcedure,
 		svc.DeleteApiToken,
@@ -1918,6 +1967,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceGetApiReferenceProcedure,
 		svc.GetApiReference,
 		connect.WithSchema(adminServiceMethods.ByName("GetApiReference")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceGetCallerHandler := connect.NewUnaryHandler(
+		AdminServiceGetCallerProcedure,
+		svc.GetCaller,
+		connect.WithSchema(adminServiceMethods.ByName("GetCaller")),
 		connect.WithHandlerOptions(opts...),
 	)
 	return "/heron.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2062,10 +2117,14 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceListApiTokensHandler.ServeHTTP(w, r)
 		case AdminServiceCreateApiTokenProcedure:
 			adminServiceCreateApiTokenHandler.ServeHTTP(w, r)
+		case AdminServiceUpdateApiTokenProcedure:
+			adminServiceUpdateApiTokenHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteApiTokenProcedure:
 			adminServiceDeleteApiTokenHandler.ServeHTTP(w, r)
 		case AdminServiceGetApiReferenceProcedure:
 			adminServiceGetApiReferenceHandler.ServeHTTP(w, r)
+		case AdminServiceGetCallerProcedure:
+			adminServiceGetCallerHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2355,10 +2414,18 @@ func (UnimplementedAdminServiceHandler) CreateApiToken(context.Context, *connect
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.CreateApiToken is not implemented"))
 }
 
+func (UnimplementedAdminServiceHandler) UpdateApiToken(context.Context, *connect.Request[v1.UpdateApiTokenRequest]) (*connect.Response[v1.UpdateApiTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.UpdateApiToken is not implemented"))
+}
+
 func (UnimplementedAdminServiceHandler) DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.DeleteApiToken is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetApiReference is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetCaller is not implemented"))
 }

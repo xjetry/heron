@@ -17,7 +17,7 @@ func TestAPITokenLifecycle(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	h := sha256.Sum256([]byte("heron_at_x"))
-	tok, err := s.CreateAPIToken(ctx, "ci", h, clk.Now(), 100, nil)
+	tok, err := s.CreateAPIToken(ctx, "ci", h, clk.Now(), 100, nil, time.Time{})
 	if err != nil || tok.ID == 0 || tok.Name != "ci" || !tok.CreatedAt.Equal(clk.Now().Truncate(time.Second)) || !tok.LastUsedAt.IsZero() {
 		t.Fatalf("create: %+v %v", tok, err)
 	}
@@ -44,11 +44,11 @@ func TestAPITokenIDsAreNotReused(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
-	first, _ := s.CreateAPIToken(ctx, "a", sha256.Sum256([]byte("a")), clk.Now(), 100, nil)
+	first, _ := s.CreateAPIToken(ctx, "a", sha256.Sum256([]byte("a")), clk.Now(), 100, nil, time.Time{})
 	if _, err := s.DeleteAPIToken(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.CreateAPIToken(ctx, "b", sha256.Sum256([]byte("b")), clk.Now(), 100, nil)
+	second, err := s.CreateAPIToken(ctx, "b", sha256.Sum256([]byte("b")), clk.Now(), 100, nil, time.Time{})
 	if err != nil || second.ID <= first.ID {
 		t.Fatalf("id reused or went backwards: first %d second %d err %v", first.ID, second.ID, err)
 	}
@@ -65,7 +65,7 @@ func TestAPITokenLimitIsDecidedInsideTheWriteTransaction(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.CreateAPIToken(ctx, "n", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), limit, nil)
+			_, err := s.CreateAPIToken(ctx, "n", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), limit, nil, time.Time{})
 			switch {
 			case err == nil:
 				created.Add(1)
@@ -87,7 +87,7 @@ func TestTouchRecordsUseAndNeverResurrects(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	h := sha256.Sum256([]byte("t"))
-	tok, _ := s.CreateAPIToken(ctx, "t", h, clk.Now(), 100, nil)
+	tok, _ := s.CreateAPIToken(ctx, "t", h, clk.Now(), 100, nil, time.Time{})
 	clk.Advance(time.Minute)
 	done := make(chan error, 1)
 	s.TouchAPITokenAsync(tok.ID, clk.Now(), func(err error) { done <- err })
@@ -115,7 +115,7 @@ func TestDeleteAllAPITokens(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	for i := 0; i < 3; i++ {
-		s.CreateAPIToken(ctx, "x", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), 100, nil)
+		s.CreateAPIToken(ctx, "x", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), 100, nil, time.Time{})
 	}
 	if n, err := s.DeleteAllAPITokens(ctx); err != nil || n != 3 {
 		t.Fatalf("deleted %d err %v", n, err)
@@ -140,7 +140,7 @@ func TestCreateAPITokenRejectsInvalidGrant(t *testing.T) {
 		"valid grant for comparison": {TokenGrant{NodeIDs: []int64{node}, Permissions: []Permission{PermissionConfigure}}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &tc.grant)
+			_, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &tc.grant, time.Time{})
 			if !errors.Is(err, tc.want) || errors.Is(err, ErrPermission) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
@@ -164,7 +164,7 @@ func TestUpdateAPITokenKeepsCredentialAndReplacesGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{a}, Permissions: []Permission{PermissionConfigure}})
+	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{a}, Permissions: []Permission{PermissionConfigure}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestUpdateAPITokenKeepsCredentialAndReplacesGrant(t *testing.T) {
 func TestUpdateAPITokenStoresPastExpiry(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
-	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, nil)
+	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestUpdateAPITokenScopeTransitions(t *testing.T) {
 	if _, _, err := s.CreateNode(t.Context(), NewNode{Name: "b"}, hash(2)); err != nil {
 		t.Fatal(err)
 	}
-	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{a}})
+	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{a}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestUpdateAPITokenWithoutRegisterClosesItsWindow(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
 	register := &TokenGrant{AllNodes: true, Permissions: []Permission{PermissionRegister}}
-	tok, err := s.CreateAPIToken(t.Context(), "registrar", sha256.Sum256([]byte("registrar")), clk.Now(), 100, register)
+	tok, err := s.CreateAPIToken(t.Context(), "registrar", sha256.Sum256([]byte("registrar")), clk.Now(), 100, register, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestUpdateAPITokenRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{node}})
+	tok, err := s.CreateAPIToken(t.Context(), "agent", sha256.Sum256([]byte("agent")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{node}}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
