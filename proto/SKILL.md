@@ -37,7 +37,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 换发会撤销旧凭据。已安装主机用同版本安装脚本的 `--re-register --hub URL --key KEY` 显式替换注册，保留本地探测策略；普通升级不消费 key。注册成功且配置已写入、但后续安装失败时，去掉 `--re-register` 按普通升级重跑；Register 响应丢失或配置未能写入时，重新换发安装凭据，不重建节点，也不重复使用已消费的凭据。
 
-指定节点授权同时约束读写；普通标签不扩权。显式包含未授权节点、全站和动态标签规则不能由指定节点凭据编辑。创建和经自己注册窗口接入的节点自动纳入范围，不增加操作权限。注册窗口互不覆盖；吊销凭据会关闭其窗口，并阻止尚未下发的更新。已下发更新不能据此撤回。
+指定节点授权同时约束读写；普通标签不扩权。显式包含未授权节点、全站和动态标签规则不能由指定节点凭据编辑。创建和经自己注册窗口接入的节点自动纳入范围，不增加操作权限。注册窗口互不覆盖；吊销凭据会关闭其窗口；吊销或过期都会让窗口不可认领、阻止尚未下发的更新。已下发更新不能据此撤回。管理员可在面板编辑授权，明文不变，下一个请求即按新授权。
 
 详细差异在后续写入时清理超过 90 天的记录，幂等回执永久保留。配置备份保存授权与回执，恢复时合并回执历史，并清除所有注册窗口和节点更新任务。回执描述原事务，不保证当前配置仍未变化。
 
@@ -59,6 +59,13 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 ```
 
 看某个文件：把上面的 jq 换成 `jq -r '.files[] | select(.path == "heron/v1/admin.proto") | .content'`。每个 rpc 上的 `option (heron.v1.access)` 标明准入策略：`ACCESS_READ` 允许读取（仍受节点范围限制），`ACCESS_CHANGE` 经预授权写入；`ACCESS_SESSION` 不接受 API token。
+
+进门先读自己：`GetCaller` 返回这枚 token 的名称、`grant`（`permissions`、`allNodes`、`nodeIds`）与 `expiresAt`（缺失表示不过期）。按它规划能做什么，不必靠 `permission_denied` 试错。token 过期后每个请求都返回 `unauthenticated`，message 写明过期时刻；不要换 token 重试，请管理员在面板延长有效期（明文不变，延长后即恢复）。
+
+```sh example
+curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' "$HERON_HUB/heron.v1.AdminService/GetCaller" | jq '.apiToken | {name, grant, expiresAt}'
+```
 
 ## 约定
 
