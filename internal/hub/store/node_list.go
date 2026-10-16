@@ -24,9 +24,15 @@ func nodeListRevision(ctx context.Context, q rowQuerier) (uint64, error) {
 	return uint64(v), nil
 }
 
-// NodeFilter 是 ListNodes 的两种条件：Tags 非空取交集（ListNodesByTags 的口径），Untagged 取没有任何标签的节点，
-// 都为空即全部。两者同时给出没有合法含义（交集必然为空），where 报错而不是按其中一个放宽；api 在此之前已按参数错误
-// 拒绝，这里的检查让存储层的口径不依赖调用方。
+// NodeFilter 是 ListNodes 的两种条件，都为空即全部；结果的顺序都与 ListNodes 相同（nodeOrder 是节点列表唯一的排序）。
+//
+// Tags 非空时取同时挂着其中全部标签的节点（交集），名字按 TagFold 比较。取交集而不是并集：多选过滤是逐步收窄——再选
+// 一个标签，结果只会变少，"db 且 客户A"才是按多个维度定位一批机器；并集会让多选越选越多。实现是按节点分组、数命中的
+// 不同标签：命中数等于所选的不同标签数，节点才拥有全部所选标签。所选标签数按折叠去重后计，否则 [db, DB] 会要求命中
+// 两个标签而任何节点都只能命中一个；不存在的名字匹配不到任何标签，命中数凑不满，结果为空。
+//
+// Untagged 取没有任何标签的节点：调用方要的是"没有标签"而不是某个标签集合的交集。两者同时给出没有合法含义（交集
+// 必然为空），where 报错而不是按其中一个放宽；api 在此之前已按参数错误拒绝，这里的检查让存储层的口径不依赖调用方。
 type NodeFilter struct {
 	Tags     []string
 	Untagged bool

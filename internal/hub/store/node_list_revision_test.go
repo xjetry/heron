@@ -294,26 +294,6 @@ func TestNodeListRevisionAndRowsComeFromOneSnapshot(t *testing.T) {
 	}
 }
 
-func TestReadNodeListFiltersMatchListNodesByTags(t *testing.T) {
-	t.Parallel()
-	s, id := nodeWithFacts(t)
-	ctx := t.Context()
-	if _, _, err := s.CreateNode(ctx, NewNode{Name: "bare"}, hash(2)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 1, Tags: []string{"db"}}); err != nil {
-		t.Fatal(err)
-	}
-	tagged, err := s.ReadNodeList(ctx, NodeFilter{Tags: []string{"DB"}}, nil)
-	if err != nil || len(tagged.Nodes) != 1 || tagged.Nodes[0].ID != id {
-		t.Fatalf("按标签 = %+v %v", tagged, err)
-	}
-	untagged, err := s.ReadNodeList(ctx, NodeFilter{Untagged: true}, nil)
-	if err != nil || len(untagged.Nodes) != 1 || untagged.Nodes[0].Name != "bare" {
-		t.Fatalf("无标签 = %+v %v", untagged, err)
-	}
-}
-
 // Tags 与 Untagged 同时给出没有合法含义（带有所选标签与没有标签的交集为空）：存储层显式拒绝，不按其中一个放宽。
 func TestReadNodeListRejectsTagsWithUntagged(t *testing.T) {
 	t.Parallel()

@@ -308,19 +308,19 @@ func TestNodePositionIsRankOverAllNodes(t *testing.T) {
 			t.Fatalf("ListNodes: position of %s = %d, want %d", n.Name, n.Position, want)
 		}
 	}
-	byTag, err := s.ListNodesByTags(ctx, []string{"x"})
+	byTag, err := filtered(ctx, s, NodeFilter{Tags: []string{"x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(byTag) != 2 || byTag[0].Position != 2 || byTag[1].Position != 3 {
-		t.Fatalf("ListNodesByTags(x) positions = %d, %d, want 2, 3", byTag[0].Position, byTag[1].Position)
+		t.Fatalf("tags [x] positions = %d, %d, want 2, 3", byTag[0].Position, byTag[1].Position)
 	}
-	untagged, err := s.ListUntaggedNodes(ctx)
+	untagged, err := filtered(ctx, s, NodeFilter{Untagged: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(untagged) != 1 || untagged[0].Position != 1 {
-		t.Fatalf("ListUntaggedNodes position = %+v, want a at 1", untagged)
+		t.Fatalf("untagged position = %+v, want a at 1", untagged)
 	}
 	public, err := s.ListPublicNodes(ctx)
 	if err != nil {
@@ -334,11 +334,11 @@ func TestNodePositionIsRankOverAllNodes(t *testing.T) {
 	if err := s.ReorderNodes(ctx, namedIDs(ids, "d", "a", "b", "c")); err != nil {
 		t.Fatal(err)
 	}
-	byTag, err = s.ListNodesByTags(ctx, []string{"x"})
+	byTag, err = filtered(ctx, s, NodeFilter{Tags: []string{"x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if byTag[0].Position != 3 || byTag[1].Position != 4 {
-		t.Fatalf("ListNodesByTags(x) positions after reorder = %d, %d, want 3, 4", byTag[0].Position, byTag[1].Position)
+		t.Fatalf("tags [x] positions after reorder = %d, %d, want 3, 4", byTag[0].Position, byTag[1].Position)
 	}
 }

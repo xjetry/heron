@@ -148,24 +148,6 @@ func nodeTags(ctx context.Context, tx *sql.Tx, where string, args []any) (map[in
 	return out, rows.Err()
 }
 
-// ListNodesByTags 返回同时挂着 names 里全部标签的节点（交集），名字按 TagFold 比较。
-//
-// 取交集而不是并集：多选过滤是逐步收窄——再选一个标签，结果只会变少，"db 且 客户A"才是按多个维度定位一批机器；
-// 并集会让多选越选越多。实现是按节点分组、数命中的不同标签：命中数等于所选的不同标签数，节点才拥有全部所选标签。
-// 所选标签数按折叠去重后计，否则 [db, DB] 会要求命中两个标签而任何节点都只能命中一个；不存在的名字匹配不到任何标签，
-// 命中数凑不满，结果为空。条件的拼法在 NodeFilter.where，读取经 ReadNodeList。
-func (s *Store) ListNodesByTags(ctx context.Context, names []string) ([]Node, error) {
-	list, err := s.ReadNodeList(ctx, NodeFilter{Tags: names}, nil)
-	return list.Nodes, err
-}
-
-// ListUntaggedNodes 返回没有任何标签的节点，顺序与 ListNodes 相同（nodeOrder 是节点列表唯一的排序）。
-// 与 ListNodesByTags 各管一种条件：调用方要的是"没有标签"而不是某个标签集合的交集，两者不组合。
-func (s *Store) ListUntaggedNodes(ctx context.Context) ([]Node, error) {
-	list, err := s.ReadNodeList(ctx, NodeFilter{Untagged: true}, nil)
-	return list.Nodes, err
-}
-
 // ListTags 列出全部标签与各自的节点数，按 name_fold 排序；没挂在任何节点上的标签节点数为 0。
 func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
 	query := listTagsQuery
