@@ -5983,8 +5983,10 @@ func (*DeleteAlertRuleResponse) Descriptor() ([]byte, []int) {
 	return file_heron_v1_admin_proto_rawDescGZIP(), []int{86}
 }
 
-// 维护静默：覆盖内的节点在窗口内产生的告警事件照常生成但不投递。作用域与 AlertRule 同一形状：
+// 维护静默：规则与节点同时在覆盖内时，窗口内产生的告警事件照常生成但不投递。节点作用域与 AlertRule 同一形状：
 // all_nodes / 显式 node_ids / selector_tags 三选一，语义逐字相同。
+// all_rules 与非空 rule_ids 必须二选一；都缺或同时提交返回 InvalidArgument 并点名字段。
+// 不认识这两个字段的旧客户端保存时也会因缺字段而失败。
 type Silence struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 0 表示创建。
@@ -6009,7 +6011,12 @@ type Silence struct {
 	// 至多 256 个字符。
 	Reason string `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
 	// 创建墙钟，Unix 秒；保存请求中的值忽略。
-	CreatedAt     int64 `protobuf:"varint,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	CreatedAt int64 `protobuf:"varint,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// 为真表示全部可静默的规则（含以后新建的），不得同时提交 rule_ids；日历类规则始终不受静默影响。
+	AllRules bool `protobuf:"varint,14,opt,name=all_rules,json=allRules,proto3" json:"all_rules,omitempty"`
+	// 显式规则集合，升序去重；每项必须存在且不是日历类规则（到期、证书到期），否则返回 InvalidArgument 并点名规则 id 与原因。
+	// 规则被删除后读回的集合可能为空，此时 all_rules=false 的静默不覆盖任何告警。
+	RuleIds       []int64 `protobuf:"varint,15,rep,packed,name=rule_ids,json=ruleIds,proto3" json:"rule_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6135,6 +6142,20 @@ func (x *Silence) GetCreatedAt() int64 {
 	return 0
 }
 
+func (x *Silence) GetAllRules() bool {
+	if x != nil {
+		return x.AllRules
+	}
+	return false
+}
+
+func (x *Silence) GetRuleIds() []int64 {
+	if x != nil {
+		return x.RuleIds
+	}
+	return nil
+}
+
 type ListSilencesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -6172,8 +6193,10 @@ func (*ListSilencesRequest) Descriptor() ([]byte, []int) {
 }
 
 type ListSilencesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Silences      []*SilenceEntry        `protobuf:"bytes,1,rep,name=silences,proto3" json:"silences,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Silences []*SilenceEntry        `protobuf:"bytes,1,rep,name=silences,proto3" json:"silences,omitempty"`
+	// hub 墙钟，Unix 秒；客户端据此判断与计算静默窗口，不依赖自己的时钟。
+	Now           int64 `protobuf:"varint,2,opt,name=now,proto3" json:"now,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6215,10 +6238,18 @@ func (x *ListSilencesResponse) GetSilences() []*SilenceEntry {
 	return nil
 }
 
+func (x *ListSilencesResponse) GetNow() int64 {
+	if x != nil {
+		return x.Now
+	}
+	return 0
+}
+
 type SilenceEntry struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Silence *Silence               `protobuf:"bytes,1,opt,name=silence,proto3" json:"silence,omitempty"`
-	// 此刻该静默是否生效（enabled 且当前时刻在窗口内）；节点是否被抑制还要看它的 maintenance 与覆盖。
+	// 此刻该静默是否生效（enabled、当前时刻在窗口内，且 all_rules 为真或 rule_ids 非空）；
+	// 告警是否被抑制还要看节点的 maintenance，或静默是否同时覆盖该规则与节点；日历类规则始终豁免。
 	Active        bool `protobuf:"varint,2,opt,name=active,proto3" json:"active,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -12606,7 +12637,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x04rule\x18\x01 \x01(\v2\x13.heron.v1.AlertRuleR\x04rule\"(\n" +
 	"\x16DeleteAlertRuleRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x19\n" +
-	"\x17DeleteAlertRuleResponse\"\xf4\x02\n" +
+	"\x17DeleteAlertRuleResponse\"\xac\x03\n" +
 	"\aSilence\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -12623,10 +12654,13 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\buntil_at\x18\v \x01(\x03R\auntilAt\x12\x16\n" +
 	"\x06reason\x18\f \x01(\tR\x06reason\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\r \x01(\x03R\tcreatedAt\"\x15\n" +
-	"\x13ListSilencesRequest\"J\n" +
+	"created_at\x18\r \x01(\x03R\tcreatedAt\x12\x1b\n" +
+	"\tall_rules\x18\x0e \x01(\bR\ballRules\x12\x19\n" +
+	"\brule_ids\x18\x0f \x03(\x03R\aruleIds\"\x15\n" +
+	"\x13ListSilencesRequest\"\\\n" +
 	"\x14ListSilencesResponse\x122\n" +
-	"\bsilences\x18\x01 \x03(\v2\x16.heron.v1.SilenceEntryR\bsilences\"S\n" +
+	"\bsilences\x18\x01 \x03(\v2\x16.heron.v1.SilenceEntryR\bsilences\x12\x10\n" +
+	"\x03now\x18\x02 \x01(\x03R\x03now\"S\n" +
 	"\fSilenceEntry\x12+\n" +
 	"\asilence\x18\x01 \x01(\v2\x11.heron.v1.SilenceR\asilence\x12\x16\n" +
 	"\x06active\x18\x02 \x01(\bR\x06active\"A\n" +

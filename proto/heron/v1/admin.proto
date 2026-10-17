@@ -1056,8 +1056,10 @@ enum SilenceKind {
   // 一次性：from_at–until_at（Unix 秒）。到期后保留供审计，随告警事件的保留期清理。
   SILENCE_KIND_ONCE = 2;
 }
-// 维护静默：覆盖内的节点在窗口内产生的告警事件照常生成但不投递。作用域与 AlertRule 同一形状：
+// 维护静默：规则与节点同时在覆盖内时，窗口内产生的告警事件照常生成但不投递。节点作用域与 AlertRule 同一形状：
 // all_nodes / 显式 node_ids / selector_tags 三选一，语义逐字相同。
+// all_rules 与非空 rule_ids 必须二选一；都缺或同时提交返回 InvalidArgument 并点名字段。
+// 不认识这两个字段的旧客户端保存时也会因缺字段而失败。
 message Silence {
   // 0 表示创建。
   int64 id = 1;
@@ -1082,14 +1084,22 @@ message Silence {
   string reason = 12;
   // 创建墙钟，Unix 秒；保存请求中的值忽略。
   int64 created_at = 13;
+  // 为真表示全部可静默的规则（含以后新建的），不得同时提交 rule_ids；日历类规则始终不受静默影响。
+  bool all_rules = 14;
+  // 显式规则集合，升序去重；每项必须存在且不是日历类规则（到期、证书到期），否则返回 InvalidArgument 并点名规则 id 与原因。
+  // 规则被删除后读回的集合可能为空，此时 all_rules=false 的静默不覆盖任何告警。
+  repeated int64 rule_ids = 15;
 }
 message ListSilencesRequest {}
 message ListSilencesResponse {
   repeated SilenceEntry silences = 1;
+  // hub 墙钟，Unix 秒；客户端据此判断与计算静默窗口，不依赖自己的时钟。
+  int64 now = 2;
 }
 message SilenceEntry {
   Silence silence = 1;
-  // 此刻该静默是否生效（enabled 且当前时刻在窗口内）；节点是否被抑制还要看它的 maintenance 与覆盖。
+  // 此刻该静默是否生效（enabled、当前时刻在窗口内，且 all_rules 为真或 rule_ids 非空）；
+  // 告警是否被抑制还要看节点的 maintenance，或静默是否同时覆盖该规则与节点；日历类规则始终豁免。
   bool active = 2;
 }
 message SaveSilenceRequest { Silence silence = 1; }
