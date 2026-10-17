@@ -10,8 +10,8 @@ import (
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
-// SilenceActive 判定一条静默在 now 是否处于窗口内，是唯一的窗口口径：写侧保存与运行时抑制（engine.apply）
-// 都经它。它不含 enabled 判定——enabled 由调用方在快照上先查。DAILY 按 loc（hub 的 --timezone）的墙钟计
+// SilenceActive 只判定一条静默在 now 是否处于窗口内，API 展示与运行时抑制（engine.apply）共用它。
+// enabled 与规则、节点覆盖由调用方判定。DAILY 按 loc（hub 的 --timezone）的墙钟计
 // 午夜起的分钟数，start 含、end 不含，允许跨午夜（22:00–06:00）；ONCE 按 Unix 秒闭开区间。
 func SilenceActive(s store.Silence, now time.Time, loc *time.Location) bool {
 	switch s.Kind {
@@ -49,15 +49,14 @@ func CheckSilence(s store.Silence) error {
 	return nil
 }
 
-// silencedNode 只为事件生成裁决是否抑制投递，状态机照常转移；它在 Engine.mu 下读取已持久化后发布的静默快照。
-// silencedNode 判定节点此刻是否处于维护静默覆盖内：节点自身的维护开关，或任一启用的、
-// 覆盖该节点的静默处于窗口内。作用域语义与告警规则逐字相同。调用方须持 mu。
-func (e *Engine) silencedNode(nodeID int64, maintenance bool, now time.Time) bool {
+// silenced 在 Engine.mu 下读取已持久化后发布的快照，只裁决投递，不改变状态转移。
+// 节点维护开关覆盖全部规则；静默则必须同时覆盖规则与节点。空规则集不表示全部，规则删光后不能扩大覆盖。
+func (e *Engine) silenced(ruleID, nodeID int64, maintenance bool, now time.Time) bool {
 	if maintenance {
 		return true
 	}
 	for _, s := range e.silences {
-		if !s.Enabled {
+		if !s.Enabled || (!s.AllRules && !slices.Contains(s.RuleIDs, ruleID)) {
 			continue
 		}
 		if store.ScopeContains(s.AllNodes, s.NodeIDs, nodeID) && SilenceActive(s, now, e.cfg.Location) {
@@ -69,6 +68,7 @@ func (e *Engine) silencedNode(nodeID int64, maintenance bool, now time.Time) boo
 
 func cloneSilence(s store.Silence) store.Silence {
 	s.NodeIDs = slices.Clone(s.NodeIDs)
+	s.RuleIDs = slices.Clone(s.RuleIDs)
 	s.SelectorTags = slices.Clone(s.SelectorTags)
 	return s
 }

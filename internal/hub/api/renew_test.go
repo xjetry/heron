@@ -160,7 +160,7 @@ func TestRenewNodeBillingRecoversExpiryAlerts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ev := resp.Msg.GetEvents()
-	if len(ev) != 2 || ev[0].GetTransition() != "recovered" || ev[0].GetSummary() != "节点 n1 到期日已更新为 2026-02-04（规则 到期）" {
+	if len(ev) != 2 || ev[0].GetTransition() != "recovered" || ev[0].GetSummary() != "节点 n1 到期日已更新为 2026-02-04（规则 到期），告警持续 不到 1 分钟" {
 		t.Fatalf("events after renewing: %v", ev)
 	}
 }

@@ -15,7 +15,7 @@ var silenceKinds = map[heronv1.SilenceKind]store.SilenceKind{
 }
 
 func silenceProto(s store.Silence) *heronv1.Silence {
-	return &heronv1.Silence{Id: s.ID, Name: s.Name, Enabled: s.Enabled, AllNodes: s.AllNodes, NodeIds: s.NodeIDs, SelectorTags: s.SelectorTags, Kind: enumFor(silenceKinds, s.Kind), StartHhmm: s.StartHHMM, EndHhmm: s.EndHHMM, FromAt: s.FromAt, UntilAt: s.UntilAt, Reason: s.Reason, CreatedAt: s.CreatedAt.Unix()}
+	return &heronv1.Silence{Id: s.ID, Name: s.Name, Enabled: s.Enabled, AllNodes: s.AllNodes, AllRules: s.AllRules, RuleIds: s.RuleIDs, NodeIds: s.NodeIDs, SelectorTags: s.SelectorTags, Kind: enumFor(silenceKinds, s.Kind), StartHhmm: s.StartHHMM, EndHhmm: s.EndHHMM, FromAt: s.FromAt, UntilAt: s.UntilAt, Reason: s.Reason, CreatedAt: s.CreatedAt.Unix()}
 }
 
 // ListSilences 读库而不是引擎的内存快照：库是唯一事实来源。维护任务（PruneAlertEvents）不经引擎删掉
@@ -26,9 +26,9 @@ func (s *Service) ListSilences(ctx context.Context, _ *connect.Request[heronv1.L
 		return nil, internalError("list silences")
 	}
 	now := s.clk.Now()
-	out := &heronv1.ListSilencesResponse{}
+	out := &heronv1.ListSilencesResponse{Now: now.Unix()}
 	for _, si := range silences {
-		active := si.Enabled && alert.SilenceActive(si, now, s.cfg.Location)
+		active := si.Enabled && (si.AllRules || len(si.RuleIDs) > 0) && alert.SilenceActive(si, now, s.cfg.Location)
 		out.Silences = append(out.Silences, &heronv1.SilenceEntry{Silence: silenceProto(si), Active: active})
 	}
 	return connect.NewResponse(out), nil
@@ -44,7 +44,7 @@ func (s *Service) SaveSilence(ctx context.Context, req *connect.Request[heronv1.
 	if err != nil {
 		return nil, err
 	}
-	saved, err := s.alerts.SaveSilence(ctx, store.Silence{ID: p.GetId(), Name: p.GetName(), Enabled: p.GetEnabled(), AllNodes: p.GetAllNodes(), NodeIDs: p.GetNodeIds(), SelectorTags: tags, Kind: kind, StartHHMM: p.GetStartHhmm(), EndHHMM: p.GetEndHhmm(), FromAt: p.GetFromAt(), UntilAt: p.GetUntilAt(), Reason: p.GetReason()})
+	saved, err := s.alerts.SaveSilence(ctx, store.Silence{ID: p.GetId(), Name: p.GetName(), Enabled: p.GetEnabled(), AllNodes: p.GetAllNodes(), AllRules: p.GetAllRules(), RuleIDs: p.GetRuleIds(), NodeIDs: p.GetNodeIds(), SelectorTags: tags, Kind: kind, StartHHMM: p.GetStartHhmm(), EndHHMM: p.GetEndHhmm(), FromAt: p.GetFromAt(), UntilAt: p.GetUntilAt(), Reason: p.GetReason()})
 	if err != nil {
 		return nil, s.operationError(err, "silence", "saving silence failed")
 	}

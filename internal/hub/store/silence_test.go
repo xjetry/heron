@@ -14,18 +14,18 @@ func TestSilenceRoundTripAndScope(t *testing.T) {
 	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
-	daily := Silence{Name: "夜间维护", Enabled: true, AllNodes: true, Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", Reason: "机房巡检"}
+	daily := Silence{AllRules: true, Name: "夜间维护", Enabled: true, AllNodes: true, Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", Reason: "机房巡检"}
 	daily, err := s.SaveSilence(ctx, daily)
 	if err != nil {
 		t.Fatal(err)
 	}
 	setTags(t, s, ids[0], "db")
-	once := Silence{Name: "升级窗口", Kind: SilenceOnce, FromAt: 1000, UntilAt: 2000, SelectorTags: []string{"db"}}
+	once := Silence{AllRules: true, Name: "升级窗口", Kind: SilenceOnce, FromAt: 1000, UntilAt: 2000, SelectorTags: []string{"db"}}
 	once, err = s.SaveSilence(ctx, once)
 	if err != nil {
 		t.Fatal(err)
 	}
-	explicit := Silence{Name: "单机维护", Kind: SilenceOnce, FromAt: 100, UntilAt: 200, NodeIDs: []int64{ids[1], ids[0], ids[1]}}
+	explicit := Silence{AllRules: true, Name: "单机维护", Kind: SilenceOnce, FromAt: 100, UntilAt: 200, NodeIDs: []int64{ids[1], ids[0], ids[1]}}
 	explicit, err = s.SaveSilence(ctx, explicit)
 	if err != nil {
 		t.Fatal(err)
@@ -37,14 +37,14 @@ func TestSilenceRoundTripAndScope(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("silences=%+v", got)
 	}
-	wantDaily := Silence{ID: daily.ID, Name: "夜间维护", Enabled: true, AllNodes: true, Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", Reason: "机房巡检", CreatedAt: s.clk.Now()}
+	wantDaily := Silence{AllRules: true, ID: daily.ID, Name: "夜间维护", Enabled: true, AllNodes: true, Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", Reason: "机房巡检", CreatedAt: s.clk.Now()}
 	if !reflect.DeepEqual(got[0], wantDaily) {
 		t.Fatalf("daily=%+v, want %+v", got[0], wantDaily)
 	}
 	// AllNodes 不落 silence_node 行。
 	assertAlertRows(t, s, "silence_node", fmt.Sprint("silence_id = ", daily.ID), 0)
 	// 标签选择器读出的是当前交集的展开，标签名按先建的写法回显。
-	if !reflect.DeepEqual(got[1], Silence{ID: once.ID, Name: "升级窗口", Kind: SilenceOnce, FromAt: 1000, UntilAt: 2000, NodeIDs: []int64{ids[0]}, SelectorTags: []string{"db"}, CreatedAt: s.clk.Now()}) {
+	if !reflect.DeepEqual(got[1], Silence{AllRules: true, ID: once.ID, Name: "升级窗口", Kind: SilenceOnce, FromAt: 1000, UntilAt: 2000, NodeIDs: []int64{ids[0]}, SelectorTags: []string{"db"}, CreatedAt: s.clk.Now()}) {
 		t.Fatalf("once=%+v", got[1])
 	}
 	// 显式集合升序去重。
@@ -68,7 +68,7 @@ func TestCheckSilenceFieldsRejectsBadCombinations(t *testing.T) {
 	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
-	valid := Silence{Name: "n", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", NodeIDs: ids[:1]}
+	valid := Silence{AllRules: true, Name: "n", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", NodeIDs: ids[:1]}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*Silence)
@@ -104,7 +104,9 @@ func TestSaveSilenceValidatesReferencesAndScope(t *testing.T) {
 	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
-	once := func() Silence { return Silence{Name: "n", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, NodeIDs: ids[:1]} }
+	once := func() Silence {
+		return Silence{AllRules: true, Name: "n", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, NodeIDs: ids[:1]}
+	}
 	bad := once()
 	bad.NodeIDs = []int64{999}
 	var missing NotFoundError
@@ -136,11 +138,11 @@ func TestDeleteSilenceRemovesItsRows(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	setTags(t, s, ids[0], "db")
-	si, err := s.SaveSilence(ctx, Silence{Name: "n", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, NodeIDs: ids, SelectorTags: nil})
+	si, err := s.SaveSilence(ctx, Silence{AllRules: true, Name: "n", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, NodeIDs: ids, SelectorTags: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
-	si2, err := s.SaveSilence(ctx, Silence{Name: "m", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, SelectorTags: []string{"db"}})
+	si2, err := s.SaveSilence(ctx, Silence{AllRules: true, Name: "m", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, SelectorTags: []string{"db"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +174,11 @@ func TestPruneAlertEventsRemovesOnlyExpiredOnceSilences(t *testing.T) {
 		}
 		return si
 	}
-	expired := save(Silence{Name: "expired", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Add(-time.Second).Unix(), NodeIDs: ids[:1]})
-	expiredTag := save(Silence{Name: "expired-tag", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Add(-time.Second).Unix(), SelectorTags: []string{"db"}})
-	onEdge := save(Silence{Name: "edge", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Unix(), NodeIDs: ids[:1]})
-	future := save(Silence{Name: "future", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Add(time.Hour).Unix(), NodeIDs: ids[:1]})
-	daily := save(Silence{Name: "daily", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", NodeIDs: ids[:1]})
+	expired := save(Silence{AllRules: true, Name: "expired", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Add(-time.Second).Unix(), NodeIDs: ids[:1]})
+	expiredTag := save(Silence{AllRules: true, Name: "expired-tag", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Add(-time.Second).Unix(), SelectorTags: []string{"db"}})
+	onEdge := save(Silence{AllRules: true, Name: "edge", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Unix(), NodeIDs: ids[:1]})
+	future := save(Silence{AllRules: true, Name: "future", Kind: SilenceOnce, FromAt: 1, UntilAt: cutoff.Add(time.Hour).Unix(), NodeIDs: ids[:1]})
+	daily := save(Silence{AllRules: true, Name: "daily", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", NodeIDs: ids[:1]})
 	if _, err := s.PruneAlertEvents(ctx, cutoff); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +204,7 @@ func TestDeleteTagRefusedWhileASilenceSelectsIt(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	setTags(t, s, ids[0], "db")
-	si, err := s.SaveSilence(ctx, Silence{Name: "夜间维护", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", SelectorTags: []string{"db"}})
+	si, err := s.SaveSilence(ctx, Silence{AllRules: true, Name: "夜间维护", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", SelectorTags: []string{"db"}})
 	if err != nil {
 		t.Fatal(err)
 	}

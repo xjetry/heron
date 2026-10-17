@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/clock"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -45,7 +46,7 @@ func TestSilenceAPIScopeFollowsTagChanges(t *testing.T) {
 	}
 	edit(a, "a", "db")
 	// 夹具时区是 UTC、墙钟 2026-01-01 00:00：00:00–23:59 的每日窗口此刻生效。
-	s := saveSilence(t, h, &heronv1.Silence{Name: "夜间维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "00:00", EndHhmm: "23:59", SelectorTags: []string{"db"}, Reason: "机房巡检"})
+	s := saveSilence(t, h, &heronv1.Silence{AllRules: true, Name: "夜间维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "00:00", EndHhmm: "23:59", SelectorTags: []string{"db"}, Reason: "机房巡检"})
 	if s.Id == 0 || !slices.Equal(s.NodeIds, []int64{a}) || !slices.Equal(s.SelectorTags, []string{"db"}) || s.CreatedAt == 0 {
 		t.Fatalf("saved=%v", s)
 	}
@@ -90,7 +91,7 @@ func TestSilenceSuppressesAlertDeliveriesEndToEnd(t *testing.T) {
 	id, _ := h.createNode(t, "a")
 	c := saveChannel(t, h, webhook("https://example.invalid/hook"))
 	saveRule(t, h, &heronv1.AlertRule{Name: "离线", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, AllNodes: true, ChannelIds: []int64{c.Id}})
-	s := saveSilence(t, h, &heronv1.Silence{Name: "维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, AllNodes: true, FromAt: h.clk.Now().Add(-time.Hour).Unix(), UntilAt: h.clk.Now().Add(time.Hour).Unix()})
+	s := saveSilence(t, h, &heronv1.Silence{AllRules: true, Name: "维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, AllNodes: true, FromAt: h.clk.Now().Add(-time.Hour).Unix(), UntilAt: h.clk.Now().Add(time.Hour).Unix()})
 	h.clk.Advance(time.Minute)
 	if err := h.alerts.SweepOffline(t.Context()); err != nil {
 		t.Fatal(err)
@@ -165,8 +166,8 @@ func TestListSilencesReadsTheStoreAfterPruning(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")
-	s := saveSilence(t, h, &heronv1.Silence{Name: "过期窗口", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, NodeIds: []int64{id}, FromAt: h.clk.Now().Add(-200 * 24 * time.Hour).Unix(), UntilAt: h.clk.Now().Add(-100 * 24 * time.Hour).Unix()})
-	keep := saveSilence(t, h, &heronv1.Silence{Name: "夜间维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "22:00", EndHhmm: "06:00", AllNodes: true})
+	s := saveSilence(t, h, &heronv1.Silence{AllRules: true, Name: "过期窗口", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, NodeIds: []int64{id}, FromAt: h.clk.Now().Add(-200 * 24 * time.Hour).Unix(), UntilAt: h.clk.Now().Add(-100 * 24 * time.Hour).Unix()})
+	keep := saveSilence(t, h, &heronv1.Silence{AllRules: true, Name: "夜间维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "22:00", EndHhmm: "06:00", AllNodes: true})
 	if got := listSilences(t, h); len(got) != 2 {
 		t.Fatalf("before pruning: %v", got)
 	}
@@ -185,7 +186,7 @@ func TestSaveSilenceValidation(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "a")
 	valid := func() *heronv1.Silence {
-		return &heronv1.Silence{Name: "维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "22:00", EndHhmm: "06:00", NodeIds: []int64{id}}
+		return &heronv1.Silence{AllRules: true, Name: "维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "22:00", EndHhmm: "06:00", NodeIds: []int64{id}}
 	}
 	for _, tc := range []struct {
 		name   string
@@ -211,5 +212,88 @@ func TestSaveSilenceValidation(t *testing.T) {
 	}
 	if got := saveSilence(t, h, valid()); got.Id == 0 || got.Kind != heronv1.SilenceKind_SILENCE_KIND_DAILY {
 		t.Fatalf("valid silence rejected: %v", got)
+	}
+}
+
+func TestSilenceAPIRuleScopeAndClock(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	r := saveRule(t, h, &heronv1.AlertRule{Name: "离线", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, AllNodes: true})
+	now := h.clk.Now().Unix()
+	s := saveSilence(t, h, &heronv1.Silence{Name: "维护", Enabled: true, AllNodes: true, RuleIds: []int64{r.Id}, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, FromAt: now, UntilAt: now + 1})
+	if s.AllRules || !slices.Equal(s.RuleIds, []int64{r.Id}) {
+		t.Fatalf("saved rules=%v", s)
+	}
+	check := func(wantNow int64, active bool) {
+		t.Helper()
+		resp, err := h.admin.ListSilences(t.Context(), connect.NewRequest(&heronv1.ListSilencesRequest{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Msg.Now != wantNow || len(resp.Msg.Silences) != 1 || resp.Msg.Silences[0].Active != active {
+			t.Fatalf("now/active=%v, want now=%d active=%v", resp.Msg, wantNow, active)
+		}
+	}
+	check(now, true)
+	h.clk.Advance(time.Second)
+	check(now+1, false)
+	s.UntilAt = now + 100
+	saveSilence(t, h, s)
+	check(now+1, true)
+	if _, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&heronv1.DeleteAlertRuleRequest{Id: r.Id})); err != nil {
+		t.Fatal(err)
+	}
+	check(now+1, false)
+	if got := listSilences(t, h)[0].Silence; got.AllRules || len(got.RuleIds) != 0 {
+		t.Fatalf("deleted rules=%v", got)
+	}
+}
+
+func TestSilenceAPIRejectsMissingOrInvalidRules(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	for _, tc := range []struct {
+		name string
+		all  bool
+		ids  []int64
+		want string
+	}{
+		{"old client", false, nil, "all_rules"},
+		{"conflicting fields", true, []int64{999}, "exactly one of all_rules or non-empty rule_ids is required"},
+		{"unknown rule", false, []int64{999}, "rule 999 does not exist"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h.admin.SaveSilence(t.Context(), connect.NewRequest(&heronv1.SaveSilenceRequest{Silence: &heronv1.Silence{Name: "维护", AllNodes: true, AllRules: tc.all, RuleIds: tc.ids, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, FromAt: 1, UntilAt: 2}}))
+			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want InvalidArgument containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+type silenceStepClock struct {
+	clock.Clock
+	now time.Time
+}
+
+func (c *silenceStepClock) Now() time.Time {
+	now := c.now
+	c.now = c.now.Add(time.Second)
+	return now
+}
+
+func TestSilenceListUsesOneClockSample(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	now := h.clk.Now()
+	saveSilence(t, h, &heronv1.Silence{Name: "维护", Enabled: true, AllNodes: true, AllRules: true, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, FromAt: now.Unix(), UntilAt: now.Unix() + 1})
+	// 每次读钟跨过一个窗口边界；响应时间和 active 若各读一次，就不可能同时匹配起点。
+	svc := &Service{store: h.store, cfg: h.svc.cfg, clk: &silenceStepClock{Clock: h.clk, now: now}}
+	resp, err := svc.ListSilences(t.Context(), connect.NewRequest(&heronv1.ListSilencesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.Now != now.Unix() || len(resp.Msg.Silences) != 1 || !resp.Msg.Silences[0].Active {
+		t.Fatalf("inconsistent clock sample: %v", resp.Msg)
 	}
 }

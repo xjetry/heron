@@ -16,14 +16,17 @@ const (
 	SilenceOnce  SilenceKind = "once"
 )
 
-// Silence 是一段维护静默窗口：覆盖内的节点在窗口内产生的告警事件照常生成但不投递。
+// Silence 是一段维护静默窗口：同时覆盖规则与节点时，窗口内产生的告警事件照常生成但不投递。
 // 作用域与 AlertRule 同一形状：AllNodes 为真时不存 silence_node 行；SelectorTags 非空时 NodeIDs 是当前标签
 // 交集的展开结果，否则是显式集合；空覆盖不代表全部节点。
+// AllRules 为真时覆盖全部可静默规则；否则只覆盖 RuleIDs，规则删除后留下的空集不覆盖任何告警。
 type Silence struct {
 	ID           int64
 	Name         string
 	Enabled      bool
 	AllNodes     bool
+	AllRules     bool
+	RuleIDs      []int64
 	NodeIDs      []int64
 	SelectorTags []string
 	Kind         SilenceKind
@@ -56,9 +59,12 @@ func ParseHHMM(s string) (int, error) {
 	return h*60 + m, nil
 }
 
-// CheckSilenceFields 裁决种类与专用字段的组合：HH:MM 只属于 DAILY，起止时刻只属于 ONCE；
+// CheckSilenceFields 裁决规则范围及种类与专用字段的组合：HH:MM 只属于 DAILY，起止时刻只属于 ONCE；
 // 与 CheckKindFields 同一原则——非法组合报错而不改写，静默清零是放宽方向。
 func CheckSilenceFields(s Silence) error {
+	if s.AllRules == (len(s.RuleIDs) > 0) {
+		return KindFieldError{"all_rules", "exactly one of all_rules or non-empty rule_ids is required"}
+	}
 	switch s.Kind {
 	case SilenceDaily:
 		if s.FromAt != 0 || s.UntilAt != 0 {
@@ -113,7 +119,7 @@ func (s *Store) ListSilences(ctx context.Context) ([]Silence, error) {
 
 // 主表、关联与标签展开在同一读事务中裁决，与 listAlertRulesTx 同一形状。
 func listSilencesTx(ctx context.Context, tx *sql.Tx) ([]Silence, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, enabled, all_nodes, kind, start_hhmm, end_hhmm, from_at, until_at, reason, created_at FROM silence ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, enabled, all_nodes, kind, start_hhmm, end_hhmm, from_at, until_at, reason, created_at, all_rules FROM silence ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +129,7 @@ func listSilencesTx(ctx context.Context, tx *sql.Tx) ([]Silence, error) {
 	for rows.Next() {
 		var si Silence
 		var created int64
-		if err := rows.Scan(&si.ID, &si.Name, &si.Enabled, &si.AllNodes, &si.Kind, &si.StartHHMM, &si.EndHHMM, &si.FromAt, &si.UntilAt, &si.Reason, &created); err != nil {
+		if err := rows.Scan(&si.ID, &si.Name, &si.Enabled, &si.AllNodes, &si.Kind, &si.StartHHMM, &si.EndHHMM, &si.FromAt, &si.UntilAt, &si.Reason, &created, &si.AllRules); err != nil {
 			return nil, err
 		}
 		si.CreatedAt = time.Unix(created, 0).UTC()
@@ -152,6 +158,10 @@ func listSilencesTx(ctx context.Context, tx *sql.Tx) ([]Silence, error) {
 		return nil, err
 	}
 	for i := range out {
+		out[i].RuleIDs, err = scanIDs(tx.QueryContext(ctx, "SELECT rule_id FROM silence_rule WHERE silence_id = ? ORDER BY rule_id", out[i].ID))
+		if err != nil {
+			return nil, err
+		}
 		out[i].SelectorTags, err = selectorTags(tx, "silence", "silence_id", out[i].ID)
 		if err != nil {
 			return nil, err
@@ -175,10 +185,24 @@ func (s *Store) SaveSilence(ctx context.Context, si Silence) (Silence, error) {
 		return Silence{}, err
 	}
 	si.NodeIDs = sortedAlertIDs(si.NodeIDs)
+	si.RuleIDs = sortedAlertIDs(si.RuleIDs)
 	if si.AllNodes {
 		si.NodeIDs = nil
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		for _, id := range si.RuleIDs {
+			var kind AlertKind
+			err := tx.QueryRowContext(ctx, "SELECT kind FROM alert_rule WHERE id = ?", id).Scan(&kind)
+			if errors.Is(err, sql.ErrNoRows) {
+				return KindFieldError{"rule_ids", fmt.Sprintf("rule %d does not exist", id)}
+			}
+			if err != nil {
+				return err
+			}
+			if kind.IsCalendar() {
+				return KindFieldError{"rule_ids", fmt.Sprintf("rule %d is a calendar rule (%s) and cannot be silenced", id, kind)}
+			}
+		}
 		for _, id := range si.NodeIDs {
 			exists, err := nodeExistsTx(tx, id)
 			if err != nil {
@@ -200,14 +224,14 @@ func (s *Store) SaveSilence(ctx context.Context, si Silence) (Silence, error) {
 		var created int64
 		if si.ID == 0 {
 			created = s.clk.Now().Unix()
-			err := tx.QueryRow(`INSERT INTO silence (name, enabled, all_nodes, kind, start_hhmm, end_hhmm, from_at, until_at, reason, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, si.Name, si.Enabled, si.AllNodes, si.Kind, startHHMM, endHHMM, fromAt, untilAt, si.Reason, created).Scan(&si.ID)
+			err := tx.QueryRow(`INSERT INTO silence (name, enabled, all_nodes, kind, start_hhmm, end_hhmm, from_at, until_at, reason, created_at, all_rules)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, si.Name, si.Enabled, si.AllNodes, si.Kind, startHHMM, endHHMM, fromAt, untilAt, si.Reason, created, si.AllRules).Scan(&si.ID)
 			if err != nil {
 				return err
 			}
 		} else {
-			err := tx.QueryRow(`UPDATE silence SET name = ?, enabled = ?, all_nodes = ?, kind = ?, start_hhmm = ?, end_hhmm = ?, from_at = ?, until_at = ?, reason = ?
-				WHERE id = ? RETURNING created_at`, si.Name, si.Enabled, si.AllNodes, si.Kind, startHHMM, endHHMM, fromAt, untilAt, si.Reason, si.ID).Scan(&created)
+			err := tx.QueryRow(`UPDATE silence SET name = ?, enabled = ?, all_nodes = ?, kind = ?, start_hhmm = ?, end_hhmm = ?, from_at = ?, until_at = ?, reason = ?, all_rules = ?
+				WHERE id = ? RETURNING created_at`, si.Name, si.Enabled, si.AllNodes, si.Kind, startHHMM, endHHMM, fromAt, untilAt, si.Reason, si.AllRules, si.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: ObjectSilence, ID: si.ID}
 			}
@@ -216,6 +240,14 @@ func (s *Store) SaveSilence(ctx context.Context, si Silence) (Silence, error) {
 			}
 		}
 		si.CreatedAt = time.Unix(created, 0).UTC()
+		if _, err := tx.Exec("DELETE FROM silence_rule WHERE silence_id = ?", si.ID); err != nil {
+			return err
+		}
+		for _, id := range si.RuleIDs {
+			if _, err := tx.Exec("INSERT INTO silence_rule (silence_id, rule_id) VALUES (?, ?)", si.ID, id); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec("DELETE FROM silence_node WHERE silence_id = ?", si.ID); err != nil {
 			return err
 		}
@@ -251,7 +283,7 @@ func (s *Store) DeleteSilence(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "silence", ObjectSilence, id); err != nil {
 			return err
 		}
-		for _, table := range []string{"silence_node", "silence_tag"} {
+		for _, table := range []string{"silence_node", "silence_tag", "silence_rule"} {
 			if _, err := tx.Exec("DELETE FROM "+table+" WHERE silence_id = ?", id); err != nil {
 				return err
 			}

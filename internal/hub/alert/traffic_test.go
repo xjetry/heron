@@ -158,7 +158,7 @@ func TestTrafficSilenceMaintenanceAndRetry(t *testing.T) {
 			_, err := f.st.UpdateNode(t.Context(), f.ids[0], edit)
 			must(t, err)
 			if mode == "silence" {
-				f.silence(t, store.Silence{Name: "quiet", Enabled: true, AllNodes: true, Kind: store.SilenceOnce, FromAt: f.clk.Now().Add(-time.Minute).Unix(), UntilAt: f.clk.Now().Add(time.Hour).Unix()})
+				f.silence(t, store.Silence{AllRules: true, Name: "quiet", Enabled: true, AllNodes: true, Kind: store.SilenceOnce, FromAt: f.clk.Now().Add(-time.Minute).Unix(), UntilAt: f.clk.Now().Add(time.Hour).Unix()})
 			}
 			r := f.rule(t, store.AlertRule{Name: "quota", Kind: store.KindTraffic, Enabled: true, NodeIDs: f.ids[:1], Threshold: 80})
 			_, err = b.Adjust(t.Context(), f.ids[0], 90, 0)

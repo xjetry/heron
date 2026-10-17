@@ -334,7 +334,7 @@ func TestUpdateNodeFiresAndRecoversExpiryAlerts(t *testing.T) {
 		t.Fatalf("events after setting a close date: %v", ev)
 	}
 	h.update(t, billed(id, &heronv1.Billing{ExpiresOn: "2027-01-04"}))
-	if ev := events(); len(ev) != 2 || ev[0].GetTransition() != "recovered" || ev[0].GetSummary() != "节点 n1 到期日已更新为 2027-01-04（规则 到期）" {
+	if ev := events(); len(ev) != 2 || ev[0].GetTransition() != "recovered" || ev[0].GetSummary() != "节点 n1 到期日已更新为 2027-01-04（规则 到期），告警持续 不到 1 分钟" {
 		t.Fatalf("events after renewing: %v", ev)
 	}
 }

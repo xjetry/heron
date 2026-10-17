@@ -359,6 +359,10 @@ func (e *Engine) DeleteRule(ctx context.Context, id int64) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.rules, id)
+	for silenceID, s := range e.silences {
+		s.RuleIDs = slices.DeleteFunc(s.RuleIDs, func(ruleID int64) bool { return ruleID == id })
+		e.silences[silenceID] = s
+	}
 	for k := range e.states {
 		if k.rule == id {
 			delete(e.states, k)
@@ -535,10 +539,14 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 		if *tr == store.TransitionRecovered {
 			// 恢复事件记配对 firing 的 silenced 值：firing 被静默过的，恢复也不投递。
 			silenced = cur.firedSilenced
+			if cur.state == store.StateFiring && !cur.firedAt.IsZero() {
+				// firedAt 由进入 firing 的转换记录；离线告警已等待宽限期，因此这是告警持续时间，不是节点离线时长。
+				summary += "，告警持续 " + formatAlertDuration(now.Sub(cur.firedAt))
+			}
 		} else if !r.Kind.IsCalendar() {
 			// 日历类提醒（到期、证书到期）永远不被静默，其余种类的触发按此刻的维护开关与静默窗口抑制。
 			e.mu.RLock()
-			silenced = e.silencedNode(nodeID, maintenance, now)
+			silenced = e.silenced(r.ID, nodeID, maintenance, now)
 			e.mu.RUnlock()
 		}
 	}

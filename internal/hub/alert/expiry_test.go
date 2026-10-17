@@ -313,9 +313,9 @@ func TestSweepExpiryFiresAndRecoversWithSpecSummaries(t *testing.T) {
 		value     float64
 	}{
 		{"2026-09-28", store.StateFiring, "节点 node1 将于 2026-09-28 到期（剩 4 天，规则 到期）", 4},
-		{"2026-11-01", store.StateOK, "节点 node1 到期日已更新为 2026-11-01（规则 到期）", 38},
+		{"2026-11-01", store.StateOK, "节点 node1 到期日已更新为 2026-11-01（规则 到期），告警持续 不到 1 分钟", 38},
 		{"2026-09-17", store.StateFiring, "节点 node1 已于 2026-09-17 到期（已过期 7 天，规则 到期）", -7},
-		{"", store.StateOK, "节点 node1 已清除到期日（规则 到期）", 0},
+		{"", store.StateOK, "节点 node1 已清除到期日（规则 到期），告警持续 不到 1 分钟", 0},
 	} {
 		f.billing(t, node1, store.Billing{ExpiresOn: step.expiresOn})
 		before := len(f.events(t))
@@ -362,7 +362,7 @@ func TestSweepExpiryRenewsBeforeEvaluating(t *testing.T) {
 		t.Fatalf("expires_on after renewal = %s, want 2026-10-20", got)
 	}
 	events := f.events(t)
-	if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[0].Summary != "节点 node1 到期日已更新为 2026-10-20（规则 到期）" {
+	if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[0].Summary != "节点 node1 到期日已更新为 2026-10-20（规则 到期），告警持续 不到 1 分钟" {
 		t.Fatalf("events after renewal: %+v", events)
 	}
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
@@ -476,12 +476,12 @@ func TestSweepExpiryRecoverySummaryFollowsTheReason(t *testing.T) {
 		summary    string
 		value      float64
 	}{
-		{"2026-09-27", 2, store.StateOK, "节点 node1 已不在提醒窗口内（规则 到期）", 3},
+		{"2026-09-27", 2, store.StateOK, "节点 node1 已不在提醒窗口内（规则 到期），告警持续 不到 1 分钟", 3},
 		{"2026-09-27", 7, store.StateFiring, "节点 node1 将于 2026-09-27 到期（剩 3 天，规则 到期）", 3},
-		{"2026-09-27", 2, store.StateOK, "节点 node1 已不在提醒窗口内（规则 到期）", 3},
+		{"2026-09-27", 2, store.StateOK, "节点 node1 已不在提醒窗口内（规则 到期），告警持续 不到 1 分钟", 3},
 		{"2026-09-27", 7, store.StateFiring, "节点 node1 将于 2026-09-27 到期（剩 3 天，规则 到期）", 3},
 		{"2026-09-29", 7, store.StateFiring, "", 0},
-		{"2026-09-29", 4, store.StateOK, "节点 node1 到期日已更新为 2026-09-29（规则 到期）", 5},
+		{"2026-09-29", 4, store.StateOK, "节点 node1 到期日已更新为 2026-09-29（规则 到期），告警持续 不到 1 分钟", 5},
 	} {
 		before := len(f.events(t))
 		f.billing(t, node1, store.Billing{ExpiresOn: step.expiresOn})

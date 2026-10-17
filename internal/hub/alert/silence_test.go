@@ -84,7 +84,7 @@ func TestSilenceActive(t *testing.T) {
 	at := func(day, hour, minute int) time.Time {
 		return time.Date(2026, 9, day, hour, minute, 0, 0, loc)
 	}
-	daily := store.Silence{Kind: store.SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00"}
+	daily := store.Silence{AllRules: true, Kind: store.SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00"}
 	for _, c := range []struct {
 		name string
 		s    store.Silence
@@ -97,13 +97,13 @@ func TestSilenceActive(t *testing.T) {
 		{"跨午夜 21:59 不生效", daily, at(24, 21, 59), false},
 		{"起点含", daily, at(24, 22, 0), true},
 		{"终点不含", daily, at(25, 6, 0), false},
-		{"日内窗口 12:00 生效", store.Silence{Kind: store.SilenceDaily, StartHHMM: "09:00", EndHHMM: "17:00"}, at(24, 12, 0), true},
-		{"日内窗口 08:59 不生效", store.Silence{Kind: store.SilenceDaily, StartHHMM: "09:00", EndHHMM: "17:00"}, at(24, 8, 59), false},
-		{"日内窗口 17:00 不生效", store.Silence{Kind: store.SilenceDaily, StartHHMM: "09:00", EndHHMM: "17:00"}, at(24, 17, 0), false},
-		{"一次窗口起点含", store.Silence{Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(1000, 0), true},
-		{"一次窗口内", store.Silence{Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(1999, 0), true},
-		{"一次窗口终点不含", store.Silence{Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(2000, 0), false},
-		{"一次窗口之前", store.Silence{Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(999, 0), false},
+		{"日内窗口 12:00 生效", store.Silence{AllRules: true, Kind: store.SilenceDaily, StartHHMM: "09:00", EndHHMM: "17:00"}, at(24, 12, 0), true},
+		{"日内窗口 08:59 不生效", store.Silence{AllRules: true, Kind: store.SilenceDaily, StartHHMM: "09:00", EndHHMM: "17:00"}, at(24, 8, 59), false},
+		{"日内窗口 17:00 不生效", store.Silence{AllRules: true, Kind: store.SilenceDaily, StartHHMM: "09:00", EndHHMM: "17:00"}, at(24, 17, 0), false},
+		{"一次窗口起点含", store.Silence{AllRules: true, Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(1000, 0), true},
+		{"一次窗口内", store.Silence{AllRules: true, Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(1999, 0), true},
+		{"一次窗口终点不含", store.Silence{AllRules: true, Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(2000, 0), false},
+		{"一次窗口之前", store.Silence{AllRules: true, Kind: store.SilenceOnce, FromAt: 1000, UntilAt: 2000}, time.Unix(999, 0), false},
 	} {
 		if got := SilenceActive(c.s, c.now, loc); got != c.want {
 			t.Errorf("%s: SilenceActive = %v, want %v", c.name, got, c.want)
@@ -136,7 +136,7 @@ func TestDailySilenceAcrossMidnightSuppressesByHubWallClock(t *testing.T) {
 			r := f.nodeRule(t)
 			sender := &recorder{}
 			f.e.SetSender(sender)
-			f.silence(t, store.Silence{Name: "夜间维护", Enabled: true, AllNodes: true, Kind: store.SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00"})
+			f.silence(t, store.Silence{AllRules: true, Name: "夜间维护", Enabled: true, AllNodes: true, Kind: store.SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00"})
 			f.clk.SetWall(c.wallUTC)
 			ev := f.fireOffline(t, r, f.ids[0])
 			if ev.Silenced != c.silenced {
@@ -159,7 +159,7 @@ func TestSilencedFiringRecordsEventWithoutDelivery(t *testing.T) {
 	r := f.channelRule(t)
 	sender := &recorder{}
 	f.e.SetSender(sender)
-	f.silence(t, store.Silence{Name: "维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", NodeIDs: f.ids[:1]})
+	f.silence(t, store.Silence{AllRules: true, Name: "维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", NodeIDs: f.ids[:1]})
 	covered := f.fireOffline(t, r, f.ids[0])
 	// 同一次巡检里覆盖外的节点也触发，它照常投递。
 	uncovered := f.newTransition(t, 0, f.ids[1], store.TransitionFiring)
@@ -185,7 +185,7 @@ func TestSilencedFiringRecordsEventWithoutDelivery(t *testing.T) {
 		}
 	}
 	// 关闭的静默不抑制。
-	f.silence(t, store.Silence{Name: "关闭的", Enabled: false, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", NodeIDs: f.ids[1:]})
+	f.silence(t, store.Silence{AllRules: true, Name: "关闭的", Enabled: false, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", NodeIDs: f.ids[1:]})
 	if ev := f.recoverOffline(t, r, f.ids[1]); ev.Silenced {
 		t.Fatalf("uncovered recovery=%+v", ev)
 	}
@@ -224,7 +224,7 @@ func TestRecoveryFollowsThePairedFiring(t *testing.T) {
 	r := f.nodeRule(t)
 	sender := &recorder{}
 	f.e.SetSender(sender)
-	si := f.silence(t, store.Silence{Name: "维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", NodeIDs: f.ids[:1]})
+	si := f.silence(t, store.Silence{AllRules: true, Name: "维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", NodeIDs: f.ids[:1]})
 	if ev := f.fireOffline(t, r, f.ids[0]); !ev.Silenced {
 		t.Fatalf("firing=%+v", ev)
 	}
@@ -248,7 +248,7 @@ func TestRecoveryFollowsThePairedFiring(t *testing.T) {
 	if ev := f2.fireOffline(t, r2, f2.ids[0]); ev.Silenced {
 		t.Fatalf("firing=%+v", ev)
 	}
-	f2.silence(t, store.Silence{Name: "维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", AllNodes: true})
+	f2.silence(t, store.Silence{AllRules: true, Name: "维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", AllNodes: true})
 	if ev := f2.recoverOffline(t, r2, f2.ids[0]); ev.Silenced || len(ev.Deliveries) != 1 {
 		t.Fatalf("recovery during a silence=%+v, want delivered", ev)
 	}
@@ -260,7 +260,7 @@ func TestSilenceEndingMidFiringDoesNotBackfill(t *testing.T) {
 	r := f.nodeRule(t)
 	sender := &recorder{}
 	f.e.SetSender(sender)
-	f.silence(t, store.Silence{Name: "夜间维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", AllNodes: true})
+	f.silence(t, store.Silence{AllRules: true, Name: "夜间维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", AllNodes: true})
 	if ev := f.fireOffline(t, r, f.ids[0]); !ev.Silenced {
 		t.Fatalf("firing=%+v", ev)
 	}
@@ -285,7 +285,7 @@ func TestExpiryRulesAreNeverSilenced(t *testing.T) {
 	r = f.rule(t, r)
 	sender := &recorder{}
 	f.e.SetSender(sender)
-	f.silence(t, store.Silence{Name: "维护", Enabled: true, AllNodes: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00"})
+	f.silence(t, store.Silence{AllRules: true, Name: "维护", Enabled: true, AllNodes: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00"})
 	f.setMaintenance(t, f.ids[0], true)
 	f.billing(t, f.ids[0], store.Billing{ExpiresOn: "2026-09-28"})
 	f.sweepExpiry(t)
@@ -302,7 +302,7 @@ func TestOnceSilenceBoundsSuppression(t *testing.T) {
 	fire := func(t *testing.T, wall time.Time) store.AlertEvent {
 		f := newFixture(t)
 		r := f.channelRule(t)
-		f.silence(t, store.Silence{Name: "窗口", Enabled: true, AllNodes: true, Kind: store.SilenceOnce, FromAt: from, UntilAt: until})
+		f.silence(t, store.Silence{AllRules: true, Name: "窗口", Enabled: true, AllNodes: true, Kind: store.SilenceOnce, FromAt: from, UntilAt: until})
 		f.clk.SetWall(wall)
 		return f.fireOffline(t, r, f.ids[0])
 	}

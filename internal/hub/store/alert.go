@@ -26,7 +26,8 @@ const (
 	KindTraffic    AlertKind = "traffic"
 )
 
-// IsCalendar 表示按日历日评估的到期提醒；告警引擎对这两类规则豁免维护静默。
+// IsCalendar 表示按日历日评估的到期提醒：到期日每天都在走近，静默窗口不能阻止日历推进。
+// SaveSilence 据此拒绝显式选择这些规则，告警引擎的 apply 据此豁免维护静默，两处共用同一分类。
 func (k AlertKind) IsCalendar() bool { return k == KindExpiry || k == KindCertExpiry }
 
 type ProbeMetric string
@@ -727,7 +728,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "alert_rule", ObjectAlertRule, id); err != nil {
 			return err
 		}
-		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_rule_tag", "alert_state", "alert_baseline"} {
+		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_rule_tag", "alert_state", "alert_baseline", "silence_rule"} {
 			if _, err := tx.Exec("DELETE FROM "+table+" WHERE rule_id = ?", id); err != nil {
 				return err
 			}
@@ -1421,6 +1422,7 @@ const deleteExpiredAlertEvents = "DELETE FROM alert_event WHERE at < ?"
 // 每日重复的静默没有到期，不在清理之列。
 const deleteExpiredSilenceNodes = "DELETE FROM silence_node WHERE silence_id IN (SELECT id FROM silence WHERE kind = ? AND until_at < ?)"
 const deleteExpiredSilenceTags = "DELETE FROM silence_tag WHERE silence_id IN (SELECT id FROM silence WHERE kind = ? AND until_at < ?)"
+const deleteExpiredSilenceRules = "DELETE FROM silence_rule WHERE silence_id IN (SELECT id FROM silence WHERE kind = ? AND until_at < ?)"
 const deleteExpiredSilences = "DELETE FROM silence WHERE kind = ? AND until_at < ?"
 
 // 事件与投递共享事件时间的保留期；同一写事务内先删投递，不能留下孤行。
@@ -1438,7 +1440,7 @@ func (s *Store) PruneAlertEvents(ctx context.Context, before time.Time) (int64, 
 		if err != nil {
 			return err
 		}
-		for _, query := range []string{deleteExpiredSilenceNodes, deleteExpiredSilenceTags, deleteExpiredSilences} {
+		for _, query := range []string{deleteExpiredSilenceNodes, deleteExpiredSilenceTags, deleteExpiredSilenceRules, deleteExpiredSilences} {
 			if _, err := tx.Exec(query, SilenceOnce, before.Unix()); err != nil {
 				return err
 			}

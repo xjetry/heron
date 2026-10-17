@@ -206,7 +206,7 @@ func TestTelegramKeepsFiringAndRecoveredApart(t *testing.T) {
 			if strings.Contains(m.text, "node4") {
 				t.Errorf("merged firing mentions the recovered node:\n%s", m.text)
 			}
-		case m.text == "节点 node4 已恢复上报（规则 离线）":
+		case m.text == "节点 node4 已恢复上报（规则 离线），告警持续 1 分钟":
 			recovered++
 		}
 	}
