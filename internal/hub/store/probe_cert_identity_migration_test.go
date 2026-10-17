@@ -129,9 +129,7 @@ func identitySnapshots44(t *testing.T) (string, string, []identityCertRow) {
 	want := identityCertRows(t, db)[1:]
 	source := &Store{path: path, clk: clock.NewFake(time.Unix(2_000_000_000, 0))}
 	config, metrics := filepath.Join(t.TempDir(), "config.db"), filepath.Join(t.TempDir(), "metrics.db")
-	if err := source.SnapshotConfig(t.Context(), config); err != nil {
-		t.Fatal(err)
-	}
+	snapshotConfigBefore49(t, source, config)
 	if err := source.SnapshotMetrics(t.Context(), metrics); err != nil {
 		t.Fatal(err)
 	}

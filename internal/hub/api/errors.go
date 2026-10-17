@@ -98,6 +98,10 @@ func missingField(root string, kind store.ObjectKind) string {
 }
 
 func (s *Service) operationError(err error, root, operation string) error {
+	var nameError store.NameError
+	if errors.As(err, &nameError) {
+		return connect.NewError(connect.CodeInvalidArgument, nameError)
+	}
 	var kindField store.KindFieldError
 	if errors.As(err, &kindField) {
 		return invalid("%s.%s %s", root, kindField.Field, kindField.Constraint)

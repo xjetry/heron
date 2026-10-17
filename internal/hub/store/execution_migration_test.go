@@ -98,6 +98,8 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeV49Config(t, cfg)
+	removeV48Config(t, cfg)
 	removeV47Config(t, cfg)
 	removeV44Config(t, cfg)
 	removeV41Config(t, cfg)

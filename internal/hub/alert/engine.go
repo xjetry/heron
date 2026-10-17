@@ -305,7 +305,7 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 	}
 	// 除此之外，日历类规则只在启动、日界与相关变化（计费、证书观测更新）时评估：若不在这里评估一次，新建、启用或
 	// 改了提前天数的规则要等到下一个日界才有状态。规则已提交，扫描失败只记日志：保存本身成功了，下一次扫描会再评估。
-	if saved.Enabled && calendarRule(saved.Kind) {
+	if saved.Enabled && saved.Kind.IsCalendar() {
 		if err := e.sweepExpiry(context.WithoutCancel(ctx)); err != nil {
 			e.log.Error("expiry sweep after saving rule failed", "rule_id", saved.ID, "err", err)
 		}
@@ -535,7 +535,7 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 		if *tr == store.TransitionRecovered {
 			// 恢复事件记配对 firing 的 silenced 值：firing 被静默过的，恢复也不投递。
 			silenced = cur.firedSilenced
-		} else if !calendarRule(r.Kind) {
+		} else if !r.Kind.IsCalendar() {
 			// 日历类提醒（到期、证书到期）永远不被静默，其余种类的触发按此刻的维护开关与静默窗口抑制。
 			e.mu.RLock()
 			silenced = e.silencedNode(nodeID, maintenance, now)

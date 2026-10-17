@@ -129,6 +129,8 @@ func TestOfflineGenerationSnapshotRestore(t *testing.T) {
 								dropTCPRateColumns(t, db)
 							}
 							if path == config {
+								removeV49Config(t, db)
+								removeV48Config(t, db)
 								removeV47Config(t, db)
 								removeV44Config(t, db)
 								removeV41Config(t, db)

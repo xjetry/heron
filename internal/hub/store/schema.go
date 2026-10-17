@@ -146,7 +146,9 @@ const ddlTraffic = `CREATE TABLE traffic (
   period_start INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   -- 合计形态基线的集合摘要；逐网卡形态与没有基线时为空。
-  net_counter_epoch TEXT NOT NULL DEFAULT ''
+  net_counter_epoch TEXT NOT NULL DEFAULT '',
+  -- hub 最近一次处理带计数上报的时刻，Unix 秒；0 表示未知。
+  observed_at INTEGER NOT NULL DEFAULT 0
 )`
 
 // traffic_baseline 是 traffic 行的差分基线，一个节点零到多行：零行是没有基线（校正先于首次上报建立的条目）；
@@ -201,6 +203,7 @@ func schemaStatements() []string {
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
+		ddlSilenceRule, ddlSilenceRuleByRule,
 		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
 		ddlHubCoordination, seedHubCoordination, ddlCleanupJob, ddlNodeListRevision, seedNodeListRevision)
 	// 触发器挂在 node、node_facts、node_tag、tag、api_token、api_token_node 上，放在全部建表之后。
@@ -326,7 +329,8 @@ const ddlSilence = `CREATE TABLE silence (
   from_at INTEGER NOT NULL DEFAULT 0,
   until_at INTEGER NOT NULL DEFAULT 0,
   reason TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  all_rules INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlSilenceNode = `CREATE TABLE silence_node (
@@ -341,6 +345,13 @@ const ddlSilenceTag = `CREATE TABLE silence_tag (
   PRIMARY KEY (silence_id, tag_id)
 ) WITHOUT ROWID`
 const ddlSilenceTagByTag = `CREATE INDEX silence_tag_by_tag ON silence_tag (tag_id)`
+
+const ddlSilenceRule = `CREATE TABLE silence_rule (
+  silence_id INTEGER NOT NULL,
+  rule_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, rule_id)
+) WITHOUT ROWID`
+const ddlSilenceRuleByRule = `CREATE INDEX silence_rule_by_rule ON silence_rule (rule_id)`
 
 // 恢复记录随配置备份并按 id 与目标取并集；随机标识由 Restore 在创建时生成，避免秒级时刻相同的事件合并。
 const ddlRestoreRecord = `CREATE TABLE restore_record (

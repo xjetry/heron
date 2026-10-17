@@ -289,6 +289,8 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV49Config(t, cfg)
+			removeV48Config(t, cfg)
 			removeV47Config(t, cfg)
 			removeV44Config(t, cfg)
 			removeV41Config(t, cfg)
@@ -363,6 +365,16 @@ func removeV44Config(t *testing.T, config *sql.DB) {
 func removeV47Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
+}
+
+func removeV49Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "DROP TABLE silence_rule; ALTER TABLE silence DROP COLUMN all_rules")
+}
+
+func removeV48Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE traffic DROP COLUMN observed_at")
 }
 
 func removeV42Config(t *testing.T, config *sql.DB) {
@@ -480,6 +492,8 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV49Config(t, cfg)
+	removeV48Config(t, cfg)
 	removeV47Config(t, cfg)
 	removeV44Config(t, cfg)
 	removeV41Config(t, cfg)

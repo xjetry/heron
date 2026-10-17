@@ -26,6 +26,9 @@ const (
 	KindTraffic    AlertKind = "traffic"
 )
 
+// IsCalendar 表示按日历日评估的到期提醒；告警引擎对这两类规则豁免维护静默。
+func (k AlertKind) IsCalendar() bool { return k == KindExpiry || k == KindCertExpiry }
+
 type ProbeMetric string
 
 const (

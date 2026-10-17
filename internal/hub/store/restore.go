@@ -530,6 +530,16 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV47Config
 			}
+		case 48:
+			if layer == "config" {
+				if err := migrateV48Config(tx); err != nil {
+					return fmt.Errorf("migrate config snapshot to 48: %w", err)
+				}
+			}
+		case 49:
+			if layer == "config" {
+				statements = migrationV49Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

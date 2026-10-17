@@ -73,6 +73,60 @@ var migrations = map[int]func(*sql.Tx) error{
 	45: migrateV45Config,
 	46: execAll(migrationV46Config),
 	47: execAll(migrationV47),
+	48: migrateV48Config,
+	49: execAll(migrationV49Config),
+}
+
+// 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。
+// 旧库没有记录带计数上报的时刻，observed_at 保持默认的未知值，不从 updated_at 猜测。
+func migrateV48Config(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE traffic ADD COLUMN observed_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	rows, err := tx.Query("SELECT id, name FROM node")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type renamedNode struct {
+		id   int64
+		name string
+	}
+	var renamed []renamedNode
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return err
+		}
+		if clean := AgentNodeName(name); clean != name {
+			renamed = append(renamed, renamedNode{id: id, name: clean})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, node := range renamed {
+		if _, err := tx.Exec("UPDATE node SET name = ? WHERE id = ?", node.name, node.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。
+var migrationV49Config = []string{
+	`ALTER TABLE silence ADD COLUMN all_rules INTEGER NOT NULL DEFAULT 0`,
+	`UPDATE silence SET all_rules = 1`,
+	`CREATE TABLE silence_rule (
+  silence_id INTEGER NOT NULL,
+  rule_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, rule_id)
+) WITHOUT ROWID`,
+	`CREATE INDEX silence_rule_by_rule ON silence_rule (rule_id)`,
 }
 
 // v46：节点资料版本表、种子行与推进它的触发器（含义见 schema.go 的 ddlNodeListRevision）。只建新对象、不改已有行；

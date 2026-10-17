@@ -19,7 +19,7 @@ var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "traffic_baseline", "probe_task", "probe_task_node", "probe_meta", "probe_cert", "probe_cert_presented",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_baseline", "alert_event", "alert_delivery",
 	"notify_channel", "setting", "admin", "admin_security", "api_token", "api_token_node", "operation", "tag", "node_tag", "theme", "theme_version", "theme_selection", "restore_record", "probe_task_tag", "alert_rule_tag", "silence", "silence_node", "silence_tag",
-	"cleanup_job",
+	"cleanup_job", "silence_rule",
 }
 
 var metricsSnapshotTables = []string{

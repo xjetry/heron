@@ -45,9 +45,7 @@ func TestRestoreConfigSnapshotFrom46KeepsTokens(t *testing.T) {
 	}
 	source := &Store{path: path, clk: clock.NewFake(time.Unix(2_000_000_000, 0))}
 	config := filepath.Join(t.TempDir(), "config.db")
-	if err := source.SnapshotConfig(t.Context(), config); err != nil {
-		t.Fatal(err)
-	}
+	snapshotConfigBefore49(t, source, config)
 	target := filepath.Join(t.TempDir(), "target.db")
 	if _, err := Restore(t.Context(), target, config, "", "", time.Now(), slog.Default()); err != nil {
 		t.Fatal(err)

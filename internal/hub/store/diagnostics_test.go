@@ -170,6 +170,8 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 			t.Fatal(err)
 		}
 		if path == config {
+			removeV49Config(t, db)
+			removeV48Config(t, db)
 			removeV41Config(t, db)
 			removeV40Config(t, db)
 			removeV39Config(t, db)

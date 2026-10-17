@@ -1,0 +1,172 @@
+package store
+
+import (
+	"database/sql"
+	"log/slog"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/xjetry/heron/internal/clock"
+)
+
+// 冻结各版结构，独立于生产迁移中的数据变换。
+var schemaV48 = append(slices.Clone(schemaV47),
+	`ALTER TABLE traffic ADD COLUMN observed_at INTEGER NOT NULL DEFAULT 0`,
+)
+
+var schemaV49 = append(slices.Clone(schemaV48),
+	`ALTER TABLE silence ADD COLUMN all_rules INTEGER NOT NULL DEFAULT 0`,
+	`CREATE TABLE silence_rule (
+  silence_id INTEGER NOT NULL,
+  rule_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, rule_id)
+) WITHOUT ROWID`,
+	`CREATE INDEX silence_rule_by_rule ON silence_rule (rule_id)`,
+)
+
+func removeV49Config(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec("DROP TABLE silence_rule; ALTER TABLE silence DROP COLUMN all_rules"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func removeV48Config(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec("ALTER TABLE traffic DROP COLUMN observed_at"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedNameScopeMigration(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for i, name := range []string{strings.Repeat("名", 65), strings.Repeat("界", 63) + " x", "kept", " \t\n "} {
+		if _, err := db.Exec("INSERT INTO node (id,name,token_hash,created_at) VALUES (?,?,?,1)", i+1, name, hash(byte(i+1))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, query := range []string{
+		`INSERT INTO traffic (node_id,boot_id,total_rx,total_tx,period_rx,period_tx,period_start,updated_at) VALUES (1,'',100,200,30,40,1,2)`,
+		`INSERT INTO silence (id,name,kind,created_at) VALUES (1,'legacy','once',1)`,
+	} {
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertMigratedNames(t *testing.T, s *Store) {
+	t.Helper()
+	for i, want := range []string{strings.Repeat("名", 64), strings.Repeat("界", 63), "kept", "node"} {
+		n, err := s.GetNode(t.Context(), int64(i+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n.Name != want || utf8.RuneCountInString(n.Name) < 1 || utf8.RuneCountInString(n.Name) > 64 {
+			t.Errorf("node %d name = %q, want %q (1-64 runes)", i+1, n.Name, want)
+		}
+		if clean, err := CleanName(n.Name); err != nil || clean != n.Name {
+			t.Errorf("node %d name is not canonical: CleanName = %q, %v", i+1, clean, err)
+		}
+	}
+}
+
+func assertMigratedScopeAndObservation(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var observed, allRules int
+	if err := db.QueryRow("SELECT observed_at FROM traffic WHERE node_id=1").Scan(&observed); err != nil {
+		t.Fatal(err)
+	}
+	if observed != 0 {
+		t.Errorf("legacy traffic observed_at = %d, want 0 (unknown)", observed)
+	}
+	if err := db.QueryRow("SELECT all_rules FROM silence WHERE id=1").Scan(&allRules); err != nil {
+		t.Fatal(err)
+	}
+	if allRules != 1 {
+		t.Errorf("legacy silence all_rules = %d, want 1", allRules)
+	}
+}
+
+func TestMigrationFromV47NormalizesNamesAndPreservesScope(t *testing.T) {
+	t.Parallel()
+	s := migrateFrom(t, 47, seedNameScopeMigration)
+	assertMigratedNames(t, s)
+	assertMigratedScopeAndObservation(t, s.r)
+}
+
+func TestMigrationFromV48PreservesSilenceScope(t *testing.T) {
+	t.Parallel()
+	s := migrateFrom(t, 48, seedNameScopeMigration)
+	assertMigratedScopeAndObservation(t, s.r)
+}
+
+// 旧库没有规则关联表；导出它实际拥有的配置表，不在生产快照路径跳过缺表。
+func snapshotConfigBefore49(t *testing.T, source *Store, path string) {
+	t.Helper()
+	tables := slices.DeleteFunc(slices.Clone(configSnapshotTables), func(table string) bool { return table == "silence_rule" })
+	if err := source.snapshot(t.Context(), path, "config", tables, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestoreConfigSnapshotFrom47NormalizesNamesAndPreservesScope(t *testing.T) {
+	t.Parallel()
+	path, db := frozenSchemaFixture(t, 47)
+	seedNameScopeMigration(t, db)
+	source := &Store{path: path, clk: clock.NewFake(time.Unix(2_000_000_000, 0))}
+	config := filepath.Join(t.TempDir(), "config.db")
+	snapshotConfigBefore49(t, source, config)
+	target := filepath.Join(t.TempDir(), "target.db")
+	if _, err := Restore(t.Context(), target, config, "", "", time.Now(), slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(target, clock.Real(), slog.Default(), RequireCurrentSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	assertMigratedNames(t, s)
+	assertMigratedScopeAndObservation(t, s.r)
+}
+
+func TestSnapshotRuleScopeAndTrafficObservationRoundTrip(t *testing.T) {
+	t.Parallel()
+	source, _ := open(t)
+	for _, query := range []string{
+		`INSERT INTO node (id,name,token_hash,created_at) VALUES (1,'node',x'01',1)`,
+		`INSERT INTO alert_rule (id,name,kind,all_nodes,created_at) VALUES (42,'offline','offline',1,1)`,
+		`INSERT INTO silence (id,name,kind,all_nodes,from_at,until_at,created_at,all_rules) VALUES (1,'maintenance','once',1,1,100,1,0)`,
+		`INSERT INTO silence_rule (silence_id,rule_id) VALUES (1,42)`,
+		`INSERT INTO traffic (node_id,boot_id,total_rx,total_tx,period_rx,period_tx,period_start,updated_at,observed_at) VALUES (1,'',100,200,30,40,1,200,123)`,
+	} {
+		mustExec(t, source, query)
+	}
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := source.SnapshotConfig(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target.db")
+	if _, err := Restore(t.Context(), target, config, "", "", time.Now(), slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(target, clock.Real(), slog.Default(), RequireCurrentSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var observed, ruleID, allRules int
+	if err := s.r.QueryRow("SELECT observed_at FROM traffic WHERE node_id=1").Scan(&observed); err != nil || observed != 123 {
+		t.Errorf("restored observed_at = %d, %v; want 123", observed, err)
+	}
+	if err := s.r.QueryRow("SELECT rule_id FROM silence_rule WHERE silence_id=1").Scan(&ruleID); err != nil || ruleID != 42 {
+		t.Errorf("restored silence rule = %d, %v; want 42", ruleID, err)
+	}
+	if err := s.r.QueryRow("SELECT all_rules FROM silence WHERE id=1").Scan(&allRules); err != nil || allRules != 0 {
+		t.Errorf("restored all_rules = %d, %v; want 0", allRules, err)
+	}
+}

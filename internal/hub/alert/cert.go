@@ -8,10 +8,6 @@ import (
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
-// calendarRule 是日历类规则：到期与证书到期都按日历日评估（sweepExpiry 的节奏），
-// 也都与节点到期一样不受维护静默约束——日历提醒的触发条件每天都在走近，静默窗口压不住它。
-func calendarRule(k store.AlertKind) bool { return k == store.KindExpiry || k == store.KindCertExpiry }
-
 // sweepCertExpiry 评估全部启用的证书到期规则，与到期规则同一次 sweepExpiry、同一个 today。
 // 观测来自 probe_cert 的最新一份：(节点, 任务) 没有行即无读数——不评估、不恢复，已有状态原样保留；
 // 证书更换后 days_left 变大，下一轮（或由 ingest 的变化触发的那一轮）按同一状态机恢复。
