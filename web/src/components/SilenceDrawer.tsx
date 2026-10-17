@@ -25,7 +25,7 @@ export const silenceDraftOf = (s: Silence): SilenceDraft => ({
   name: s.name, enabled: s.enabled, kind: s.kind, allNodes: s.allNodes, nodeIds: new Set(s.nodeIds),
   selectorTags: s.selectorTags, dynamic: s.selectorTags.length > 0, allRules: s.allRules, ruleIds: new Set(s.ruleIds),
   startHhmm: s.startHhmm || "22:00", endHhmm: s.endHhmm || "06:00",
-  fromAt: s.fromAt, untilAt: s.untilAt, reason: s.reason,
+  fromAt: s.kind === SilenceKind.ONCE ? s.fromAt : null, untilAt: s.kind === SilenceKind.ONCE ? s.untilAt : null, reason: s.reason,
 });
 
 export function firingSilenceDraft(rule: AlertRule, nodeId: bigint, nodeName: string, now: bigint): SilenceDraft {

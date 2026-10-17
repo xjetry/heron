@@ -199,6 +199,15 @@ it("规则范围回显并双向切换，指定规则多选且不包含日历类"
   expect(saved[1].silence).toMatchObject({ allRules: true, ruleIds: [] });
 });
 
+it("编辑每日静默再切换到一次性时窗口为空，不把非适用零值显示成纪元时间", async () => {
+  render();
+  await openRowAction("夜间维护（#7）", "编辑");
+  const form = screen.getByRole("form", { name: "编辑 夜间维护（#7）" });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(SilenceKind.ONCE) } });
+  expect([segmentsValue("开始", within(form)), segmentsValue("结束", within(form))]).toEqual(["", ""]);
+  expect(form).toBeInvalid();
+});
+
 it("列表显示规则范围，规则全部删除时提示失效且编辑不能提交空范围", async () => {
   const save = vi.fn(async () => ({}));
   render({ saveSilence: save });
