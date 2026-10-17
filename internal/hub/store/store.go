@@ -442,9 +442,12 @@ type schemaReader interface {
 }
 
 // schemaAdmission 只读取版本与对象数；Open 与 Restore 在任何建表或迁移之前共用这一判定。
+// 版本号与对象数必须来自同一快照；下面的单条 SELECT 将两项读取限定在 SQLite 的同一个读快照内，
+// 即使调用方传入的是锁外的 *sql.DB 也成立。拆成两次读取会把并发建库提交前的版本 0
+// 与提交后的对象数拼在一起，将同时首次打开同一个新库误判为外来库。
 func schemaAdmission(ctx context.Context, db schemaReader, policy SchemaPolicy) (schemaAction, int, error) {
-	var v int
-	if err := db.QueryRowContext(ctx, "PRAGMA main.user_version").Scan(&v); err != nil {
+	var v, objects int
+	if err := db.QueryRowContext(ctx, "SELECT user_version, (SELECT count(*) FROM main.sqlite_schema) FROM main.pragma_user_version()").Scan(&v, &objects); err != nil {
 		return 0, v, err
 	}
 	switch {
@@ -463,10 +466,6 @@ func schemaAdmission(ctx context.Context, db schemaReader, policy SchemaPolicy) 
 		// 只有 sqlite_schema 里确实不存在任何对象才是空库。有对象却没有版本号
 		// 说明这是别的程序建的库，在它上面叠加 schemaStatements 会把两套 schema 的对象混进
 		// 同一个文件——stats --db 指错文件时就会把陌生库当空库建满全部表。
-		var objects int
-		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM main.sqlite_schema").Scan(&objects); err != nil {
-			return 0, v, err
-		}
 		if objects > 0 {
 			return 0, v, errors.New("database has tables but no schema version; not a Heron database")
 		}
@@ -516,7 +515,9 @@ func logSchemaCreated(log *slog.Logger) {
 // 回滚日志与 WAL 两种模式下这样备份都能完成（同版本驱动实测）。VACUUM INTO 返回后第二条连接不再持读锁，提交取
 // 排他锁时不会被它挡住；它用完即关。
 //
-// 锁外的那次准入只决定库已在当前版本时直接返回、不取写锁：运行中的 hub 旁边执行离线命令是常态，不该去等它的写。
+// 锁外准入由 schemaAdmission 的单条查询保证版本与对象数来自同一快照，先拒绝不兼容的库；
+// 已在当前版本时直接返回、不取写锁：运行中的 hub 旁边执行离线命令是常态，不该去等它的写。
+// 空库或旧版本只决定需要取锁，不能据此建库或迁移；快照之后别人可能已提交，必须在锁内重新准入。
 func migrate(path string, policy SchemaPolicy, log *slog.Logger, backups backupFiles) error {
 	schemaDB, err := sql.Open("sqlite", dsn(path, writeTxLock))
 	if err != nil {
