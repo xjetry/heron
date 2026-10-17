@@ -1,5 +1,5 @@
 import { type Page } from "@playwright/test";
-import { AdminService, DeliveryFailure } from "../src/gen/heron/v1/admin_pb";
+import { AdminService, AlertKind, DeliveryFailure, SilenceKind, type SaveSilenceRequest } from "../src/gen/heron/v1/admin_pb";
 import { AgentService } from "../src/gen/heron/v1/agent_pb";
 import { AddressDetectionState, BillingCycle } from "../src/gen/heron/v1/types_pb";
 import { boxOf, expect, fulfillRpc, login, must, mustField, rpc, rpcRoute, test } from "./fixtures";
@@ -16,6 +16,43 @@ async function openRowAction(page: Page, label: string, action: string) {
   await page.getByRole('button', { name: `更多操作 ${label}`, exact: true }).click();
   await page.getByRole('menuitem', { name: `${action} ${label}`, exact: true }).click();
 }
+
+test('触发中的节点一键静默按 hub 秒级时钟预填并提交', async ({ page }, testInfo) => {
+  const now = 1700000037n;
+  const saved: SaveSilenceRequest[] = [];
+  await page.goto('/admin/login');
+  await login(page);
+  await page.clock.setFixedTime(new Date(Number(now + 3600n) * 1000));
+  await page.route(rpcRoute(AdminService.method.listNodes), (route) => fulfillRpc(route, AdminService.method.listNodes, () => ({ nodes: [{ id: 101n, name: '东京' }] })));
+  await page.route(rpcRoute(AdminService.method.listNotifyChannels), (route) => fulfillRpc(route, AdminService.method.listNotifyChannels, () => ({})));
+  await page.route(rpcRoute(AdminService.method.listProbeTasks), (route) => fulfillRpc(route, AdminService.method.listProbeTasks, () => ({})));
+  await page.route(rpcRoute(AdminService.method.listSilences), (route) => fulfillRpc(route, AdminService.method.listSilences, () => ({ now })));
+  await page.route(rpcRoute(AdminService.method.listAlertRules), (route) => fulfillRpc(route, AdminService.method.listAlertRules, () => ({
+    rules: [{ id: 71n, name: '离线', kind: AlertKind.OFFLINE, enabled: true }],
+    states: [{ ruleId: 71n, nodeId: 101n, state: 'firing' }],
+  })));
+  await page.route(rpcRoute(AdminService.method.saveSilence), (route) => fulfillRpc(route, AdminService.method.saveSilence, (request) => { saved.push(request); return {}; }));
+  await page.goto('/admin/alerts');
+  await page.getByRole('button', { name: '静默 东京', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '新建维护静默' });
+  await expect(drawer.getByLabel('名称', { exact: true })).toHaveValue('离线 · 东京');
+  await expect(drawer.getByRole('combobox', { name: '规则', exact: true })).toHaveValue('selected');
+  await expect(drawer.getByRole('checkbox', { name: '离线（#71）', exact: true })).toBeChecked();
+  await expect(drawer.getByRole('radio', { name: '指定节点', exact: true })).toBeChecked();
+  await expect(drawer.getByRole('checkbox', { name: '东京（#101）', exact: true })).toBeChecked();
+  await expect(drawer.getByRole('combobox', { name: '类型', exact: true })).toHaveValue(String(SilenceKind.ONCE));
+  const seconds = String(Number(now % 60n)).padStart(2, '0');
+  await expect(drawer.getByRole('textbox', { name: '开始 秒', exact: true })).toHaveValue(seconds);
+  await expect(drawer.getByRole('textbox', { name: '结束 秒', exact: true })).toHaveValue(seconds);
+  await page.screenshot({ path: testInfo.outputPath('silence-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await page.screenshot({ path: testInfo.outputPath('silence-mobile.png'), fullPage: true });
+  await drawer.getByRole('button', { name: '创建', exact: true }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].silence).toMatchObject({ name: '离线 · 东京', allRules: false, ruleIds: [71n], allNodes: false, nodeIds: [101n], kind: SilenceKind.ONCE, fromAt: now, untilAt: now + 86400n });
+  await expect(drawer).toHaveCount(0);
+});
 
 test('注册命令复制与移动端布局', async ({ page, context, browserName }, testInfo) => {
   await page.goto('/admin/login');

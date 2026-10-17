@@ -175,15 +175,21 @@ it("时刻按 24 小时制补零输出，越界时刻与必填为空都拦下表
 it("日期加时刻输出 datetime-local 同格式的值，月历只改日期段", () => {
   const changed = vi.fn();
   function Both() {
-    const [value, setValue] = useState("2026-10-04T22:00");
+    const [value, setValue] = useState("2026-10-04T22:00:37");
     return <form aria-label="静默"><DateTimeInput label="开始" required value={value} onChange={(v) => { setValue(v); changed(v); }} /></form>;
   }
   render(<Both />);
-  expect(within(screen.getByRole("group", { name: "开始" })).getAllByRole("textbox").map((i) => (i as HTMLInputElement).value)).toEqual(["2026", "10", "04", "22", "00"]);
+  expect(within(screen.getByRole("group", { name: "开始" })).getAllByRole("textbox").map((i) => (i as HTMLInputElement).value)).toEqual(["2026", "10", "04", "22", "00", "37"]);
   fireEvent.click(screen.getByRole("button", { name: "选择开始" }));
   fireEvent.click(screen.getByRole("button", { name: "2026-10-09" }));
-  expect(changed).toHaveBeenLastCalledWith("2026-10-09T22:00");
+  expect(changed).toHaveBeenLastCalledWith("2026-10-09T22:00:37");
+  expect(screen.getByRole("form")).toBeValid();
+  fireEvent.change(screen.getByRole("textbox", { name: "开始 秒" }), { target: { value: "60" } });
+  expect(screen.getByRole("form")).toBeInvalid();
+  fireEvent.change(screen.getByRole("textbox", { name: "开始 秒" }), { target: { value: "7" } });
+  expect(changed).toHaveBeenLastCalledWith("2026-10-09T22:00:07");
+  expect(screen.getByRole("form")).toBeValid();
   fireEvent.change(screen.getByRole("textbox", { name: "开始 分" }), { target: { value: "" } });
-  expect(changed).toHaveBeenLastCalledWith("2026-10-09T22:");
+  expect(changed).toHaveBeenLastCalledWith("2026-10-09T22::7");
   expect(screen.getByRole("form")).toBeInvalid();
 });

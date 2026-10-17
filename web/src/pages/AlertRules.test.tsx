@@ -24,7 +24,7 @@ const rules = create(ListAlertRulesResponseSchema, {
   ],
 });
 const routes = [{ path: "/alerts", Component: AlertRules }];
-const base: AdminImpl = { listNodes: async () => nodes, listNotifyChannels: async () => channels, listProbeTasks: async () => tasks, listAlertRules: async () => rules };
+const base: AdminImpl = { listNodes: async () => nodes, listNotifyChannels: async () => channels, listProbeTasks: async () => tasks, listAlertRules: async () => rules, listSilences: async () => ({ now: 1700000037n }) };
 function openRowAction(label: string, action: string) {
   fireEvent.click(screen.getByRole("button", { name: `更多操作 ${label}` }));
   fireEvent.click(screen.getByRole("menuitem", { name: `${action} ${label}` }));
@@ -67,7 +67,7 @@ it("轮询成功更新状态，随后刷新失败仍保留同一编辑表单与�
     fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(calls).toBe(2);
-    expect(screen.getByRole("cell", { name: "触发：法兰克福" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "触发：法兰克福 静默" })).toBeInTheDocument();
     expect(screen.getByRole("form", { name: "编辑 丢包（#8）" })).toBe(form);
     expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
@@ -685,7 +685,7 @@ it("静默中的 firing 状态标注已静默，恢复配对不由面板推断",
     ],
   }) });
   const row = within((await screen.findByRole("button", { name: "更多操作 离线（#7）" })).closest("tr")!);
-  expect(row.getByText(/触发：东京（已静默）、法兰克福/)).toBeInTheDocument();
+  expect(row.getByRole("cell", { name: /触发：/ })).toHaveTextContent("触发：东京（已静默） 静默、法兰克福 静默");
 });
 
 it("?state=firing 只列触发中规则，非法值忽略，清除筛选回写 URL", async () => {

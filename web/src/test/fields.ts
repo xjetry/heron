@@ -3,9 +3,9 @@ import { fireEvent, screen, within } from "@testing-library/react";
 // 分段日期 / 时刻控件（components/DateInput.tsx）的测试入口：控件是一个以 label 为名的 group，里面每段一个文本框。
 type Scope = Pick<typeof screen, "getByRole">;
 const segmentsOf = (label: string, scope: Scope) => within(scope.getByRole("group", { name: label })).getAllByRole<HTMLInputElement>("textbox");
-const SEPARATORS: Record<number, string[]> = { 2: ["", ":"], 3: ["", "-", "-"], 5: ["", "-", "-", "T", ":"] };
+const SEPARATORS: Record<number, string[]> = { 2: ["", ":"], 3: ["", "-", "-"], 6: ["", "-", "-", "T", ":", ":"] };
 
-// 按控件的标准写法（YYYY-MM-DD、HH:MM、YYYY-MM-DDTHH:MM）逐段填入；"" 清空全部分段。
+// 按控件的标准写法（YYYY-MM-DD、HH:MM、YYYY-MM-DDTHH:MM:SS）逐段填入；"" 清空全部分段。
 export function fillSegments(label: string, value: string, scope: Scope = screen) {
   const inputs = segmentsOf(label, scope);
   const parts = value === "" ? [] : value.split(/[-T:]/);

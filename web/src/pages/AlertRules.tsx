@@ -16,6 +16,7 @@ import { liveIds, withId } from "../lib/ids";
 import { isHTTPSTarget } from "../lib/probes";
 import { EmptyState } from "../components/EmptyState";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
+import { canSilence, firingSilenceDraft, SilenceDrawer, toSilence, useSilenceClock, type SilenceDraft } from "../components/SilenceDrawer";
 
 type Draft = NodeSelection & {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
@@ -116,6 +117,11 @@ export function AlertRules() {
   };
   const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; rule: AlertRule; opener: HTMLElement } | null>(null);
   const [toggling, setToggling] = useState<bigint | null>(null);
+  const [silenceDrawer, setSilenceDrawer] = useState<{ initial: SilenceDraft; opener: HTMLElement } | null>(null);
+  const { list: silences, hubNow } = useSilenceClock();
+  const silence = useMutation(AdminService.method.saveSilence, {
+    onSuccess: () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listSilences, cardinality: "finite" }) }),
+  });
   const { error, mutationOptions } = useLatestError();
   const nodes = useNodeList({});
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
@@ -149,6 +155,7 @@ export function AlertRules() {
     <section>
       <PageHeader title="告警规则" actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建告警规则</button>} />
       {gate.banner}
+      {errorBanner(silences.error)}
       <div className="filter-row" role="group" aria-label="筛选">
         <label className="check"><input type="checkbox" aria-label="只看触发中" checked={firingOnly} onChange={(event) => setFiringOnly(event.target.checked)} />只看触发中</label>
         {firingOnly && <button type="button" className="link" onClick={() => setFiringOnly(false)}>清除筛选</button>}
@@ -169,7 +176,13 @@ export function AlertRules() {
               <td data-label="作用域" className="wrap-text">{r.allNodes ? "全部节点" : r.selectorTags.length ? `标签：${r.selectorTags.join(" ∩ ")}（当前 ${r.nodeIds.length}）` : r.nodeIds.length ? <span title={r.nodeIds.map(nodeName).join("、")}>{r.nodeIds.length} 个指定节点</span> : <span className="muted">无节点</span>}</td>
               <td data-label="通知渠道" className="wrap-text">{r.channelIds.map(channelName).join("、") || <span className="muted">只记事件</span>}</td>
               <td data-label="启用"><input type="checkbox" role="switch" className="switch" aria-label={`启用 ${label}`} checked={r.enabled} disabled={busy} aria-busy={toggling === r.id || undefined} onChange={() => toggleEnabled(r)} /></td>
-              <td data-label="状态">{r.enabled ? <RuleState states={byRule.get(r.id)} nodeName={nodeName} /> : <span className="muted">—</span>}</td>
+              <td data-label="状态">{r.enabled ? <RuleState states={byRule.get(r.id)} nodeName={nodeName} silenceDisabled={!silences.data || silence.isPending}
+                onSilence={canSilence(r.kind) ? (id, opener) => {
+                  const now = hubNow();
+                  if (now === null) return;
+                  silence.reset();
+                  setSilenceDrawer({ initial: firingSilenceDraft(r, id, nodeName(id), now), opener });
+                } : undefined} /> : <span className="muted">—</span>}</td>
               <td data-column="actions"><RowMenu label={label} items={[
                 { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", rule: r, opener: trigger }); } },
                 { label: "删除", danger: true, confirm: `确认删除 ${label}`, note: "事件记录保留", disabled: busy || remove.isPending, onSelect: () => remove.mutate({ id: r.id }) },
@@ -182,6 +195,9 @@ export function AlertRules() {
         onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
       {drawer?.kind === "edit" && <AlertRuleDrawer key={String(drawer.rule.id)} title={`编辑 ${withId(drawer.rule.name, drawer.rule.id)}`} submitLabel="保存" {...lists} initial={draftOf(drawer.rule)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => update.mutate({ rule: toRule(drawer.rule.id, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
+      {silenceDrawer && <SilenceDrawer title="新建维护静默" submitLabel="创建" nodes={nodeList} rules={rulesData.rules} initial={silenceDrawer.initial} hubNow={hubNow}
+        pending={silence.isPending} error={silence.error} opener={silenceDrawer.opener} onClose={() => setSilenceDrawer(null)}
+        onSubmit={(d) => silence.mutate({ silence: toSilence(0n, d, nodeList, rulesData.rules) }, { onSuccess: () => setSilenceDrawer(null) })} />}
     </section>
   );
 }
@@ -345,14 +361,19 @@ function ResourceFields({ draft, set }: { draft: Draft; set: (patch: Partial<Dra
   );
 }
 
-function RuleState({ states, nodeName }: { states: RuleStates | undefined; nodeName: (id: bigint) => string }) {
+function RuleState({ states, nodeName, onSilence, silenceDisabled }: {
+  states: RuleStates | undefined; nodeName: (id: bigint) => string;
+  onSilence?: (id: bigint, opener: HTMLElement) => void; silenceDisabled: boolean;
+}) {
   if (!states) return <span className="muted">正常</span>;
   // flapping 由 hub 的离线巡检判定（pending 且只因抖动抑制而未触发），silenced 由事件生成处标记
   // （firing 进入时处于维护静默覆盖内，本次触发与它的恢复都不投递），面板只标出，不重算。
   const names = (list: RuleStates["firing"]) => list.map((s) => nodeName(s.nodeId) + (s.flapping ? "（抖动中）" : "") + (s.state === "firing" && s.silenced ? "（已静默）" : "")).join("、");
   return (
     <>
-      {states.firing.length > 0 && <span className="error">触发：{names(states.firing)}</span>}
+      {states.firing.length > 0 && <span className="error">触发：{states.firing.map((s, i) => <span key={String(s.nodeId)}>
+        {i > 0 && "、"}{names([s])}{onSilence && <> <button type="button" className="link" aria-label={`静默 ${nodeName(s.nodeId)}`} disabled={silenceDisabled} onClick={(event) => onSilence(s.nodeId, event.currentTarget)}>静默</button></>}
+      </span>)}</span>}
       {states.firing.length > 0 && states.pending.length > 0 && " "}
       {states.pending.length > 0 && <span>待定：{names(states.pending)}</span>}
     </>

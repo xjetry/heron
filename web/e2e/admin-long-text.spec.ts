@@ -37,7 +37,7 @@ test("长内容不撑破管理端表格：截断标识、折行句子与列表",
   await save({ kind: ProbeKind.ICMP, target: "1.1.1.1" }, { selectorTags: tags });
   const rule = mustField(await hub.rpc(AdminService.method.saveAlertRule, { rule: { name: `${browserName} 长目标丢包`, kind: AlertKind.PROBE, enabled: true, selectorTags: tags, taskId: longTask, metric: ProbeMetric.LOSS_PCT, threshold: 20, forMinutes: 5, channelIds } }), "rule").id;
   hub.deleteAtEnd(AdminService.method.deleteAlertRule, { id: rule });
-  const silence = mustField(await hub.rpc(AdminService.method.saveSilence, { silence: { name: `${browserName} 长作用域静默`, enabled: true, selectorTags: tags, kind: SilenceKind.DAILY, startHhmm: "01:00", endHhmm: "02:00", reason: "原因".repeat(60) } }), "silence").id;
+  const silence = mustField(await hub.rpc(AdminService.method.saveSilence, { silence: { name: `${browserName} 长作用域静默`, enabled: true, allRules: true, selectorTags: tags, kind: SilenceKind.DAILY, startHhmm: "01:00", endHhmm: "02:00", reason: "原因".repeat(60) } }), "silence").id;
   hub.deleteAtEnd(AdminService.method.deleteSilence, { id: silence });
   const token = mustField(await hub.rpc(AdminService.method.createApiToken, { name: `${browserName}-wide-token`, grant: { permissions: [TokenPermission.CREATE], allNodes: false, nodeIds } }), "apiToken").id;
   hub.deleteAtEnd(AdminService.method.deleteApiToken, { id: token });

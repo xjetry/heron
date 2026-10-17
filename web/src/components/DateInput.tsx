@@ -6,7 +6,7 @@ import { Icon } from "./Icon";
 // 日期、时刻、日期加时刻三种控件共用的分段输入：每段只收数字，填满自动跳到下一段，空段退格回上一段，
 // 输入分隔符也跳段。外观与读法不随浏览器语言变（原生 date / time / datetime-local 在英文浏览器下是 mm/dd/yyyy 与 AM/PM）。
 //
-// 值的约定：全空是 ""；各段齐全（exact 段填满位数）时输出补零后的标准写法（YYYY-MM-DD、HH:MM、YYYY-MM-DDTHH:MM，
+// 值的约定：全空是 ""；各段齐全（exact 段填满位数）时输出补零后的标准写法（YYYY-MM-DD、HH:MM、YYYY-MM-DDTHH:MM:SS，
 // 与原生控件的 value 同一格式）；否则把各段原样连起来输出，调用方据此知道"填了但没填完"，表单校验也据此拦下。
 //
 // 受控同步：只有 value 这个 prop 真的变了、且不是本控件刚发出的值时，才按它重置各段。所以调用方可以不接受未完成的值
@@ -27,9 +27,9 @@ const KINDS = {
   date: { segments: DATE, valid: isDate, invalidText: "请输入四位年份和有效的完整日期", calendar: true },
   time: { segments: TIME, valid: isTime, invalidText: "请输入 00:00 到 23:59 之间的时刻", calendar: false },
   datetime: {
-    segments: [...DATE, { ...TIME[0], sep: "T" }, TIME[1]],
-    valid: (v: string) => { const [d, t = ""] = v.split("T"); return isDate(d) && isTime(t); },
-    invalidText: "请输入有效的完整日期与 00:00 到 23:59 之间的时刻",
+    segments: [...DATE, { ...TIME[0], sep: "T" }, TIME[1], { name: "秒", length: 2, placeholder: "SS", sep: ":" }],
+    valid: (v: string) => { const [d, t = ""] = v.split("T"); return isDate(d) && /^\d{2}:\d{2}:[0-5]\d$/.test(t) && isTime(t.slice(0, 5)); },
+    invalidText: "请输入有效的完整日期与 00:00:00 到 23:59:59 之间的时刻",
     calendar: true,
   },
 } satisfies Record<string, Kind>;

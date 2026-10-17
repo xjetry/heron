@@ -59,6 +59,8 @@ test("自绘日期控件：未填完的日期不进 URL，月历选日写入筛�
   await page.getByRole("button", { name: "新建维护静默" }).click();
   const drawer = page.getByRole("dialog", { name: "新建维护静默" });
   await drawer.getByLabel("类型").selectOption({ label: "一次性" });
+  await expect(drawer.getByRole("textbox", { name: "开始 秒", exact: true })).toBeVisible();
+  await expect(drawer.getByRole("combobox", { name: "规则", exact: true })).toHaveValue("all");
   await drawer.getByRole("button", { name: "选择开始" }).click();
   await expect(page.getByRole("dialog", { name: "选择开始" })).toBeVisible();
   await page.keyboard.press("Escape");

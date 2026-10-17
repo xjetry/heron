@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { ListNodesResponseSchema, ListSilencesResponseSchema, SilenceKind, type SaveSilenceRequest } from "../gen/heron/v1/admin_pb";
+import { AlertKind, ListNodesResponseSchema, ListSilencesResponseSchema, SilenceKind, type SaveSilenceRequest } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Silences } from "./Silences";
 import { fillSegments, segmentsValue } from "../test/fields";
@@ -10,13 +10,16 @@ import { expectEmptyState } from "../test/empty";
 import { stringContaining } from "../test/matchers";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
-const silences = create(ListSilencesResponseSchema, { silences: [
-  { silence: { id: 7n, name: "夜间维护", enabled: true, allNodes: true, kind: SilenceKind.DAILY, startHhmm: "22:00", endHhmm: "06:00", reason: "机房巡检", createdAt: 100n }, active: true },
-  { silence: { id: 8n, name: "升级窗口", enabled: true, kind: SilenceKind.ONCE, fromAt: 1760000000n, untilAt: 1760086400n, nodeIds: [1n], createdAt: 100n }, active: false },
+const silences = create(ListSilencesResponseSchema, { now: 1700000037n, silences: [
+  { silence: { id: 7n, name: "夜间维护", enabled: true, allNodes: true, allRules: true, kind: SilenceKind.DAILY, startHhmm: "22:00", endHhmm: "06:00", reason: "机房巡检", createdAt: 100n }, active: true },
+  { silence: { id: 8n, name: "升级窗口", enabled: true, ruleIds: [21n], kind: SilenceKind.ONCE, fromAt: 1760000000n, untilAt: 1760086400n, nodeIds: [1n], createdAt: 100n }, active: false },
   { silence: { id: 9n, name: "停用的", enabled: false, allNodes: true, kind: SilenceKind.DAILY, startHhmm: "00:00", endHhmm: "23:59", createdAt: 100n }, active: true },
 ] });
 const routes = [{ path: "/silences", Component: Silences }];
-const base: AdminImpl = { listNodes: async () => nodes, listSilences: async () => silences };
+const base: AdminImpl = { listNodes: async () => nodes, listSilences: async () => silences, listAlertRules: async () => ({ rules: [
+  { id: 21n, name: "离线", kind: AlertKind.OFFLINE }, { id: 22n, name: "资源", kind: AlertKind.RESOURCE },
+  { id: 23n, name: "到期", kind: AlertKind.EXPIRY }, { id: 24n, name: "证书", kind: AlertKind.CERT_EXPIRY },
+] }) };
 const render = (impl: AdminImpl = {}) => renderWithAdmin({ ...base, ...impl }, routes, "/silences");
 
 async function openCreate() {
@@ -51,7 +54,7 @@ it("每日静默只提交窗口字段，一次性静默只提交起止时间", a
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].silence).toMatchObject({
-    name: "夜间维护", enabled: true, allNodes: true, nodeIds: [], selectorTags: [],
+    name: "夜间维护", enabled: true, allNodes: true, nodeIds: [], selectorTags: [], allRules: true, ruleIds: [],
     kind: SilenceKind.DAILY, startHhmm: "22:00", endHhmm: "06:00", fromAt: 0n, untilAt: 0n,
   });
   // 创建成功后抽屉关闭，重新打开时使用空草稿。
@@ -59,14 +62,14 @@ it("每日静默只提交窗口字段，一次性静默只提交起止时间", a
   const again = await openCreate();
   fireEvent.change(within(again).getByLabelText("名称"), { target: { value: "升级窗口" } });
   fireEvent.change(within(again).getByLabelText("类型"), { target: { value: String(SilenceKind.ONCE) } });
-  fillSegments("开始", "2026-10-04T22:00", within(again));
-  fillSegments("结束", "2026-10-05T06:00", within(again));
+  fillSegments("开始", "2026-10-04T22:00:37", within(again));
+  fillSegments("结束", "2026-10-05T06:00:43", within(again));
   fireEvent.click(within(again).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(2));
   expect(saved[1].silence).toMatchObject({
     kind: SilenceKind.ONCE, startHhmm: "", endHhmm: "",
-    fromAt: BigInt(Math.floor(new Date("2026-10-04T22:00").getTime() / 1000)),
-    untilAt: BigInt(Math.floor(new Date("2026-10-05T06:00").getTime() / 1000)),
+    fromAt: BigInt(Math.floor(new Date("2026-10-04T22:00:37").getTime() / 1000)),
+    untilAt: BigInt(Math.floor(new Date("2026-10-05T06:00:43").getTime() / 1000)),
   });
 });
 
@@ -117,7 +120,7 @@ it("编辑中的草稿不被周期刷新覆盖", async () => {
   } finally { vi.useRealTimers(); }
 });
 
-it("页头、五列表格与作用域单选使用统一契约", async () => {
+it("页头、六列表格与作用域单选使用统一契约", async () => {
   render();
   await screen.findByRole("heading", { name: "维护静默", level: 1 });
   const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
@@ -127,7 +130,7 @@ it("页头、五列表格与作用域单选使用统一契约", async () => {
     modes: within(form).getAllByRole("radio").map((radio) => radio.getAttribute("aria-label")),
     scope: within(form).getByRole("radiogroup", { name: "作用域方式" }).textContent,
   }).toEqual({
-    headers: ["名称", "窗口", "作用域", "状态", "操作"],
+    headers: ["名称", "窗口", "规则", "作用域", "状态", "操作"],
     modes: ["全部节点", "动态标签选择器", "指定节点"],
     scope: stringContaining("只保存本次选中的节点，之后标签变化不会改变分配"),
   });
@@ -168,4 +171,67 @@ it("动态标签为空不发请求，选择标签后仍可保存", async () => {
 it("没有维护静默时只有空态卡，不画只有表头的表", async () => {
   render({ listSilences: async () => ({ silences: [] }) });
   await expectEmptyState("还没有维护静默。", { region: "维护静默管理" });
+});
+
+it("规则范围回显并双向切换，指定规则多选且不包含日历类", async () => {
+  const saved: SaveSilenceRequest[] = [];
+  render({ saveSilence: async (req) => { saved.push(req); return {}; } });
+  await openRowAction("升级窗口（#8）", "编辑");
+  const form = within(screen.getByRole("form", { name: "编辑 升级窗口（#8）" }));
+  expect(form.getByLabelText("规则")).toHaveValue("selected");
+  expect(form.getByRole("checkbox", { name: "离线（#21）" })).toBeChecked();
+  expect(form.queryByRole("checkbox", { name: "到期（#23）" })).toBeNull();
+  expect(form.queryByRole("checkbox", { name: "证书（#24）" })).toBeNull();
+  fireEvent.click(form.getByRole("checkbox", { name: "资源（#22）" }));
+  fireEvent.change(form.getByLabelText("规则"), { target: { value: "all" } });
+  expect(form.queryByRole("group", { name: "指定规则" })).toBeNull();
+  fireEvent.change(form.getByLabelText("规则"), { target: { value: "selected" } });
+  expect(form.getByRole("checkbox", { name: "资源（#22）" })).toBeChecked();
+  fireEvent.click(form.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].silence).toMatchObject({ allRules: false, ruleIds: [21n, 22n], fromAt: 1760000000n, untilAt: 1760086400n });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await openRowAction("升级窗口（#8）", "编辑");
+  const again = within(screen.getByRole("form", { name: "编辑 升级窗口（#8）" }));
+  fireEvent.change(again.getByLabelText("规则"), { target: { value: "all" } });
+  fireEvent.click(again.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved[1].silence).toMatchObject({ allRules: true, ruleIds: [] });
+});
+
+it("列表显示规则范围，规则全部删除时提示失效且编辑不能提交空范围", async () => {
+  const save = vi.fn(async () => ({}));
+  render({ saveSilence: save });
+  const daily = within((await screen.findByRole("cell", { name: /夜间维护/ })).closest("tr")!);
+  expect(daily.getByRole("cell", { name: "全部规则" })).toBeInTheDocument();
+  expect(within(screen.getByRole("cell", { name: "升级窗口" }).closest("tr")!).getByRole("cell", { name: "离线" })).toBeInTheDocument();
+  expect(within(screen.getByRole("cell", { name: "停用的" }).closest("tr")!).getByText("规则已全部删除，不再生效")).toBeInTheDocument();
+  await openRowAction("停用的（#9）", "编辑");
+  const form = within(screen.getByRole("form", { name: "编辑 停用的（#9）" }));
+  expect(form.getByLabelText("规则")).toHaveValue("selected");
+  expect(form.getByRole("button", { name: "保存" })).toBeDisabled();
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(save).not.toHaveBeenCalled();
+});
+
+it.each([["1 小时", 3600n], ["1 天", 86400n], ["7 天", 604800n]] as const)("%s 快捷时长按 hub 非整分钟时钟，偏差一小时和打开后经过时间均保留", async (label, duration) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(Number(silences.now + 3600n) * 1000);
+  try {
+    const saved: SaveSilenceRequest[] = [];
+    render({ saveSilence: async (req) => { saved.push(req); return {}; } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    fireEvent.click(screen.getByRole("button", { name: "新建维护静默" }));
+    const form = within(screen.getByRole("form"));
+    fireEvent.change(form.getByLabelText("名称"), { target: { value: "维护" } });
+    fireEvent.change(form.getByLabelText("类型"), { target: { value: String(SilenceKind.ONCE) } });
+    fireEvent.click(form.getByRole("button", { name: label }));
+    expect(form.getByRole("textbox", { name: "开始 秒" })).toHaveValue(String(new Date(Number(silences.now) * 1000).getSeconds()).padStart(2, "0"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    fireEvent.click(form.getByRole("button", { name: label }));
+    fireEvent.click(form.getByRole("button", { name: "创建" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(saved.map((req) => ({ from: req.silence?.fromAt, until: req.silence?.untilAt }))).toEqual([{ from: silences.now + 5n, until: silences.now + 5n + duration }]);
+  } finally { vi.useRealTimers(); }
 });
