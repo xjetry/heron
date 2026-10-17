@@ -803,3 +803,20 @@ func TestPublicNodeQueriesSeeOnlyPublicNodes(t *testing.T) {
 		}
 	}
 }
+
+// _dqs=0 在 dsn() 里，store 的每条连接都关掉了双引号字符串回退：不存在的双引号列名是错误，
+// 不再是字符串字面量。去掉这个参数，这条用例的查询会成功返回字符串 "no_such_column"。
+func TestStoreConnectionsDisableDQS(t *testing.T) {
+	t.Parallel()
+	s, _ := open(t)
+	if _, _, err := s.CreateNode(t.Context(), NewNode{Name: "n"}, hash(1)); err != nil {
+		t.Fatal(err)
+	}
+	for _, db := range []*sql.DB{s.w, s.r} {
+		var got string
+		err := db.QueryRow(`SELECT "no_such_column" FROM node`).Scan(&got)
+		if err == nil || !strings.Contains(err.Error(), "no such column") {
+			t.Fatalf(`SELECT "no_such_column": err=%v val=%q, want a "no such column" error`, err, got)
+		}
+	}
+}

@@ -115,8 +115,11 @@ const writeTxLock = "&_txlock=immediate"
 
 func dsn(path string, extra string) string {
 	// path 是文件名而非 URI；编码路径部分，避免 #、? 和 % 改变实际打开的数据库。
+	// _dqs=0 关掉 SQLite 的双引号字符串回退（modernc.org/sqlite v1.59.0 支持，DDL 与 DML 两侧都关）：
+	// 回退会把不存在的双引号列名当字符串字面量——恢复按列名复制（restoreColumnList）遇到缺列的快照时
+	// 会把列名文本静默写进库。ATTACH 的库与主库同连接，同受这个开关约束。
 	u := url.URL{Path: path}
-	return "file:" + u.EscapedPath() + "?_pragma=busy_timeout(" + strconv.FormatInt(busyTimeout.Milliseconds(), 10) + ")&_pragma=synchronous(NORMAL)&_pragma=journal_size_limit(" + strconv.Itoa(walSizeLimit) + ")" + extra
+	return "file:" + u.EscapedPath() + "?_dqs=0&_pragma=busy_timeout(" + strconv.FormatInt(busyTimeout.Milliseconds(), 10) + ")&_pragma=synchronous(NORMAL)&_pragma=journal_size_limit(" + strconv.Itoa(walSizeLimit) + ")" + extra
 }
 
 // SchemaPolicy 由打开库的入口显式选择。离线命令不得迁移库：否则用新二进制查看 stats

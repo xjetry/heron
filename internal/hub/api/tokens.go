@@ -85,9 +85,9 @@ func (s *Service) ListApiTokens(ctx context.Context, _ *connect.Request[heronv1.
 }
 
 func (s *Service) CreateApiToken(ctx context.Context, req *connect.Request[heronv1.CreateApiTokenRequest]) (*connect.Response[heronv1.CreateApiTokenResponse], error) {
-	name, err := cleanName(req.Msg.GetName())
+	name, err := store.CleanName(req.Msg.GetName())
 	if err != nil {
-		return nil, err
+		return nil, invalidName(err)
 	}
 	grant, err := tokenGrant(req.Msg.Grant)
 	if err != nil {
@@ -134,9 +134,9 @@ func (s *Service) DeleteApiToken(ctx context.Context, req *connect.Request[heron
 }
 
 func (s *Service) UpdateApiToken(ctx context.Context, req *connect.Request[heronv1.UpdateApiTokenRequest]) (*connect.Response[heronv1.UpdateApiTokenResponse], error) {
-	name, err := cleanName(req.Msg.GetName())
+	name, err := store.CleanName(req.Msg.GetName())
 	if err != nil {
-		return nil, err
+		return nil, invalidName(err)
 	}
 	grant, err := tokenGrant(req.Msg.Grant)
 	if err != nil {

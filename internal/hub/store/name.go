@@ -39,3 +39,26 @@ func AgentNodeName(raw string) string {
 	}
 	return clean
 }
+
+// UncleanNameError 表示写入的名字不是它自己的 CleanName 结果：带可去除的首尾空白或控制字符。
+// 写入口要求调用方先规范化（CleanName 或 AgentNodeName），见到它说明调用方漏了清洗。
+type UncleanNameError struct{ Name string }
+
+func (e UncleanNameError) Error() string {
+	return fmt.Sprintf("name must not have leading or trailing whitespace or control characters; got %q", e.Name)
+}
+
+// checkNodeName 是库里节点名的准入判定：name 必须是它自己的 CleanName 结果
+// （不变式：库里每个节点名都等于自己的清洗结果，长度 1–MaxNameRunes）。
+// 两个写入口（insertNode、UpdateNodeTasks）与配置快照的恢复预检共用这一处；调用方负责规范化，
+// 这里只拒绝不改写——静默改写会把两个不同的输入落成同一个名字。
+func checkNodeName(name string) error {
+	clean, err := CleanName(name)
+	if err != nil {
+		return err
+	}
+	if clean != name {
+		return UncleanNameError{Name: name}
+	}
+	return nil
+}

@@ -76,7 +76,12 @@ func runNode(args []string) error {
 		if *name == "" {
 			return errors.New("--name is required")
 		}
-		nid, tok, err := a.CreateNode(ctx, store.NewNode{Name: *name})
+		// 与 api 同一规则（store.CleanName），报错原样输出；这层漏了还有 insertNode 的准入兜底（两层各有测试）。
+		clean, err := store.CleanName(*name)
+		if err != nil {
+			return err
+		}
+		nid, tok, err := a.CreateNode(ctx, store.NewNode{Name: clean})
 		if err != nil {
 			return err
 		}

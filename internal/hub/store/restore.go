@@ -566,9 +566,11 @@ func attachRestoreSources(ctx context.Context, db *sql.DB, sources []restoreSour
 
 func preflightRestoreSources(ctx context.Context, target string, sources []restoreSource) (err error) {
 	targetDSN := dsn(target, "&mode=ro")
+	memory := false
 	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-		// 内存空库给出 SQLite 默认页大小；新目标采用它，在创建文件前拒绝不匹配的来源。
+		// 内存库给出 SQLite 默认页大小；新目标采用它，在创建文件前拒绝不匹配的来源。
 		targetDSN = ":memory:"
+		memory = true
 	} else if err != nil {
 		return err
 	}
@@ -578,6 +580,21 @@ func preflightRestoreSources(ctx context.Context, target string, sources []resto
 	}
 	defer func() { err = errors.Join(err, db.Close()) }()
 	db.SetMaxOpenConns(1)
+	if memory {
+		// 目标还不存在时主库是空的，列集合检查（checkSnapshotColumns）没有参照；
+		// 在内存库里建出当前 schema（与 Restore 给新目标建的同一份 DDL），预检的判定与目标存在时一致。
+		setup, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if err := createSchema(ctx, setup); err != nil {
+			_ = setup.Rollback()
+			return err
+		}
+		if err := setup.Commit(); err != nil {
+			return err
+		}
+	}
 	if err := attachRestoreSources(ctx, db, sources); err != nil {
 		return err
 	}
@@ -624,6 +641,78 @@ func restoreColumnList(ctx context.Context, tx *sql.Tx, table string) (string, e
 	return strings.Join(columns, ","), rows.Err()
 }
 
+// layerColumns 读一层里一张表的列名集合。表不存在时是空集合，由存在性检查先行排除。
+func layerColumns(ctx context.Context, tx *sql.Tx, schema, table string) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT name FROM pragma_table_info(?, ?)", table, schema)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
+}
+
+// checkSnapshotColumns 落实「迁移后的快照与当前 schema 逐表同列」：每层每张表与主库按列名集合比对（不看物理顺序
+// ——快照是 CREATE TABLE AS 拷出的，列序随源库历史）。migrateSnapshot 对每层套用与生产迁移相同的逐版步骤；
+// 这条不变式由这里的显式检查承载——migrateFrom 家族验证的是生产库的 migrate 路径，快照按层挑选步骤不经那些测试。
+// 不能靠复制语句报错兜底：快照多出的列不在目标列清单（restoreColumnList 按目标列名）里，INSERT SELECT 静默丢弃、
+// 永不报错；快照缺少的列在双引号字符串回退（DQS）开着时被当成字符串字面量写入，同样不报错。连接已统一 _dqs=0
+// 关掉回退（dsn），少列时复制语句会报 no such column——但那是写入事务中途（同一事务里前面若干表已被删改、
+// 靠回滚撤销）的裸错，而这条检查在任何写入之前给出按层按表的偏差清单。
+func checkSnapshotColumns(ctx context.Context, tx *sql.Tx, layer string, tables []string) error {
+	var version int
+	if err := tx.QueryRowContext(ctx, "PRAGMA main.user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version != schemaVersion {
+		// 主库不在当前版本时没有可比的参照：旧版本目标由 Restore 的 schemaAdmission 用版本错误拒绝；
+		// 预检里目标尚不存在时主库是建过当前 schema 的内存库（preflightRestoreSources），不走这个分支。
+		return nil
+	}
+	for _, table := range tables {
+		want, err := layerColumns(ctx, tx, "main", table)
+		if err != nil {
+			return err
+		}
+		got, err := layerColumns(ctx, tx, layer, table)
+		if err != nil {
+			return err
+		}
+		var missing, extra []string
+		for column := range want {
+			if !got[column] {
+				missing = append(missing, column)
+			}
+		}
+		for column := range got {
+			if !want[column] {
+				extra = append(extra, column)
+			}
+		}
+		if len(missing) > 0 || len(extra) > 0 {
+			var detail strings.Builder
+			fmt.Fprintf(&detail, "%s snapshot table %s: column set differs from the current schema:", layer, table)
+			if len(missing) > 0 {
+				slices.Sort(missing)
+				fmt.Fprintf(&detail, " snapshot lacks %v", missing)
+			}
+			if len(extra) > 0 {
+				slices.Sort(extra)
+				fmt.Fprintf(&detail, " snapshot has extra %v", extra)
+			}
+			return errors.New(detail.String())
+		}
+	}
+	return nil
+}
+
 func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []string, pageSize int) (int64, error) {
 	for _, table := range append(slices.Clone(tables), "snapshot_meta", "sqlite_sequence") {
 		var count int
@@ -633,6 +722,9 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		if count != 1 {
 			return 0, fmt.Errorf("%s snapshot missing table %s", layer, table)
 		}
+	}
+	if err := checkSnapshotColumns(ctx, tx, layer, tables); err != nil {
+		return 0, err
 	}
 	var count, size int
 	var version, at sql.NullInt64
@@ -667,7 +759,7 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		if err := validateSnapshotAddressPins(ctx, tx); err != nil {
 			return 0, err
 		}
-		if err := validateSnapshotNodeFlags(ctx, tx); err != nil {
+		if err := validateSnapshotNodes(ctx, tx); err != nil {
 			return 0, err
 		}
 		var unmatched int
@@ -716,9 +808,10 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 	return rows.Err()
 }
 
-// validateSnapshotNodeFlags 与写入口同一个互斥判定：节点同时是维护中且已出租的快照拒绝恢复，
-// 不让两条写路径（UpdateNodeTasks 与恢复）出现不同答案。
-func validateSnapshotNodeFlags(ctx context.Context, tx *sql.Tx) error {
+// validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkNodeName，与 insertNode、UpdateNodeTasks 共用）
+// 和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
+// 规范化（迁移 48 的 AgentNodeName），所以被名字拒绝的只能是当前版本快照里就没清洗的值。
+func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, "SELECT id,name,maintenance,rented FROM config.node")
 	if err != nil {
 		return err
@@ -730,6 +823,9 @@ func validateSnapshotNodeFlags(ctx context.Context, tx *sql.Tx) error {
 		var maintenance, rented bool
 		if err := rows.Scan(&id, &name, &maintenance, &rented); err != nil {
 			return err
+		}
+		if err := checkNodeName(name); err != nil {
+			return fmt.Errorf("config node %d (%q): %w", id, name, err)
 		}
 		if err := checkNodeFlags(maintenance, rented); err != nil {
 			return fmt.Errorf("config node %d (%s) has maintenance and rented both set", id, name)

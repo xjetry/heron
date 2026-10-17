@@ -683,7 +683,7 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 }
 
 // 快照里 maintenance 与 rented 同真被拒绝：迁移 44 只加列、不回填，校验在恢复预检
-// validateSnapshotNodeFlags 里显式拒绝，而不是让两个标志共存进库。
+// validateSnapshotNodes 里显式拒绝，而不是让两个标志共存进库。
 func TestRestoreRejectsNodeWithBothFlags(t *testing.T) {
 	t.Parallel()
 	config, metrics := restoreSnapshots(t)

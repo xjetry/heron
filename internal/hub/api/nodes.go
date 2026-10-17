@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	maxNameRunes = 64
 	maxNoteRunes = 1024
 	// 公开备注是站长写给访客的一行说明，与私有备注 note 同在 UpdateNode 整体替换；见 cleanPublicRemark。
 	maxPublicRemarkRunes = 100
@@ -159,16 +158,6 @@ func nodeProto(n store.Node, today time.Time) *heronv1.Node {
 	return out
 }
 
-// cleanName 按 sanitize.Text 清洗，页面标题（cleanAppearance）用同一个口径。
-// 按完整清洗结果计字符数；先截字节会把超长输入变成合法名称。
-func cleanName(raw string) (string, error) {
-	name := sanitize.Text(raw, len(raw))
-	if n := utf8.RuneCountInString(name); n == 0 || n > maxNameRunes {
-		return "", invalid("name must be 1–%d characters after trimming whitespace and control characters; got %d", maxNameRunes, n)
-	}
-	return name, nil
-}
-
 func cleanNote(raw string) (string, error) {
 	note := sanitize.String(raw, len(raw))
 	if n := utf8.RuneCountInString(note); n > maxNoteRunes {
@@ -221,15 +210,20 @@ func (s *Service) ListNodes(ctx context.Context, req *connect.Request[heronv1.Li
 }
 
 func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.CreateNodeRequest]) (*connect.Response[heronv1.CreateNodeResponse], error) {
-	name, err := cleanName(req.Msg.GetName())
+	// 节点名规则的唯一事实源在 store（CleanName）；拒绝经 invalidName 映射为 InvalidArgument，文案不变。
+	name, err := store.CleanName(req.Msg.GetName())
 	if err != nil {
-		return nil, err
+		return nil, invalidName(err)
 	}
 	billing, err := billingOf(req.Msg.GetBilling())
 	if err != nil {
 		return nil, err
 	}
 	id, tok, err := s.nodes.Create(ctx, store.NewNode{Name: name, Billing: billing, Rented: req.Msg.GetRented()})
+	// insertNode 的准入复查同样拒绝未规范化的名字：这里已清洗过不会触发，映射留着兜住任何绕过入口校验的路径。
+	if mapped := invalidName(err); mapped != nil {
+		return nil, mapped
+	}
 	if errors.Is(err, store.ErrNodeLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, err)
 	}
@@ -248,9 +242,9 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.C
 }
 
 func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.UpdateNodeRequest]) (*connect.Response[heronv1.UpdateNodeResponse], error) {
-	name, err := cleanName(req.Msg.GetName())
+	name, err := store.CleanName(req.Msg.GetName())
 	if err != nil {
-		return nil, err
+		return nil, invalidName(err)
 	}
 	note, err := cleanNote(req.Msg.GetNote())
 	if err != nil {

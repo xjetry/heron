@@ -246,7 +246,7 @@ func migrateV43Metrics(tx *sql.Tx) error {
 
 // v44：节点的已出租开关。已有节点都未出租。只在配置层，迁移与配置快照共用。
 // 与 maintenance 的互斥不进库：裁决在 UpdateNodeTasks（checkNodeFlags），快照恢复进库前由
-// validateSnapshotNodeFlags 复核。
+// validateSnapshotNodes 复核。
 var migrationV44Config = []string{`ALTER TABLE node ADD COLUMN rented INTEGER NOT NULL DEFAULT 0`}
 
 // v42：会话签发时的来源地址（会话可列可撤）。已有会话取空串：升级前签发的会话没有来源记录，

@@ -119,9 +119,10 @@ func (t timeline) coverageStart() int64 { return t.start[2] }
 func (t timeline) createdAt() int64 { return t.coverageStart() - 86400 }
 
 // sqliteDSN 与 store 的 dsn 同一编码：路径按 URL 路径部分转义，# ? % 不会改变实际打开的文件。
+// _dqs=0 与被测的 store 连接同规则（关掉双引号字符串回退），量出来的才是生产连接的行为。
 func sqliteDSN(path, pragmas string) string {
 	u := url.URL{Path: path}
-	return "file:" + u.EscapedPath() + "?" + pragmas
+	return "file:" + u.EscapedPath() + "?_dqs=0&" + pragmas
 }
 
 // errorLogger 只放出 store 的错误日志：生成与测量期间的告警（例如写协程的排队提示）不是结果的一部分。

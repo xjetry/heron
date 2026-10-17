@@ -2,7 +2,10 @@ package store
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -169,4 +172,72 @@ func TestSnapshotRuleScopeAndTrafficObservationRoundTrip(t *testing.T) {
 	if err := s.r.QueryRow("SELECT all_rules FROM silence WHERE id=1").Scan(&allRules); err != nil || allRules != 0 {
 		t.Errorf("restored all_rules = %d, %v; want 0", allRules, err)
 	}
+}
+
+// 当前版本快照里的未清洗节点名（绕过写入口直接改出来的）在恢复预检被拒：快照不经写入口，预检是它进库前唯一的检查。
+// 旧版快照的同问题由 migrateSnapshot 规范化（TestRestoreConfigSnapshotFrom47NormalizesNamesAndPreservesScope），
+// 所以被这条拒绝的只能是当前版本就非法的值。被拒后目标库保持原样。
+func TestRestoreRejectsUncleanNodeName(t *testing.T) {
+	t.Parallel()
+	source, _ := open(t)
+	nodeID, _, err := source.CreateNode(t.Context(), NewNode{Name: "ok"}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 绕过写入口的准入（insertNode 只拦经它的写入），直接改出一个非法名字进快照。
+	mustExec(t, source, "UPDATE node SET name = ? WHERE id = ?", "  padded  ", nodeID)
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := source.SnapshotConfig(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	source.Close()
+	want := fmt.Sprintf("config node %d (\"  padded  \"): name must not have leading or trailing whitespace or control characters; got \"  padded  \"", nodeID)
+
+	t.Run("fresh target", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "target.db")
+		_, err := Restore(t.Context(), target, config, "", "", time.Now(), slog.Default())
+		if err == nil || err.Error() != want {
+			t.Fatalf("err=%v, want %q", err, want)
+		}
+		var unclean UncleanNameError
+		if !errors.As(err, &unclean) {
+			t.Fatalf("%T is not an UncleanNameError", err)
+		}
+		if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("target created despite the rejection")
+		}
+	})
+
+	t.Run("existing target", func(t *testing.T) {
+		seed, target := openAt(t)
+		marker, _, err := seed.CreateNode(t.Context(), NewNode{Name: "marker"}, hash(7))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed.Close()
+		if _, err := Restore(t.Context(), target, config, "", "", time.Now(), slog.Default()); err == nil || err.Error() != want {
+			t.Fatalf("err=%v, want %q", err, want)
+		}
+		// 目标库保持不变：node 表内容、schema 版本都原样。
+		reopened, err := Open(target, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.Default(), MigrateSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reopened.Close()
+		n, err := reopened.GetNode(t.Context(), marker)
+		if err != nil || n.Name != "marker" {
+			t.Fatalf("marker node = %+v, %v", n, err)
+		}
+		if got := nodeCount(t, reopened); got != 1 {
+			t.Fatalf("target holds %d nodes after a rejected restore", got)
+		}
+		db, err := sql.Open("sqlite", dsn(target, "&mode=ro"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if got := userVersion(t, db); got != schemaVersion {
+			t.Fatalf("user_version = %d, want %d", got, schemaVersion)
+		}
+	})
 }

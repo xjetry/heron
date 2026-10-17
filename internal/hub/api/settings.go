@@ -144,7 +144,7 @@ func appearanceGiven(in *heronv1.Settings) bool {
 }
 
 // cleanAppearance 校验并清洗给出的外观，返回可以原样存储与下发的值。
-// 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
+// 标题会显示在页面与标签页上，与节点名（store.CleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
 func cleanAppearance(in *heronv1.Settings) (store.SiteAppearance, error) {
 	if n := len(in.GetTitle()); n > maxTitleBytes {
 		return store.SiteAppearance{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)

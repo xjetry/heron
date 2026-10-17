@@ -113,7 +113,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{" \x01 状态\u202e 页 \x7f\t", "\u0085a\u200cb", "\u2066x\u2069 "} {
-		name, err := cleanName(raw)
+		name, err := store.CleanName(raw)
 		if err != nil {
 			t.Fatal(err)
 		}

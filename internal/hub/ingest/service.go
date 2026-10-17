@@ -26,7 +26,6 @@ import (
 	"github.com/xjetry/heron/internal/hub/live"
 	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/ratelimit"
-	"github.com/xjetry/heron/internal/hub/sanitize"
 	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/hub/traffic"
 	"github.com/xjetry/heron/internal/hub/updates"
@@ -327,10 +326,9 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[heronv1.Reg
 	if !ok {
 		panic("ingest: Register reached without the source-address rate limit; mount Service.Handler")
 	}
-	name := sanitize.Text(req.Msg.GetName(), maxHostString)
-	if name == "" {
-		name = "node"
-	}
+	// 注册名走共享的 agent 口径（AgentNodeName）：清洗后截到 64 个字符、截断露出的尾空白再裁掉、空了用缺省名；
+	// 超长不拒绝注册。入库即规范形，store 的 insertNode 准入（checkNodeName）不会拒绝它。
+	name := store.AgentNodeName(req.Msg.GetName())
 	id, tok, err := s.auth.Register(ctx, req.Msg.GetKey(), name, from)
 	if errors.Is(err, auth.ErrDenied) {
 		return nil, unauthenticated()

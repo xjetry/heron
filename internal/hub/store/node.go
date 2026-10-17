@@ -260,7 +260,7 @@ func (e RentedConflictError) Error() string {
 }
 
 // checkNodeFlags 裁决 rented 与 maintenance 的互斥：节点两个布尔列没有 CHECK 约束，写入口（UpdateNodeTasks）
-// 与快照恢复预检（validateSnapshotNodeFlags）共用这一判定，绕开 API 的写入也撞同一拒绝。
+// 与快照恢复预检（validateSnapshotNodes）共用这一判定，绕开 API 的写入也撞同一拒绝。
 func checkNodeFlags(maintenance, rented bool) error {
 	if maintenance && rented {
 		return RentedConflictError{Maintenance: true}
@@ -484,13 +484,19 @@ type NodeUpdateResult struct {
 
 // UpdateNodeTasks 在标签替换的同一事务内裁决任务上限、推进版本并读取新覆盖；注册表只发布这份已提交结果。
 // 手填出口地址在这里裁决（canonicalAddressPin）并以规范形写入，取值不合法返回 AddressPinError、什么都不写：节点的写入口
-// 只有这一个（UpdateNode 与 ExecuteChange 都经它），检查放在这里，任何调用方都绕不开。rented 与 maintenance 的互斥
-// 同理（规则见 Node 类型注释，checkNodeFlags）：冲突返回 RentedConflictError，一行都不改。
+// 只有这一个（UpdateNode 与 ExecuteChange 都经它），检查放在这里，任何调用方都绕不开。节点名同一处准入（checkNodeName）：
+// 不是自身 CleanName 结果的名字（超长、全空白、未清洗）返回 NameError 或 UncleanNameError、一行都不改。rented 与
+// maintenance 的互斥同理（规则见 Node 类型注释，checkNodeFlags）：冲突返回 RentedConflictError，一行都不改。
 func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (result NodeUpdateResult, err error) {
 	if e.TrafficQuotaBytes == 0 {
 		e.TrafficQuotaMode = "sum"
 	}
 	err = s.writeChange(ctx, ChangeTarget{Action: ActionUpdateNode, ResourceID: id}, func(tx *sql.Tx) error {
+		// 节点名与手填出口地址同一个准入口径：写入口只有这一个（UpdateNode 与 ExecuteChange 都经它），
+		// 检查放在这里，任何调用方都绕不开。
+		if err := checkNodeName(e.Name); err != nil {
+			return err
+		}
 		v4, err := canonicalAddressPin(e.IPv4Pin, true)
 		if err != nil {
 			return err
@@ -815,6 +821,11 @@ func (s *Store) CreateNode(ctx context.Context, spec NewNode, tokenHash []byte) 
 //     事务回滚，节点不建；
 //   - 推进任务版本：新节点的清单从空变为全部 all_nodes 任务，按 bumpProbeVersion 的不变式必须推进。
 func insertNode(tx *sql.Tx, spec NewNode, tokenHash []byte, createdAt int64, public bool) (int64, NewNodeTasks, error) {
+	// 节点名准入（checkNodeName）：CreateNode 的调用方先过 CleanName，RegisterNode 的名字来自 AgentNodeName；
+	// 谁漏了都由这里拒绝，库里每个节点名都等于自己的清洗结果这条不变式不靠调用方自觉。
+	if err := checkNodeName(spec.Name); err != nil {
+		return 0, NewNodeTasks{}, err
+	}
 	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public, price, currency, billing_cycle, expires_on, auto_renew, rented)
 		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ?, ?, ? FROM node`, spec.Name, tokenHash, createdAt, public,
 		spec.Billing.Price, spec.Billing.Currency, spec.Billing.Cycle, spec.Billing.ExpiresOn, spec.Billing.AutoRenew, spec.Rented)

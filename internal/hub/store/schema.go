@@ -61,7 +61,7 @@ const ddlNode = `CREATE TABLE node (
   ipv4_pin TEXT NOT NULL DEFAULT '',
   ipv6_pin TEXT NOT NULL DEFAULT '',
   -- 已出租：机器租出去了、不装 agent，离线是预期状态。与 maintenance 互斥，裁决在 UpdateNodeTasks
-  -- （checkNodeFlags），快照恢复进库前由 validateSnapshotNodeFlags 复核；库里不设 CHECK。
+  -- （checkNodeFlags），快照恢复进库前由 validateSnapshotNodes 复核；库里不设 CHECK。
   -- 列序与迁移 44 的 ADD COLUMN 结果一致。
   rented INTEGER NOT NULL DEFAULT 0
 )`

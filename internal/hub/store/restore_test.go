@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -331,5 +333,99 @@ func TestRestoreReseedsRuntimeRowsMissingFromTarget(t *testing.T) {
 		if n != want {
 			t.Errorf("%s has %d rows after restore, want %d as in a fresh database", table, n, want)
 		}
+	}
+}
+
+// alterSnapshot 直接改快照文件的表结构：快照表是 CREATE TABLE AS 拷出的，没有约束、索引与触发器，ALTER 不会撞依赖。
+func alterSnapshot(t *testing.T, path, ddl string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dsn(path, "&mode=rw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ddl); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 列集合检查（checkSnapshotColumns）的少列分支：复制语句的目标列清单包含 note，源表没有——DQS 开着会把列名
+// 当字符串字面量静默写进库；关着（_dqs=0）时复制语句报 no such column，但那是写入事务中途（前面若干表已被
+// 删改、靠回滚撤销）的裸错，不是这条检查在任何写入之前给出的偏差清单。删掉检查只留 _dqs=0 时这条用例仍失败，
+// 但错误文案不同，断言比对完整文案。
+func TestRestoreRejectsSnapshotMissingColumn(t *testing.T) {
+	t.Parallel()
+	source, _ := open(t)
+	if _, _, err := source.CreateNode(t.Context(), NewNode{Name: "keep"}, hash(1)); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := source.SnapshotConfig(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	source.Close()
+	alterSnapshot(t, config, "ALTER TABLE node DROP COLUMN note")
+
+	seed, target := openAt(t)
+	marker, _, err := seed.CreateNode(t.Context(), NewNode{Name: "marker"}, hash(7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.Close()
+	_, err = Restore(t.Context(), target, config, "", "", time.Now(), slog.Default())
+	want := "config snapshot table node: column set differs from the current schema: snapshot lacks [note]"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v, want %q", err, want)
+	}
+	// 目标库保持不变。
+	reopened, err := Open(target, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.Default(), MigrateSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	n, err := reopened.GetNode(t.Context(), marker)
+	if err != nil || n.Name != "marker" {
+		t.Fatalf("marker node = %+v, %v", n, err)
+	}
+	if got := nodeCount(t, reopened); got != 1 {
+		t.Fatalf("target holds %d nodes after a rejected restore", got)
+	}
+	db, err := sql.Open("sqlite", dsn(target, "&mode=ro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := userVersion(t, db); got != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", got, schemaVersion)
+	}
+}
+
+// 多列分支：快照多出的列不在目标列清单里，INSERT SELECT 静默丢弃、永不报错——这条偏差只有显式检查能拦住
+// （删掉检查后这条用例的恢复会成功）。
+func TestRestoreRejectsSnapshotExtraColumn(t *testing.T) {
+	t.Parallel()
+	source, _ := open(t)
+	tmp := t.TempDir()
+	config := filepath.Join(tmp, "config.db")
+	if err := source.SnapshotConfig(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	metrics := filepath.Join(tmp, "metrics.db")
+	if err := source.SnapshotMetrics(t.Context(), metrics); err != nil {
+		t.Fatal(err)
+	}
+	source.Close()
+	alterSnapshot(t, metrics, "ALTER TABLE metric_1m ADD COLUMN bogus TEXT")
+
+	target := filepath.Join(t.TempDir(), "target.db")
+	_, err := Restore(t.Context(), target, config, metrics, "", time.Now(), slog.Default())
+	want := "metrics snapshot table metric_1m: column set differs from the current schema: snapshot has extra [bogus]"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v, want %q", err, want)
+	}
+	if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("target created despite the rejection")
 	}
 }

@@ -1250,3 +1250,31 @@ func TestNewRequiresEveryDep(t *testing.T) {
 	h := newHub(t)
 	testdeps.RequireEveryField(t, "ingest.Deps", h.deps(), func(d Deps) { New(Config{TTL: 30 * time.Second}, d) })
 }
+
+// 注册名的 agent 口径（store.AgentNodeName）：超长截到 64 个字符、截断后露出的尾空白去掉，不拒绝注册；
+// 入库值即规范形，节点之后带着库内名字 UpdateNode 不会被名字校验卡死（api 包的交叉验证：
+// TestRegisteredNodeWithTruncatedNameStaysEditable）。全空白落为 "node" 由 TestRegisterTrimsAfterRemovingControls 钉住。
+func TestRegisterTruncatesLongNames(t *testing.T) {
+	h := newHub(t)
+	ctx := context.Background()
+	key, _, err := h.auth.OpenWindow(ctx, time.Hour, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ raw, want string }{
+		{strings.Repeat("名", store.MaxNameRunes+1), strings.Repeat("名", store.MaxNameRunes)},
+		{strings.Repeat("界", store.MaxNameRunes-1) + " x", strings.Repeat("界", store.MaxNameRunes-1)},
+	} {
+		out, err := h.client.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: key, Name: tc.raw}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := h.store.GetNode(ctx, out.Msg.NodeId)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n.Name != tc.want {
+			t.Errorf("registered name=%q want=%q", n.Name, tc.want)
+		}
+	}
+}
