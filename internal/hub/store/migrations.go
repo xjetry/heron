@@ -74,7 +74,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	46: execAll(migrationV46Config),
 	47: execAll(migrationV47),
 	48: migrateV48Config,
-	49: execAll(migrationV49Config),
+	49: migrateV49Config,
 }
 
 // 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。
@@ -111,6 +111,46 @@ func migrateV48Config(tx *sql.Tx) error {
 	}
 	for _, node := range renamed {
 		if _, err := tx.Exec("UPDATE node SET name = ? WHERE id = ?", node.name, node.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 恢复预检会拒绝未规范化的 token 名；生产旧库和旧配置快照必须在迁移时规范化，
+// 否则旧版允许保存的名字会阻止快照恢复。两条迁移路径共用此函数，结构语句仍使用冻结的版本定义。
+func migrateV49Config(tx *sql.Tx) error {
+	if err := execAll(migrationV49Config)(tx); err != nil {
+		return err
+	}
+	rows, err := tx.Query("SELECT id, name FROM api_token")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type renamedToken struct {
+		id   int64
+		name string
+	}
+	var renamed []renamedToken
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return err
+		}
+		if clean := normalizeShortName(name, "token"); clean != name {
+			renamed = append(renamed, renamedToken{id: id, name: clean})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, token := range renamed {
+		if _, err := tx.Exec("UPDATE api_token SET name = ? WHERE id = ?", token.name, token.id); err != nil {
 			return err
 		}
 	}

@@ -173,6 +173,26 @@ func TestRevocationTakesEffectOnTheNextRequest(t *testing.T) {
 	}
 }
 
+func TestAPITokenNameErrorMessage(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	created, err := h.admin.CreateApiToken(t.Context(), connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "kept"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := created.Msg.ApiToken
+	name := strings.Repeat("名", 65)
+	_, createErr := h.admin.CreateApiToken(t.Context(), connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: name}))
+	_, updateErr := h.admin.UpdateApiToken(t.Context(), connect.NewRequest(&heronv1.UpdateApiTokenRequest{Id: tok.Id, Name: name, ExpectedVersion: tok.Version}))
+	for method, err := range map[string]error{"CreateApiToken": createErr, "UpdateApiToken": updateErr} {
+		const want = "invalid_argument: name must be 1–64 characters after trimming whitespace and control characters; got 65"
+		if connect.CodeOf(err) != connect.CodeInvalidArgument || err.Error() != want {
+			t.Errorf("%s: error = %v, want %q", method, err, want)
+		}
+	}
+}
+
 func TestAPITokenManagementValidation(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")

@@ -79,6 +79,9 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 	var out APIToken
 	g := grantOrDefault(grant)
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := checkShortName(name); err != nil {
+			return err
+		}
 		if err := g.validate(tx); err != nil {
 			return err
 		}
@@ -127,6 +130,9 @@ func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant
 	g := grantOrDefault(grant)
 	var out APIToken
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := checkShortName(name); err != nil {
+			return err
+		}
 		current, state, err := lookupAPIToken(tx.QueryRow, "id = ?", id, s.clk.Now())
 		if err != nil {
 			return err

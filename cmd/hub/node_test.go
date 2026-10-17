@@ -7,7 +7,7 @@ import (
 )
 
 // 超长名字在 CLI 预检（store.CleanName）被拒，报错原文含长度约束。
-// 注意去掉 CLI 预检时这条用例仍红不了：store 准入（insertNode 的 checkNodeName）会以同一句
+// 注意去掉 CLI 预检时这条用例仍红不了：store 准入（insertNode 的 checkShortName）会以同一句
 // NameError 文案拒绝；区分两层的是 TestNodeCreateCleansName。
 func TestNodeCreateRejectsOverlongName(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")

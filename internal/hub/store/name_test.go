@@ -57,7 +57,7 @@ func TestAgentNodeName(t *testing.T) {
 	}
 }
 
-// uncleanNameCase 是写入口准入（checkNodeName）的判定用例：每个 raw 都不等于自己的 CleanName 结果。
+// uncleanNameCases 是写入口准入（checkShortName）的判定用例：每个 raw 都不等于自己的 CleanName 结果。
 // want 是拒绝文案原文（NameError/UncleanNameError 的 Error()）——api 层逐字透传为 InvalidArgument，CLI 原样输出。
 var uncleanNameCases = []struct {
 	name        string

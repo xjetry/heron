@@ -98,6 +98,9 @@ func (s *Service) CreateApiToken(ctx context.Context, req *connect.Request[heron
 		return nil, err
 	}
 	tok, plain, err := s.auth.CreateAPIToken(ctx, name, grant, expires)
+	if mapped := invalidName(err); mapped != nil {
+		return nil, mapped
+	}
 	if gerr := grantError(err); gerr != nil {
 		return nil, gerr
 	}
@@ -151,6 +154,9 @@ func (s *Service) UpdateApiToken(ctx context.Context, req *connect.Request[heron
 		return nil, invalid("expected_version: required; send the ApiToken.version read from ListApiTokens")
 	}
 	tok, err := s.store.UpdateAPIToken(ctx, req.Msg.GetId(), name, grant, expires, req.Msg.GetExpectedVersion())
+	if mapped := invalidName(err); mapped != nil {
+		return nil, mapped
+	}
 	if gerr := grantError(err); gerr != nil {
 		return nil, gerr
 	}

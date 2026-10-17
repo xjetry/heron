@@ -29,13 +29,18 @@ func CleanName(raw string) (string, error) {
 // AgentNodeName 把 agent 建议的名称规范化为 CleanName 可接受且不再改写的值。
 // 截断可能露出新的尾空白，必须在截断后再裁一次；清洗后为空时使用非空缺省名。
 func AgentNodeName(raw string) string {
+	return normalizeShortName(raw, "node")
+}
+
+// normalizeShortName 共用清洗、码点截断与截断后去空白；调用方提供非空的规范缺省名。
+func normalizeShortName(raw, fallback string) string {
 	name := []rune(sanitize.Text(raw, len(raw)))
 	if len(name) > MaxNameRunes {
 		name = name[:MaxNameRunes]
 	}
 	clean := strings.TrimSpace(string(name))
 	if clean == "" {
-		return "node"
+		return fallback
 	}
 	return clean
 }
@@ -48,11 +53,11 @@ func (e UncleanNameError) Error() string {
 	return fmt.Sprintf("name must not have leading or trailing whitespace or control characters; got %q", e.Name)
 }
 
-// checkNodeName 是库里节点名的准入判定：name 必须是它自己的 CleanName 结果
-// （不变式：库里每个节点名都等于自己的清洗结果，长度 1–MaxNameRunes）。
-// 两个写入口（insertNode、UpdateNodeTasks）与配置快照的恢复预检共用这一处；调用方负责规范化，
-// 这里只拒绝不改写——静默改写会把两个不同的输入落成同一个名字。
-func checkNodeName(name string) error {
+// checkShortName 要求库里的节点名与 API token 名等于自己的 CleanName 结果，长度为 1–MaxNameRunes。
+// 节点的 insertNode、UpdateNodeTasks 与 token 的 CreateAPIToken、UpdateAPIToken 在写事务里检查；
+// 配置恢复的 validateSnapshotNodes、validateSnapshotAPITokens 在搬运前检查，旧数据由迁移 48/49 分别规范化。
+// 调用方负责规范化，这里只拒绝不改写，避免把不同的写入输入静默落成同一个名字。
+func checkShortName(name string) error {
 	clean, err := CleanName(name)
 	if err != nil {
 		return err

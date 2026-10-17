@@ -327,7 +327,7 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[heronv1.Reg
 		panic("ingest: Register reached without the source-address rate limit; mount Service.Handler")
 	}
 	// 注册名走共享的 agent 口径（AgentNodeName）：清洗后截到 64 个字符、截断露出的尾空白再裁掉、空了用缺省名；
-	// 超长不拒绝注册。入库即规范形，store 的 insertNode 准入（checkNodeName）不会拒绝它。
+	// 超长不拒绝注册。入库即规范形，store 的 insertNode 准入（checkShortName）不会拒绝它。
 	name := store.AgentNodeName(req.Msg.GetName())
 	id, tok, err := s.auth.Register(ctx, req.Msg.GetKey(), name, from)
 	if errors.Is(err, auth.ErrDenied) {

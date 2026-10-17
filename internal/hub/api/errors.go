@@ -99,7 +99,7 @@ func missingField(root string, kind store.ObjectKind) string {
 
 // invalidName 把 store 短名称规则的拒绝（NameError、UncleanNameError）映射为 InvalidArgument，文案是错误原文。
 // 映射只在这一处：api 入口直接调用 store.CleanName 的拒绝（CreateNode/UpdateNode/CreateApiToken/UpdateApiToken）、
-// CreateNode 的 store 错误链（insertNode 准入）、operationError（UpdateNode 与 ExecuteChange 的节点更新经它上岸）共用。
+// CreateNode、CreateApiToken、UpdateApiToken 的 store 错误链与 operationError（UpdateNode、ExecuteChange）共用。
 func invalidName(err error) error {
 	var nameErr store.NameError
 	if errors.As(err, &nameErr) {

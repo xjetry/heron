@@ -538,7 +538,9 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			}
 		case 49:
 			if layer == "config" {
-				statements = migrationV49Config
+				if err := migrateV49Config(tx); err != nil {
+					return fmt.Errorf("migrate config snapshot to 49: %w", err)
+				}
 			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
@@ -762,6 +764,9 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		if err := validateSnapshotNodes(ctx, tx); err != nil {
 			return 0, err
 		}
+		if err := validateSnapshotAPITokens(ctx, tx); err != nil {
+			return 0, err
+		}
 		var unmatched int
 		if err := tx.QueryRowContext(ctx, `SELECT
 				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.snapshot_theme s WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
@@ -808,7 +813,7 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 	return rows.Err()
 }
 
-// validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkNodeName，与 insertNode、UpdateNodeTasks 共用）
+// validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkShortName，与 insertNode、UpdateNodeTasks 共用）
 // 和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
 // 规范化（迁移 48 的 AgentNodeName），所以被名字拒绝的只能是当前版本快照里就没清洗的值。
 func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
@@ -824,11 +829,32 @@ func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
 		if err := rows.Scan(&id, &name, &maintenance, &rented); err != nil {
 			return err
 		}
-		if err := checkNodeName(name); err != nil {
+		if err := checkShortName(name); err != nil {
 			return fmt.Errorf("config node %d (%q): %w", id, name, err)
 		}
 		if err := checkNodeFlags(maintenance, rented); err != nil {
 			return fmt.Errorf("config node %d (%s) has maintenance and rented both set", id, name)
+		}
+	}
+	return rows.Err()
+}
+
+// 配置快照的整表搬运不经 token 写入口，必须在搬运前用同一准入判定检查名字。
+// migrateSnapshot 先经迁移 49 规范化旧版 token 名；当前版本快照里的不合规名字直接拒绝。
+func validateSnapshotAPITokens(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT id,name FROM config.api_token")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return err
+		}
+		if err := checkShortName(name); err != nil {
+			return fmt.Errorf("config API token %d (%q): %w", id, name, err)
 		}
 	}
 	return rows.Err()
