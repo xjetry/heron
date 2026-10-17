@@ -55,7 +55,7 @@ func TestTrafficRoundTripKeepsEachBaselineForm(t *testing.T) {
 	t.Parallel()
 	st, id := openTraffic(t)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	rec := TrafficRecord{NodeID: id, BootID: "b1", TotalRx: 1000, TotalTx: 2000, PeriodRx: 10, PeriodTx: 20, PeriodStart: start}
+	rec := TrafficRecord{NodeID: id, BootID: "b1", TotalRx: 1000, TotalTx: 2000, PeriodRx: 10, PeriodTx: 20, PeriodStart: start, ObservedAt: start.Add(time.Hour)}
 	for _, form := range []struct {
 		name     string
 		epoch    string
@@ -99,6 +99,26 @@ func TestTrafficRoundTripKeepsEachBaselineForm(t *testing.T) {
 		restored.Close()
 		if !reflect.DeepEqual(got, rec) {
 			t.Fatalf("restored %v: got %+v, want %+v", layers, got, rec)
+		}
+	}
+}
+
+func TestTrafficObservedAtRoundTrip(t *testing.T) {
+	st, id := openTraffic(t)
+	for _, want := range []time.Time{time.Unix(1000, 0).UTC(), time.Unix(2000, 0).UTC(), {}} {
+		rec := TrafficRecord{NodeID: id, BootID: "boot", ObservedAt: want}
+		if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
+			t.Fatal(err)
+		}
+		if got := loadOne(t, st).ObservedAt; got != want {
+			t.Errorf("observed=%v, want %v", got, want)
+		}
+		var raw int64
+		if err := st.r.QueryRow("SELECT observed_at FROM traffic WHERE node_id = ?", id).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if want.IsZero() && raw != 0 || !want.IsZero() && raw != want.Unix() {
+			t.Errorf("stored observed_at=%d, want %v", raw, want)
 		}
 	}
 }

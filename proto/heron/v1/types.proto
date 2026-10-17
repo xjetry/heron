@@ -34,6 +34,7 @@ message Metrics {
   optional uint32 tcp_conns = 16;
   optional uint32 udp_conns = 17;
   optional uint32 procs = 18;
+  // hub 用它推算启动周期的开始时刻，决定断连期间重启的流量是否补记。
   optional uint64 uptime_s = 19;
   // 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
   // 集合改变时仅重建差分基线，不把换掉的网卡计数当新增流量。空串表示这次合计没有附带集合摘要：

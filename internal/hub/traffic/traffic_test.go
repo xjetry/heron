@@ -134,20 +134,37 @@ func TestDeltaWithinSameBootGoesToTotalsAndPeriod(t *testing.T) {
 	}
 }
 
-func TestBootChangeResetsBaselineWithoutAccounting(t *testing.T) {
-	b, _ := newBook(t, newMem())
-	b.Account(1, counters("b1", 1000, 2000), nil)
-	b.Account(1, counters("b1", 1100, 2100), nil)
-	d, ok := b.Account(1, counters("b2", 5_000_000, 6_000_000), nil)
-	if ok || d != (Delta{}) {
-		t.Fatalf("reboot accounted %+v", d)
-	}
-	e, _ := b.Get(1)
-	if e.TotalRx != 100 || base(e.State).Rx != 5_000_000 || e.BootID != "b2" {
-		t.Fatalf("baseline after reboot: %+v", e)
-	}
-	if d, ok := b.Account(1, counters("b2", 5_000_010, 6_000_020), nil); !ok || d != (Delta{Rx: 10, Tx: 20}) {
-		t.Fatalf("delta after reboot %+v", d)
+func TestBootChangeAccountsOnlyNewCycle(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		uptime uint64
+		want   Delta
+		ok     bool
+	}{
+		{"restarted_after_observation", 30, Delta{5_000_000, 6_000_000}, true},
+		{"started_before_observation", 90, Delta{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, clk := newBook(t, newMem())
+			b.Account(1, counters("b1", 10_000_000, 10_000_000), nil)
+			b.Account(1, counters("b1", 10_000_100, 10_000_100), nil)
+			clk.Advance(time.Minute)
+			m := counters("b2", 5_000_000, 6_000_000)
+			m.UptimeS = proto.Uint64(tc.uptime)
+			if d, ok := b.Account(1, m, nil); d != tc.want || ok != tc.ok {
+				t.Errorf("reboot delta=%+v ok=%v, want %+v ok=%v", d, ok, tc.want, tc.ok)
+			}
+			e, _ := b.Get(1)
+			if e.TotalRx != 100+tc.want.Rx || e.TotalTx != 100+tc.want.Tx || e.PeriodRx != 100+tc.want.Rx || e.PeriodTx != 100+tc.want.Tx {
+				t.Errorf("reboot usage=%d/%d period=%d/%d, want %d/%d", e.TotalRx, e.TotalTx, e.PeriodRx, e.PeriodTx, 100+tc.want.Rx, 100+tc.want.Tx)
+			}
+			if base(e.State).Rx != 5_000_000 || base(e.State).Tx != 6_000_000 || e.BootID != "b2" {
+				t.Errorf("baseline after reboot: %+v", e)
+			}
+			if d, ok := b.Account(1, counters("b2", 5_000_010, 6_000_020), nil); !ok || d != (Delta{Rx: 10, Tx: 20}) {
+				t.Errorf("delta after reboot %+v", d)
+			}
+		})
 	}
 }
 

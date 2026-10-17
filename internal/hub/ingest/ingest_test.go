@@ -840,6 +840,45 @@ func TestGapBeyondTTLKeepsTotalsButSkipsTheBucket(t *testing.T) {
 	}
 }
 
+func TestRebootAccountingRespectsMinuteBucketGap(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		gap   time.Duration
+		want  float64
+		count uint32
+	}{
+		{"connected", 10 * time.Second, 100, 1},
+		{"offline", 31 * time.Second, 0, 0},
+		{"exact_ttl", 30 * time.Second, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHub(t)
+			id, tok := h.node(t)
+			h.mustReport(t, tok, netCounters(testBootID, 1000, 1000))
+			h.clk.Advance(tc.gap)
+			m := netCounters("4f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c", 100, 200)
+			m.UptimeS = proto.Uint64(5)
+			h.mustReport(t, tok, m)
+			if e := h.book.View(id); e.TotalRx != 100 || e.TotalTx != 200 || e.PeriodRx != 100 || e.PeriodTx != 200 {
+				t.Errorf("reboot usage=%d/%d period=%d/%d, want 100/200", e.TotalRx, e.TotalTx, e.PeriodRx, e.PeriodTx)
+			}
+			rows := h.live.Drain().Rows
+			if sum, n := rxAccounted(rows); sum != tc.want || n != tc.count {
+				t.Errorf("reboot bucket rx=%v/%d, want %v/%d", sum, n, tc.want, tc.count)
+			}
+			var tx float64
+			var n uint32
+			for _, row := range rows {
+				tx += row.Bucket.Sum[metric.TxBytes]
+				n += row.Bucket.N[metric.TxBytes]
+			}
+			if tx != 2*tc.want || n != tc.count {
+				t.Errorf("reboot bucket tx=%v/%d, want %v/%d", tx, n, 2*tc.want, tc.count)
+			}
+		})
+	}
+}
+
 func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "t.db")
 	h := newHubAt(t, path)

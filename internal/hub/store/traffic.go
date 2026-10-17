@@ -29,6 +29,8 @@ type TrafficRecord struct {
 	Baseline                             []TrafficCounter
 	TotalRx, TotalTx, PeriodRx, PeriodTx int64
 	PeriodStart                          time.Time
+	// ObservedAt 与基线同事务保存，Unix 秒 0 表示未知，读回为零值 time.Time。
+	ObservedAt time.Time
 }
 
 // CheckTrafficBaseline 是三种基线形态的唯一判定，写库、读库与恢复预检共用：
@@ -72,11 +74,12 @@ func CheckTrafficBaseline(epoch string, baseline []TrafficCounter) error {
 	return nil
 }
 
-const upsertTraffic = `INSERT INTO traffic (node_id, boot_id, total_rx, total_tx, period_rx, period_tx, period_start, updated_at, net_counter_epoch)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+const upsertTraffic = `INSERT INTO traffic (node_id, boot_id, total_rx, total_tx, period_rx, period_tx, period_start, updated_at, net_counter_epoch, observed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (node_id) DO UPDATE SET boot_id = excluded.boot_id,
   total_rx = excluded.total_rx, total_tx = excluded.total_tx, period_rx = excluded.period_rx, period_tx = excluded.period_tx,
-  period_start = excluded.period_start, updated_at = excluded.updated_at, net_counter_epoch = excluded.net_counter_epoch`
+  period_start = excluded.period_start, updated_at = excluded.updated_at, net_counter_epoch = excluded.net_counter_epoch,
+  observed_at = excluded.observed_at`
 
 // WriteTraffic 在一个事务里写入全部记录，并返回实际写入的节点 ID。每条记录整体替换该节点的基线行。节点已删除的
 // 记录跳过：删除后迟到的刷出不得重建从属行，与 WriteMinuteBatch 同一处理；存在性在写事务内判定，与 DeleteNode 串行。
@@ -97,8 +100,12 @@ func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) ([]int64
 			if !exists {
 				continue
 			}
+			var observed int64
+			if !r.ObservedAt.IsZero() {
+				observed = r.ObservedAt.Unix()
+			}
 			if _, err := tx.Exec(upsertTraffic, r.NodeID, r.BootID, r.TotalRx, r.TotalTx,
-				r.PeriodRx, r.PeriodTx, r.PeriodStart.Unix(), now, r.NetCounterEpoch); err != nil {
+				r.PeriodRx, r.PeriodTx, r.PeriodStart.Unix(), now, r.NetCounterEpoch, observed); err != nil {
 				return err
 			}
 			if _, err := tx.Exec("DELETE FROM traffic_baseline WHERE node_id = ?", r.NodeID); err != nil {
@@ -131,7 +138,7 @@ func (s *Store) LoadTraffic(ctx context.Context) ([]TrafficRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT node_id, boot_id, total_rx, total_tx, period_rx, period_tx, period_start, net_counter_epoch FROM traffic`)
+	rows, err := tx.QueryContext(ctx, `SELECT node_id, boot_id, total_rx, total_tx, period_rx, period_tx, period_start, net_counter_epoch, observed_at FROM traffic`)
 	if err != nil {
 		return nil, err
 	}
@@ -139,8 +146,8 @@ func (s *Store) LoadTraffic(ctx context.Context) ([]TrafficRecord, error) {
 	var out []TrafficRecord
 	for rows.Next() {
 		var r TrafficRecord
-		var start int64
-		if err := rows.Scan(&r.NodeID, &r.BootID, &r.TotalRx, &r.TotalTx, &r.PeriodRx, &r.PeriodTx, &start, &r.NetCounterEpoch); err != nil {
+		var start, observed int64
+		if err := rows.Scan(&r.NodeID, &r.BootID, &r.TotalRx, &r.TotalTx, &r.PeriodRx, &r.PeriodTx, &start, &r.NetCounterEpoch, &observed); err != nil {
 			return nil, err
 		}
 		r.Baseline = baselines[r.NodeID]
@@ -149,6 +156,9 @@ func (s *Store) LoadTraffic(ctx context.Context) ([]TrafficRecord, error) {
 			return nil, fmt.Errorf("node %d: %w", r.NodeID, err)
 		}
 		r.PeriodStart = time.Unix(start, 0).UTC()
+		if observed != 0 {
+			r.ObservedAt = time.Unix(observed, 0).UTC()
+		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

@@ -122,6 +122,8 @@ export type Metrics = Message<"heron.v1.Metrics"> & {
   procs?: number | undefined;
 
   /**
+   * hub 用它推算启动周期的开始时刻，决定断连期间重启的流量是否补记。
+   *
    * @generated from field: optional uint64 uptime_s = 19;
    */
   uptimeS?: bigint | undefined;

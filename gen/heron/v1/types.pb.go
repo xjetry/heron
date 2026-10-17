@@ -695,7 +695,8 @@ type Metrics struct {
 	TcpConns *uint32 `protobuf:"varint,16,opt,name=tcp_conns,json=tcpConns,proto3,oneof" json:"tcp_conns,omitempty"`
 	UdpConns *uint32 `protobuf:"varint,17,opt,name=udp_conns,json=udpConns,proto3,oneof" json:"udp_conns,omitempty"`
 	Procs    *uint32 `protobuf:"varint,18,opt,name=procs,proto3,oneof" json:"procs,omitempty"`
-	UptimeS  *uint64 `protobuf:"varint,19,opt,name=uptime_s,json=uptimeS,proto3,oneof" json:"uptime_s,omitempty"`
+	// hub 用它推算启动周期的开始时刻，决定断连期间重启的流量是否补记。
+	UptimeS *uint64 `protobuf:"varint,19,opt,name=uptime_s,json=uptimeS,proto3,oneof" json:"uptime_s,omitempty"`
 	// 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
 	// 集合改变时仅重建差分基线，不把换掉的网卡计数当新增流量。空串表示这次合计没有附带集合摘要：
 	// 账本只在摘要相同且计数不倒退时入账，空摘要与任何带摘要的列表都对不上，只重建基线。

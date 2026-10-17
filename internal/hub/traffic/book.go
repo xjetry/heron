@@ -43,6 +43,8 @@ type State struct {
 	TotalRx, TotalTx   int64
 	PeriodRx, PeriodTx int64
 	PeriodStart        time.Time
+	// ObservedAt 是 Account 最近处理带计数上报的 hub 时刻，取整到秒；零值表示未知。
+	ObservedAt time.Time
 }
 
 func (s State) HasBaseline() bool { return len(s.Baseline) > 0 }
@@ -85,7 +87,7 @@ type entry struct {
 	dirty     bool
 }
 
-// Book 只把同一启动周期内不回退的累计计数差分入账；回退或更换接口集合时先重置基线，不产生负增量。
+// Book 对同一启动周期内不回退的计数做差分；新周期满足时间与合计下降条件时整笔补记，否则只换基线。
 // Account 以 boot_id 和接口集合决定基线形态，Flush 按 writeMu → mu 快照后提交；提交失败保留 dirty 状态等待重试。
 type Book struct {
 	st  Storage
@@ -128,7 +130,7 @@ func (b *Book) Load(ctx context.Context) error {
 	for _, r := range recs {
 		// 基线形态已由 LoadTraffic 按 store.CheckTrafficBaseline 判过，这里原样接过。
 		b.entries[r.NodeID] = &entry{State: State{BootID: r.BootID, NetCounterEpoch: r.NetCounterEpoch, Baseline: r.Baseline, TotalRx: max(r.TotalRx, 0), TotalTx: max(r.TotalTx, 0),
-			PeriodRx: max(r.PeriodRx, 0), PeriodTx: max(r.PeriodTx, 0), PeriodStart: r.PeriodStart}}
+			PeriodRx: max(r.PeriodRx, 0), PeriodTx: max(r.PeriodTx, 0), PeriodStart: r.PeriodStart, ObservedAt: r.ObservedAt}}
 		s := b.entries[r.NodeID].State
 		b.entries[r.NodeID].committed = &s
 	}
@@ -187,12 +189,12 @@ func (b *Book) fresh(nodeID int64, now time.Time) State {
 	return State{PeriodStart: PeriodStart(now, b.day(nodeID), b.tz)}
 }
 
-// Account 入账一次上报：返回应进分钟桶的增量；false 表示这次没有增量（首次、重启、集合改变、
-// 回绕、缺读数）。增量是否真的进桶由调用方按上报间隔判定。
+// Account 入账一次上报：返回可供分钟桶使用的增量；false 表示本次只换基线或缺读数。
+// 增量是否真的进桶由调用方按上报间隔判定。
 //
 // ifaces 非空时按逐网卡计数入账，调用方保证它已通过 agentwire.ValidateNetInterfaces，且与 m 的合计、摘要（若有）一致
-// （ingest 的准入）；账本只从 ifaces 推合计视图，不读 m 的合计。ifaces 为空时按 m 的合计入账。规则（boot_id 不同时一律
-// 只按本次重建基线，先于下面所有判断）：
+// （ingest 的准入）；账本只从 ifaces 推合计视图，不读 m 的合计。ifaces 为空时按 m 的合计入账。
+// boot_id 改变时由 increment 判定是否整笔补记；同一启动周期内：
 //   - 逐网卡上报、逐网卡基线：两次都在且收发都不倒退的网卡计入；新出现的只建基线，消失的丢掉，倒退的只重建它自己。
 //   - 形态不同（逐网卡上报、合计基线，或合计上报、逐网卡基线）：比较两边的合计视图，摘要相同且合计都不倒退时按合计差
 //     入账，否则只重建。上报是否同时带合计与此无关，所以内存已换成逐网卡、落盘之前崩溃之后只带列表的上报，仍能相对
@@ -231,10 +233,9 @@ func (b *Book) Account(nodeID int64, m *heronv1.Metrics, ifaces []*heronv1.NetIn
 	} else {
 		b.roll(nodeID, e, now)
 	}
-	d, ok := increment(e.State, m.GetBootId(), next, view)
-	// 启动周期、网卡集合或计数方向不一致的部分无法确定相对旧基线的有效增量，increment 不计它们：只换基线，
-	// 避免把另一台机器或新增网卡已有的计数记为本区间流量。
+	d, ok := increment(e.State, m, next, view, now)
 	e.BootID, e.NetCounterEpoch, e.Baseline, e.dirty = m.GetBootId(), epoch, next, true
+	e.ObservedAt = time.Unix(now.Unix(), 0).UTC()
 	if !ok {
 		return Delta{}, false
 	}
@@ -244,8 +245,29 @@ func (b *Book) Account(nodeID int64, m *heronv1.Metrics, ifaces []*heronv1.NetIn
 }
 
 // increment 按 Account 的规则求本次上报相对基线 s 的增量。next 是本次上报的基线形态，view 是它的合计视图。
-func increment(s State, boot string, next []store.TrafficCounter, view totalsView) (Delta, bool) {
-	if !s.HasBaseline() || s.BootID != boot {
+func increment(s State, m *heronv1.Metrics, next []store.TrafficCounter, view totalsView, now time.Time) (Delta, bool) {
+	if !s.HasBaseline() {
+		return Delta{}, false
+	}
+	if s.BootID != m.GetBootId() {
+		// uptime 与旧观测时刻用于区分本机重启和另一台共用 token、早已开机的机器。
+		// 秒数先校验再相减，不转换为 time.Duration，避免 uint64 的截断或纳秒乘法溢出。
+		if m.UptimeS == nil || s.ObservedAt.IsZero() || now.Unix() < 0 || m.GetUptimeS() > uint64(now.Unix()) ||
+			now.Unix()-int64(m.GetUptimeS()) <= s.ObservedAt.Unix() {
+			return Delta{}, false
+		}
+		// 合计下降只是启发式，不能证明每个方向、每块网卡的计数都始于新周期。
+		// 它会漏记：例如旧 1 GB/1 GB、新 2 GB/2 GB，两向都不下降就不计。
+		// 它也会误计，例如网卡集合缩小，或旧 eth0=(1000,1000)、新 eth0=(1100,10)：
+		// tx 下降使整笔 rx=1100 也入账，虽然 rx 可能延续旧计数；这些例子不是封闭清单。
+		// Flush 在 mu 下经 record 从同一 State 复制 BootID、ObservedAt、基线和累计量，
+		// WriteTraffic 的同一写事务将它们原子提交，writeMu 串行化 Flush、Adjust 与 Commit。
+		// 因此落盘 BootID 仍在旧周期时，新周期计数尚未落盘，整笔补记不会重复；
+		// 崩溃丢失未刷出的观测只会使 ObservedAt 偏早、放宽时间条件，不会重复已落盘计数。
+		base := s.totalsView()
+		if view.rx < base.rx || view.tx < base.tx {
+			return Delta{Rx: view.rx, Tx: view.tx}, true
+		}
 		return Delta{}, false
 	}
 	if s.perInterface() && next[0].Name != "" {
@@ -349,7 +371,7 @@ func (b *Book) SetResetDay(nodeID int64, day int) {
 
 func record(nodeID int64, s State) store.TrafficRecord {
 	return store.TrafficRecord{NodeID: nodeID, BootID: s.BootID, NetCounterEpoch: s.NetCounterEpoch, Baseline: s.Baseline, TotalRx: s.TotalRx, TotalTx: s.TotalTx,
-		PeriodRx: s.PeriodRx, PeriodTx: s.PeriodTx, PeriodStart: s.PeriodStart}
+		PeriodRx: s.PeriodRx, PeriodTx: s.PeriodTx, PeriodStart: s.PeriodStart, ObservedAt: s.ObservedAt}
 }
 
 // Adjust 把当前周期用量覆盖为给定值，总量按同一差值调整，基线不动。

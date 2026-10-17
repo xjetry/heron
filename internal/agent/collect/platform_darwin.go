@@ -150,7 +150,7 @@ func (s *darwinSyscalls) statfs(path string) (uint64, uint64, error) {
 // monotonicSeconds 用 CLOCK_MONOTONIC：clock_gettime(3) 写明它在系统睡眠时继续计数，与 Linux 的
 // /proc/uptime 同口径（含挂起）；本机实测它只有微秒粒度（纳秒部分 2000 次全是 1000 的倍数），
 // 与 gettimeofday − kern.boottime 相差几微秒。CLOCK_UPTIME_RAW 睡眠时不计数（实测一台睡过的机器上
-// 少 14 小时），不能当运行时长。这个值只作展示：判定机器是否重启的是 kern.bootsessionuuid（bootID）。
+// 少 14 小时），不能当运行时长。判定是否重启仍看 kern.bootsessionuuid（bootID），hub 另用运行时长推算开机时刻。
 func (s *darwinSyscalls) monotonicSeconds() (uint64, error) {
 	var ts unix.Timespec
 	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {

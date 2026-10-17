@@ -86,7 +86,7 @@ func TestPerInterfaceRxForwardTxBackRebuildsThatInterface(t *testing.T) {
 	account(t, b, "eth0 continues", listOnly("b1"), nics(nic{"eth0", 310, 20}), Delta{Rx: 10, Tx: 10}, true)
 }
 
-// boot_id 不同先于一切判断：逐网卡与跨形态都只重建，不把新启动周期的计数记为增量。
+// 换 boot_id 的上报未带 uptime、合计也未下降：逐网卡与跨形态都只重建基线。
 func TestBootChangeRebuildsInEveryForm(t *testing.T) {
 	list := nics(nic{"eth0", 100, 100})
 	grown := nics(nic{"eth0", 200, 200})
@@ -322,7 +322,7 @@ func TestCrashRecoveryAcrossForms(t *testing.T) {
 	})
 }
 
-// 网卡计数缺席的上报不入账、不动基线；恢复带计数之后，boot_id 或集合在缺席期间变了只重建，不编造增量。
+// 网卡计数缺席的上报不入账、不动基线；恢复上报未带 uptime，boot_id 改变时只重建；同周期集合改变也只重建。
 func TestMissingCountersThenChangedBootOrSetOnlyRebuilds(t *testing.T) {
 	list := nics(nic{"eth0", 100, 100}, nic{"eth1", 100, 100})
 	for _, tc := range []struct {
