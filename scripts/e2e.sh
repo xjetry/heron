@@ -709,7 +709,9 @@ later=$(jq -rn 'now + 60 * 86400 | strftime("%Y-%m-%d")')
 [ "$(rpc UpdateNode "$(node_body "$later" false)")" = 200 ] || { echo "FAIL: UpdateNode renewal"; cat "$work/UpdateNode.json"; exit 1; }
 jq -e '.node.billing | .daysLeft >= 59 and .daysLeft <= 60' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: renewed days_left"; cat "$work/UpdateNode.json"; exit 1; }
 wait_alert "$node1" recovered "$wait_expiry_s"
-jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary == "节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry）"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
+jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary |
+  ("节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry），告警持续 ") as $prefix |
+  startswith($prefix) and (ltrimstr($prefix) | test("^(不到 1 分钟|([1-9]|[1-5][0-9]) 分钟|([1-9]|1[0-9]|2[0-3]) 小时( ([1-9]|[1-5][0-9]) 分钟)?|[1-9][0-9]* 天( ([1-9]|1[0-9]|2[0-3]) 小时)?)\\z"))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
 jq -e '[.events[] | select(.ruleId != null)] | length == 4 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks before deletion"; exit 1; }
 task_version=$(jq -r '.version' "$work/ListProbeTasks.json")
