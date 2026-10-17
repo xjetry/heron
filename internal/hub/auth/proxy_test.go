@@ -90,6 +90,45 @@ func TestClientIPUnmapsIPv4InIPv6(t *testing.T) {
 	}
 }
 
+// X-Forwarded-For 的项接受两种形式：裸地址与 地址:端口（IPv6 为 [addr]:port）。两种都解析不了（端口非数字、
+// 越界、空端口、括号无端口）按畸形值处理，回落到对端地址。不带括号的 IPv6（2001:db8::1:443）本身是合法
+// 地址，与端口形式无法区分，按地址解析。
+func TestClientIPForwardedItemForms(t *testing.T) {
+	trusted, _ := ParsePrefixes("10.0.0.0/8")
+	for _, c := range []struct {
+		name string
+		xff  string
+		want string
+	}{
+		{name: "ipv4 with port", xff: "1.2.3.4:5678", want: "1.2.3.4"},
+		{name: "bracketed ipv6 with port", xff: "[2001:db8::1]:443", want: "2001:db8::1"},
+		{name: "bracketed v4-mapped ipv6 with port is unmapped", xff: "[::ffff:1.2.3.4]:80", want: "1.2.3.4"},
+		{name: "port zero still yields the address", xff: "1.2.3.4:0", want: "1.2.3.4"},
+		{name: "non-numeric port falls back to peer", xff: "1.2.3.4:abc", want: "10.1.2.3"},
+		{name: "brackets without port fall back to peer", xff: "[2001:db8::1]", want: "10.1.2.3"},
+		{name: "empty port falls back to peer", xff: "1.2.3.4:", want: "10.1.2.3"},
+		{name: "out-of-range port falls back to peer", xff: "1.2.3.4:65536", want: "10.1.2.3"},
+		// 2001:db8::1:443 不带括号，无法与端口区分，本身是合法 IPv6，按地址解析。
+		{name: "unbracketed ipv6 cannot be told apart from a port", xff: "2001:db8::1:443", want: "2001:db8::1:443"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := ClientIP("10.1.2.3:80", []string{c.xff}, trusted)
+			if got != netip.MustParseAddr(c.want) {
+				t.Fatalf("ClientIP(xff %q) = %v, want %s", c.xff, got, c.want)
+			}
+		})
+	}
+}
+
+// 带端口的项若是可信代理，照常跳过、继续向左取到客户端。
+func TestClientIPSkipsTrustedProxyItemWithPort(t *testing.T) {
+	trusted, _ := ParsePrefixes("10.0.0.1")
+	got := ClientIP("10.0.0.1:9", []string{"1.2.3.4, 10.0.0.1:443"}, trusted)
+	if got != netip.MustParseAddr("1.2.3.4") {
+		t.Fatalf("got %v, want the client to the left of the ported trusted proxy item", got)
+	}
+}
+
 func TestParsePrefixesRejectsGarbage(t *testing.T) {
 	if _, err := ParsePrefixes("10.0.0.0/8, banana"); err == nil {
 		t.Fatal("expected error")

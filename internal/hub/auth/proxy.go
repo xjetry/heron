@@ -89,9 +89,17 @@ func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr 
 		if s == "" {
 			continue
 		}
+		// 每一项接受两种形式：裸地址，或 地址:端口（IPv6 为 [addr]:port；有的反代或负载均衡写入的项带端口）。
+		// 不带括号的 IPv6（如 2001:db8::1:443）与端口形式无法区分，先按地址解析、失败再按地址加端口解析，
+		// 正好把这类值留在地址一侧。两种形式都失败的项按畸形值处理，回落到对端地址，是收紧方向：
+		// 不跳过错项去信更左边（更靠近客户端、更可伪造）的项。
 		ip, err := netip.ParseAddr(s)
 		if err != nil {
-			return peer
+			ap, apErr := netip.ParseAddrPort(s)
+			if apErr != nil {
+				return peer
+			}
+			ip = ap.Addr()
 		}
 		ip = ip.Unmap()
 		if !inAny(ip, trusted) {
