@@ -468,16 +468,18 @@ workflow_steps .github/workflows/release.yml > "$work/steps"
 # shellcheck disable=SC2016 # 按字面匹配 workflow 里的表达式
 grep -qx '      kind: ${{ steps.kind.outputs.kind }}' .github/workflows/release.yml ||
   bad "the build job of release.yml does not output kind from its kind step"
-# agent_touching TEXT：步骤正文是否处理 agent 镜像组。make 目标逐个以 -n 展开判定，不按目标名猜。ci 与 script-test
-# 不展开，理由同上面 shellcheck 的核对（script-test 的递归 $(MAKE) 在 -n 下也会执行，等于在这里递归运行本测试）；
-# 它们处不处理镜像组改由 ci 的前置条件静态判定：其中没有任何 docker 目标。
-ci_prereqs=$(sed -n 's/^ci:[[:space:]]*//p' Makefile)
-[ -n "$ci_prereqs" ] || bad "no ci target found in Makefile"
-case " $ci_prereqs " in *" docker"*) bad "make ci builds an image (prerequisites: $ci_prereqs)" ;; esac
+# agent_touching TEXT：步骤正文是否处理 agent 镜像组。make 目标逐个以 -n 展开判定，不按目标名猜。
+# release.yml 不运行 make ci 与 make script-test：同一提交上的整套门禁由主干 CI 承载，gate job 核对它通过（见下面
+# gate 的核对），发布时重跑只是重复。这两个目标也不能在这里展开，理由同上面 shellcheck 的核对（script-test 的递归
+# $(MAKE) 在 -n 下也会执行，等于在这里递归运行本测试），所以遇到就直接报错、不展开。
 agent_touching() {
   case $1 in *readback-agent* | *image-archive/agent*) return 0 ;; esac
   for target in $(printf '%s\n' "$1" | grep -o 'make \(-s \)\{0,1\}[a-z][a-z0-9-]*' | sed 's/^make \(-s \)\{0,1\}//'); do
-    case $target in ci | script-test) continue ;; esac
+    case $target in ci | script-test)
+      bad "release.yml runs make $target; the gate job relies on ci.yml for that suite:$1"
+      continue
+      ;;
+    esac
     MAKE -n "$target" VERSION=v1.2.3 > "$work/target-n" 2>&1 || { cp "$work/target-n" "$work/out"; bad "make -n $target (from release.yml) failed"; continue; }
     if grep -q 'MANIFEST=agent\|deploy/Dockerfile\.agent' "$work/target-n"; then return 0; fi
   done
@@ -568,10 +570,53 @@ done
 step_index() {
   awk -F "$us" -v j="$1" -v t="$2" '$1 == j { n++; if (index($3, t)) { print n; exit } }' "$work/steps"
 }
+# 发布凭主干 CI 放行：有一个 job 无条件运行 scripts/release-ci-gate.sh，核对的是这次 tag 的仓库与提交、带上 job
+# token，job 只有 contents 与 actions 的读权限；其余每个 job 都沿 needs（传递地）排在它之后，门禁没过就什么都不
+# 构建、不签名、不推送。build 里的 make lint 是发布侧仅剩的静态门禁，要读到之前写进 GITHUB_ENV 的 BUF_AGAINST_REF，
+# 所以排在它之后、发布目标之前，且无条件运行。
+# shellcheck disable=SC2016 # 按字面匹配 workflow 里的命令与表达式
+gate_job=$(awk -F "$us" '$1 != "NEEDS" && $2 == "" && index($3, "run: scripts/release-ci-gate.sh \"$GITHUB_REPOSITORY\" \"$GITHUB_SHA\"") { print $1; exit }' "$work/steps")
+if [ -z "$gate_job" ]; then
+  bad "release.yml has no unconditional step running scripts/release-ci-gate.sh \"\$GITHUB_REPOSITORY\" \"\$GITHUB_SHA\""
+else
+  # shellcheck disable=SC2016
+  awk -F "$us" -v j="$gate_job" '$1 == j && index($3, "release-ci-gate.sh") && index($3, "GH_TOKEN: ${{ github.token }}") { found = 1 } END { exit !found }' "$work/steps" ||
+    bad "release.yml job $gate_job runs the gate without GH_TOKEN: \${{ github.token }}"
+  perms=$(awk -v j="  $gate_job:" '
+    $0 == j { injob = 1; next }
+    injob && /^  [^ ]/ { exit }
+    injob && /^    permissions:/ { inperm = 1; next }
+    injob && inperm && /^      [a-z-]+: / { sub(/^ +/, ""); print; next }
+    injob && inperm { inperm = 0 }
+  ' .github/workflows/release.yml | sort | tr '\n' ' ')
+  [ "$perms" = "actions: read contents: read " ] ||
+    bad "release.yml job $gate_job must hold exactly contents: read and actions: read, has: $perms"
+  # needs 的值是单个 job 名或 [a, b]；从 gate 出发反复把"needs 里有已到达的 job"的 job 加进来，剩下的就是不在它之后的。
+  ungated=$(awk -F "$us" -v g="$gate_job" '
+    $1 == "NEEDS" { n = $3; gsub(/[][ ]/, "", n); needs[$2] = n; next }
+    { jobs[$1] = 1 }
+    END {
+      reach[g] = 1
+      do {
+        changed = 0
+        for (j in needs) {
+          if (j in reach) continue
+          k = split(needs[j], a, ",")
+          for (i = 1; i <= k; i++) if (a[i] in reach) { reach[j] = 1; changed = 1; break }
+        }
+      } while (changed)
+      for (j in jobs) if (!(j in reach)) print j
+    }
+  ' "$work/steps" | sort | tr '\n' ' ')
+  # 空结果不会是解析落空：needs 一行都没解析出时除 gate 外的 job 全部列出；job 本身解析落空由上面的步骤数冒烟挡住。
+  [ -z "$ungated" ] || bad "release.yml jobs not ordered after $gate_job through needs: $ungated"
+fi
+awk -F "$us" '$1 == "build" && $2 == "" && $3 == " run: make lint" { found = 1 } END { exit !found }' "$work/steps" ||
+  bad "release.yml build job does not run make lint unconditionally"
 prev=0
 prev_text=
 # shellcheck disable=SC2016 # 按字面匹配 workflow 里的命令
-for text in 'make "release-$KIND"' 'make e2e' 'make bound-agent-e2e' 'make docker-hub ' 'make docker ' 'make release-manifest ' 'name: dist'; do
+for text in 'echo "BUF_AGAINST_REF=$base" >> "$GITHUB_ENV"' 'run: make lint' 'make "release-$KIND"' 'make e2e' 'make bound-agent-e2e' 'make docker-hub ' 'make docker ' 'make release-manifest ' 'name: dist'; do
   i=$(step_index build "$text")
   case $i in '' | *[!0-9]*) bad "release.yml build job has no step with '$text'"; continue ;; esac
   [ "$i" -gt "$prev" ] || bad "release.yml build job runs '$text' before '$prev_text'"

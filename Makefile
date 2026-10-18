@@ -109,7 +109,7 @@ shellcheck-path:
 lint-sh: $(SHELLCHECK)
 	$(SHELLCHECK) -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/heron-agent scripts/docker-smoke.sh scripts/docker-agent-smoke.sh scripts/docker-agent-smoke-test.sh scripts/docker-image.sh scripts/docker-image-test.sh scripts/release-rules-test.sh scripts/release-assets-test.sh scripts/release-manifest.sh scripts/release-manifest-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh scripts/docker-builder-test.sh scripts/docker-buildx-install.sh scripts/netstructure-live.sh scripts/netstructure-live-setup.sh
 	$(SHELLCHECK) -s sh scripts/pinned-agent-download.sh scripts/pinned-agent-e2e.sh scripts/pinned-agent-download-test.sh scripts/pinned-agent-e2e-args-test.sh
-	$(SHELLCHECK) -s sh scripts/release-breaking-base.sh scripts/buf-breaking.sh scripts/release-breaking-base-test.sh
+	$(SHELLCHECK) -s sh scripts/release-breaking-base.sh scripts/buf-breaking.sh scripts/release-breaking-base-test.sh scripts/release-ci-gate.sh scripts/release-ci-gate-test.sh
 	$(SHELLCHECK) -s sh scripts/update-credentials-accept.sh scripts/shellcheck-install.sh scripts/web-assets-check.sh
 	$(SHELLCHECK) -s sh scripts/wirebench/install-agent.sh scripts/wirebench/measure-agent.sh scripts/wirebench/provenance.sh scripts/wirebench/rss-darwin.sh scripts/wirebench/rss.sh scripts/wirebench/run.sh scripts/wirebench/sizes.sh
 
@@ -141,6 +141,7 @@ script-test:
 	scripts/pinned-agent-download-test.sh
 	scripts/pinned-agent-e2e-args-test.sh
 	scripts/release-breaking-base-test.sh
+	scripts/release-ci-gate-test.sh
 
 # 类型检查覆盖全部 tsconfig（面板与公开页、vite 配置、e2e、测试），lint 按各文件所属的 tsconfig 取类型信息。
 # react-hooks 的推荐集把几条规则定为 warn，eslint 遇 warn 仍退出 0；--max-warnings 0 让门禁不带 warning 通过。

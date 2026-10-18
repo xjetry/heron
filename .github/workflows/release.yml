@@ -12,7 +12,26 @@ concurrency:
   group: release
   cancel-in-progress: false
 jobs:
+  # 发布凭主干 CI 在同一提交上的结论放行（scripts/release-ci-gate.sh）：ci.yml 在 push 到 main 时对这棵树跑的是
+  # make ci 的超集，build 因此不再重跑测试、脚本与前端门禁。其余 job 都直接或经 build 依赖它，没通过就什么都不构建、
+  # 不推送、不签名（scripts/release-rules-test.sh 核对）。actions: read 只用来列 ci.yml 的 run；这个 job 只运行按 SHA
+  # 固定的 checkout、运行器自带的 gh 与仓库里的这个脚本，不装依赖、不跑构建工具链，权限也只有读。
+  gate:
+    runs-on: ubuntu-latest
+    # 脚本最多等主干 CI 50 分钟（RELEASE_CI_GATE_WAIT 的默认值），加上取代码与调用 API 的余量。
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: scripts/release-ci-gate.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
   build:
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -23,7 +42,7 @@ jobs:
     outputs:
       kind: ${{ steps.kind.outputs.kind }}
     steps:
-      # 不把 token 留在工作区的 .git/config：make ci、make release 会运行 pnpm 依赖、Go 模块、buf 与 Makefile 下载的 shellcheck 等第三方代码。
+      # 不把 token 留在工作区的 .git/config：make lint、发布目标与 make e2e 会运行 pnpm 依赖、Go 模块、buf 与 Makefile 下载的 shellcheck 等第三方代码。
       # 同一 job 里的代码能从运行器进程取到 job token，所以这个 job 只有 contents: read，推镜像、移动 latest 与
       # 建 Release 的写权限在不运行这些代码的 image、promote、publish 里。需要 token 的步骤各自经输入拿到
       # （buf、setup-go、setup-node 的输入默认值），没有一步依赖工作区里的凭据。
@@ -57,7 +76,11 @@ jobs:
             *) echo "make release-breaking-base printed '$base'" >&2; exit 1 ;;
           esac
           echo "BUF_AGAINST_REF=$base" >> "$GITHUB_ENV"
-      - run: make ci
+      # 测试、脚本、前端与生成物门禁不在这里重跑：它们只读这棵树与固定的工具链（go.mod、锁文件、按 SHA 固定的 action），
+      # gate 核对过的主干 CI 在同一提交上的通过就是它们的凭据。make lint 照跑，因为其中两项的结论不只取决于这棵树：
+      # buf breaking 对照上一个发布 tag（上一步写进的 BUF_AGAINST_REF；主干 CI 在 main 上是与自己比较，恒通过），
+      # govulncheck 读发布时刻的漏洞库。lint 的其余各项随之重跑。
+      - run: make lint
       # 发布种类只由 scripts/releasekind 判定：先取判定，再调用对应的发布目标；后续步骤读
       # 同一个输出。
       - id: kind
@@ -118,7 +141,7 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
-  # 私钥只进这个 job：它不运行 make ci / make release 里的第三方代码，只编译标准库与 internal/releasesig
+  # 私钥只进这个 job：它不运行 build job 里 make lint、发布目标的第三方代码，只编译标准库与 internal/releasesig
   # （scripts/releasesign 的依赖检查守着），也不恢复构建 job 写过的 Go 缓存——被污染的依赖可能在缓存里留下
   # 编译产物。私钥只经 env 交给签名那一步。
   sign:
@@ -153,7 +176,7 @@ jobs:
   # 镜像的推送、回读与移动 latest 分在三个 job，按"持写权限的 job 不运行任何第三方代码，包括被构建的镜像"切分：
   # image 与 promote 持 packages: write，只调用 imagetools 读 digest、复制索引，不拉取、不起容器（scripts/docker-image-test.sh
   # 钉住）；readback 运行被构建的镜像（冒烟、导出根文件系统），所以只有 contents: read、不登录任何 registry。三个
-  # job 都不跑 make ci、发布目标与 make web，不装 pnpm、node 与 buf，不重新构建镜像，不恢复构建 job 写过的 Go 缓存；
+  # job 都不跑 make lint、发布目标与 make web，不装 pnpm、node 与 buf，不重新构建镜像，不恢复构建 job 写过的 Go 缓存；
   # 各自只调用一个 make 目标，配方由 scripts/release-rules-test.sh 逐行钉住。工具全部固定：action 按 SHA，buildx
   # 按版本与 SHA-256（scripts/docker-buildx-install.sh），BuildKit、binfmt、alpine 按 digest，Go 按 go.mod。
   # 推到 registry、回读通过、latest 指向的都是 build job 核对过的那个索引，由 scripts/docker-image.sh 的显式比对承载：
