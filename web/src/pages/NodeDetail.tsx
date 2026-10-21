@@ -6,6 +6,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
 import { CountryBadge } from "../components/CountryBadge";
+import { DailyTraffic, useDailyTraffic } from "../components/DailyTraffic";
 import { EventFeed, useAlertEvents } from "../components/EventFeed";
 import { ExecutionScope } from "../components/ExecutionScope";
 import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
@@ -25,7 +26,7 @@ import { NodeEditor } from "./NodeEditor";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
 export type DetailTab = "overview" | "traffic" | "diagnostics" | "events";
-const TABS: readonly { id: DetailTab; label: string }[] = [{ id: "overview", label: "概览" }, { id: "traffic", label: "流量校正" }, { id: "diagnostics", label: "Agent 诊断" }, { id: "events", label: "告警事件" }];
+const TABS: readonly { id: DetailTab; label: string }[] = [{ id: "overview", label: "概览" }, { id: "traffic", label: "流量" }, { id: "diagnostics", label: "Agent 诊断" }, { id: "events", label: "告警事件" }];
 // URL 是外部输入：不认识的 tab 当概览，不显示一个空面板。
 const tabOf = (raw: string | null): DetailTab => (TABS.some((t) => t.id === raw) ? (raw as DetailTab) : "overview");
 
@@ -47,6 +48,8 @@ export function NodeDetail() {
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
   // 历史与 tab 无关：hook 留在页面顶层，切 tab 不卸载，查询键不变、不重发；hub now 到达前它不发请求。
   const history = useHistory(ADMIN_HISTORY, nodeId, validId && traffic.data ? Number(traffic.data.now) : undefined);
+  const nodeTraffic = traffic.data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
+  const daily = useDailyTraffic(nodeId, nodeTraffic?.periodStart, traffic.data ? Number(traffic.data.now) : undefined, validId && tab === "traffic");
   // 事件 tab 才取事件：它是低频内容，不该随每次打开详情多发一条请求。
   const events = useAlertEvents(validId && tab === "events" ? nodeId : null);
   const [editor, setEditor] = useState<HTMLElement | null>(null);
@@ -74,7 +77,10 @@ export function NodeDetail() {
         <MetricCharts history={history} />
         <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}/compare`}>{title}</Link>} />
       </> : time.loading)}
-      {tab === "traffic" && <TrafficCard nodeId={nodeId} data={traffic.data} />}
+      {tab === "traffic" && <>
+        {nodeTraffic && traffic.data && <DailyTraffic response={daily.data} traffic={nodeTraffic} timeZone={traffic.data.timezone} now={Number(traffic.data.now)} />}
+        <TrafficCard nodeId={nodeId} data={traffic.data} />
+      </>}
       {tab === "diagnostics" && (gate.ready && node ? <>
         {node.facts && <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
@@ -93,7 +99,7 @@ export function NodeDetail() {
   return (
     <section className="node-detail">
       <p><Link to={nodeListReturnPath(location.state)}>返回节点列表</Link></p>
-      {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
+      {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "traffic" ? daily.error : undefined, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
       <header className="node-head" role="group" aria-label="节点状态">
         <div className="node-head-title">
           <h1>{node ? node.name : `节点 #${nodeId}`}</h1>

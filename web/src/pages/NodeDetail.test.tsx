@@ -82,7 +82,7 @@ it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量
   expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
   expect(await screen.findAllByTestId("chart")).toHaveLength(12);
   expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "流量校正" }));
+  fireEvent.click(screen.getByRole("tab", { name: "流量" }));
   expect(await screen.findByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
 });
@@ -646,7 +646,7 @@ it("从列表带着查询串进入时，返回链接还原同一组筛选，切 
   await act(async () => { await router.navigate("/nodes/7", { state: { nodeListSearch: "?q=db&tag=prod" } }); });
   const back = await screen.findByRole("link", { name: "返回节点列表" });
   expect(back).toHaveAttribute("href", "/nodes?q=db&tag=prod");
-  fireEvent.click(screen.getByRole("tab", { name: "流量校正" }));
+  fireEvent.click(screen.getByRole("tab", { name: "流量" }));
   await waitFor(() => expect(router.state.location.search).toBe("?tab=traffic"));
   expect(screen.getByRole("link", { name: "返回节点列表" })).toHaveAttribute("href", "/nodes?q=db&tag=prod");
   for (const state of [{ nodeListSearch: "javascript:alert(1)" }, { nodeListSearch: 3 }, "?q=x", null]) {

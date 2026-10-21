@@ -400,3 +400,33 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .renewal-calendar .calendar-grid button[aria-pressed="true"] .renewal-count { color: inherit; }
 .renewal-day-title { margin: 20px 0 8px; font-size: 15px; }
 @media (max-width: 560px) { .renewal-calendar .calendar-grid button { height: 48px; } }
+/* 节点详情的每日流量（components/DailyTraffic.tsx）：柱高相对本段内用量最高的一天，柱宽封顶 24px，段间与柱间各留 2px 底色；
+   无数据的日子在基线上方留一个弱化的短横，与用量为 0（只剩基线）区分。
+   窄屏上一天不到一个数字宽，只留每 5 天与今天的日期。 */
+.daily-traffic header.row { align-items: center; margin-bottom: 8px; }
+.daily-traffic h2 { margin: 0; }
+.daily-traffic .segmented { margin-bottom: 0; }
+.daily-legend { display: flex; gap: 16px; list-style: none; margin: 0 0 4px; padding: 0; font-size: 12px; color: var(--muted); }
+.daily-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.daily-readout { margin: 0 0 6px; font-size: 13px; min-height: 1.4em; }
+.daily-plot { position: relative; padding-top: 18px; }
+.daily-axis { position: absolute; top: 0; left: 0; font-size: 11px; line-height: 14px; }
+.daily-bars { display: flex; gap: 2px; height: 180px; list-style: none; margin: 0; padding: 0; }
+.daily-bars li { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; border-radius: 2px; }
+.daily-bars li:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.daily-column { flex: 1; align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; min-height: 0; border-bottom: 1px solid var(--line); }
+.daily-segment { flex: none; width: min(24px, 80%); }
+.daily-segment[data-top] { border-radius: 4px 4px 0 0; }
+.daily-bars li[data-hovered] .daily-segment { filter: brightness(1.15); }
+.daily-rank { font-size: 11px; line-height: 14px; font-weight: 600; }
+.daily-missing { font-size: 11px; line-height: 14px; }
+.daily-day { font-size: 11px; line-height: 18px; white-space: nowrap; }
+.daily-bars li[data-today] .daily-day { color: inherit; font-weight: 600; }
+.daily-table summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.daily-table table { margin-top: 8px; font-size: 12px; border-collapse: collapse; }
+.daily-table :is(th, td) { padding: 4px 12px 4px 0; text-align: left; font-weight: normal; }
+.daily-table thead th { color: var(--muted); }
+@media (max-width: 560px) {
+  .daily-day { visibility: hidden; }
+  .daily-bars li:nth-child(5n+1) .daily-day, .daily-bars li[data-today] .daily-day { visibility: visible; }
+}
