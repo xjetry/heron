@@ -6,6 +6,27 @@
 // hub 自己的告警评估读走 ev（见 readPoolFor），WAL 下读不阻塞写。
 // 写请求返回错误意味着事务未应用，返回 nil 意味着已提交；这是 auth 只在
 // 写成功后更新内存映射、保持映射与库一致的前提。
+//
+// 不变式：开着本库 SQLite 连接的进程（serve、openOffline 打开的离线子命令、Restore）只经 SQLite 读写库文件及其 -wal、
+// -shm，不用普通文件接口（os.Open、os.ReadFile 之类）打开这三个文件；stat 不打开文件，不在此列。进程间互斥用的是 POSIX
+// fcntl 记录锁：WAL 下进程开着连接时，在主文件的 SHARED 区持读锁、在 -shm 上持 DMS 读锁（空闲时也持着），读事务另持一个
+// 读标记锁，写事务另持 WAL 写锁，-wal 上不持锁。这种锁属于进程而不属于描述符：进程关掉指向一个文件的任何描述符，内核就
+// 放掉它在这个文件上的全部 fcntl 锁，包括 SQLite 经自己的描述符取得的。SQLite 关自己的描述符时顾及同一文件上别的连接
+// （unixClose 在还有锁时把描述符挂起、不真正关闭），所以 snapshot 另开再关的 sql.DB 不丢锁；别处打开的描述符它管不到。
+// 丢掉的主文件读锁与 DMS 不会再取回，连接照常读写；读标记与写锁到下一个事务才重新取得。丢锁之后，别的进程看不到这个进程
+// 在用库：
+//   - 丢 -shm 的锁：持写事务时，另一进程的 BEGIN IMMEDIATE 不再 busy，两边都提交成功，这个进程提交后另一进程那一行不见了，
+//     integrity_check 仍为 ok；持读事务时，另一进程的 wal_checkpoint(TRUNCATE) 不再报 busy。
+//   - 丢主文件的锁：另一进程能在主文件上取得 EXCLUSIVE 锁（locking_mode=EXCLUSIVE 的读不再 busy），这个进程再写之后，
+//     新开的进程读库得到 disk I/O error。
+//   - 两处都丢：另一进程读完关库时把自己当成最后一条连接，删掉 -wal 与 -shm；这个进程此后的写入自己读得到，新开的进程读不到。
+//
+// 不开连接的进程关自己的描述符，放不掉别的进程的锁：在线更新器的 Backup 用普通文件接口复制库文件属于这种，且在停掉 hub
+// 之后。本包对这三个文件除了经 SQLite，只有 stat（observeWAL 经 fileStatter，Restore 的预检），以及 Restore 在目标不存在时
+// 独占创建、失败时删掉自己建的（O_CREATE|O_EXCL 遇到已有文件直接失败，不打开它；删除不打开文件）；复制库只经 SQLite 连接
+// （snapshot 是 ATTACH 后逐表复制，迁移前备份是 VACUUM INTO）。要读这三个文件的内容（复制、校验、打包目录），改经 SQLite
+// 连接做。以上是 modernc.org/sqlite v1.59.0 的实测：锁在 Linux 7.2 容器里用 /proc/locks 观察，进程间的后果在 Linux 与
+// macOS 26.3.1 上相同。
 package store
 
 import (

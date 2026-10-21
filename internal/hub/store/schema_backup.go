@@ -46,7 +46,9 @@ const schemaBackupInfix = ".before-schema-"
 const keepSchemaBackups = 2
 
 // backupFiles 是迁移前备份对文件系统与库的全部操作。生产实现 osBackupFiles 直接调 os 与 SQLite；测试经 withBackupFiles
-// 替换其中一步注入失败，每一步失败后的处理（不迁移、清掉临时文件、旧备份不动）因此能逐步验证。
+// 替换其中一步注入失败，每一步失败后的处理（不迁移、清掉临时文件、旧备份不动）因此能逐步验证。库的内容只经 Vacuum 读出，
+// 其余操作的对象都是备份文件与库所在的目录：备份期间 migrate 持着写锁，打开库的主文件或 -shm 再关掉，会放掉本进程在
+// 那个文件上的锁（见包注释）。
 type backupFiles interface {
 	ReadDir(dir string) ([]fs.DirEntry, error)
 	Lstat(path string) (fs.FileInfo, error)

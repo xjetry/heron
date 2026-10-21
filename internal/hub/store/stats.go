@@ -92,6 +92,8 @@ type WALObservation struct {
 	Error      string
 }
 
+// fileStatter 是本包观测库的三个文件的途径，只有 Stat：stat 不打开文件，而打开主文件或 -shm 再关掉会放掉本进程的 SQLite
+// 锁（见包注释）。
 type fileStatter interface {
 	Stat(string) (fs.FileInfo, error)
 }
