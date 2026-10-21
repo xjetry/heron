@@ -151,7 +151,12 @@ func peerIP(addr string) netip.Addr {
 	return netip.Addr{}
 }
 
+// inAny 是全部可信判定（转发协议、对端、X-Forwarded-For 里的代理项）共用的归属谓词。经链路本地 IPv6 连入的对端
+// 带区域标识（[fe80::1%eth0]:port），而 Prefix.Contains 对带区域的地址恒为假；netip.Prefix 本身不带区域
+// （ParsePrefix 拒绝、PrefixFrom 丢弃）。区域只说明 hub 从本机哪个接口收到，可信与否不按接口区分，所以先去掉它
+// 再比对；不去掉，配了 fe80::/10 的反代会被静默当成不可信。
 func inAny(ip netip.Addr, prefixes []netip.Prefix) bool {
+	ip = ip.WithZone("")
 	for _, p := range prefixes {
 		if p.Contains(ip) {
 			return true
@@ -160,7 +165,8 @@ func inAny(ip netip.Addr, prefixes []netip.Prefix) bool {
 	return false
 }
 
-// ParsePrefixes 解析逗号分隔的 CIDR 列表；裸地址按单主机前缀处理。
+// ParsePrefixes 解析逗号分隔的 CIDR 列表；裸地址按单主机前缀处理。带区域标识的地址（fe80::1%eth0）被拒绝：
+// inAny 比对时不看区域，接受它就等于把"只信这个接口"静默放宽成"信任所有接口上的这个地址"。
 func ParsePrefixes(list string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, s := range strings.Split(list, ",") {
@@ -175,6 +181,9 @@ func ParsePrefixes(list string) ([]netip.Prefix, error) {
 		ip, err := netip.ParseAddr(s)
 		if err != nil {
 			return nil, fmt.Errorf("trusted proxy %q: not a CIDR or address", s)
+		}
+		if ip.Zone() != "" {
+			return nil, fmt.Errorf("trusted proxy %q: drop the zone (%%%s); trust is decided by address alone, e.g. %s", s, ip.Zone(), ip.WithZone(""))
 		}
 		out = append(out, netip.PrefixFrom(ip, ip.BitLen()))
 	}

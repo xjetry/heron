@@ -135,6 +135,35 @@ func TestParsePrefixesRejectsGarbage(t *testing.T) {
 	}
 }
 
+// 反代经链路本地 IPv6 连进来时，对端地址带区域标识（[fe80::1%eth0]:port）。可信判定不看区域：协议、
+// 对端与 X-Forwarded-For 里的代理项三处都按不带区域的地址比对 fe80::/10。
+func TestTrustedProxyMatchesZonedLinkLocalAddress(t *testing.T) {
+	trusted, err := ParsePrefixes("fe80::/10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://admin.example", nil)
+	r.RemoteAddr = "[fe80::1%eth0]:4444"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	if got, err := TrustedRequestScheme(r, trusted); got != "https" || err != nil {
+		t.Errorf("TrustedRequestScheme via zoned trusted peer = (%q, %v), want (https, nil)", got, err)
+	}
+	if got := ClientIP("[fe80::1%eth0]:4444", []string{"203.0.113.9"}, trusted); got != netip.MustParseAddr("203.0.113.9") {
+		t.Errorf("ClientIP via zoned trusted peer = %v, want the forwarded client 203.0.113.9", got)
+	}
+	if got := ClientIP("[fe80::1%eth0]:4444", []string{"203.0.113.9, fe80::2%eth0"}, trusted); got != netip.MustParseAddr("203.0.113.9") {
+		t.Errorf("ClientIP with a zoned trusted proxy item = %v, want the client to its left, 203.0.113.9", got)
+	}
+}
+
+// 区域标识只说明 hub 从本机哪个接口收到连接，可信判定不区分接口；配置里写上它会被误读成"只信这个接口"。
+func TestParsePrefixesRejectsZonedAddress(t *testing.T) {
+	_, err := ParsePrefixes("10.0.0.0/8, fe80::1%eth0")
+	if err == nil || !strings.Contains(err.Error(), `"fe80::1%eth0"`) || !strings.Contains(err.Error(), "zone") {
+		t.Fatalf("ParsePrefixes(zoned address) err = %v, want an error naming the entry and the zone", err)
+	}
+}
+
 func TestTrustedRequestScheme(t *testing.T) {
 	trusted, _ := ParsePrefixes("10.0.0.0/8")
 	cases := []struct {

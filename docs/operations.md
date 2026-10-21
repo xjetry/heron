@@ -83,7 +83,7 @@ docker start heron
 
 hub 只提供明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止。
 
-- `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信；为空则不信任任何转发头。
+- `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信；为空则不信任任何转发头。反代经 IPv6 链路本地地址连 hub 时写 `fe80::/10` 或不带区域标识的地址；可信与否不区分接口，带 `%eth0` 的写法启动时被拒绝。
 - HTTPS 反代必须保留浏览器访问的 Host（含非默认端口），并设置 `X-Forwarded-Proto: https`。否则管理接口的同源检查会拒绝浏览器请求（包括密码登录），返回 403。不要通过改写或删除浏览器的 Origin 头绕过检查。
 - 不信任转发头时，公开页与注册的限流按 TCP 对端地址计，反代后的访客共用代理地址的一个桶，登录锁定也按代理地址计；节点来源 IP 同样记成代理地址。
 - 反代与 CDN 必须对 `/heron.v1.AdminService/` 路径禁用响应压缩，并保留 hub 的 `Cache-Control: no-store, no-transform`；公开 API 与静态资源可继续压缩。hub 自己只压缩 `GetSnapshot` 与 `ListNodes` 两个管理过程，其余管理响应不压缩。部署后用带 `Accept-Encoding: gzip` 的其它管理请求（例如 `ListTags`）检查最终响应没有 `Content-Encoding`、缓存头完整。
