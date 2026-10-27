@@ -388,12 +388,12 @@ func TestTrafficQuotaResetEditsAndCommitFailure(t *testing.T) {
 	if len(events) != 2 || events[0].Transition != store.TransitionRecovered {
 		t.Fatalf("reset sequence=%+v", events)
 	}
-	// 当前周期已经写入，墙钟倒退到其起点之前不能使用它转换状态。
+	// 当前周期（重置日改回 1 后起点回到 9 月 1 日）已经写入，墙钟倒退到其起点之前不能使用它转换状态。
 	_, err = h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 90}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.clk.SetWall(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
+	h.clk.SetWall(time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
 	quotaNode(t, h, id, 1000, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
 	if err := h.alerts.SweepOffline(t.Context()); err != nil {
 		t.Fatal(err)

@@ -331,6 +331,26 @@ func TestResetDayMovedEarlierExtendsThePeriod(t *testing.T) {
 	queried(t, st, byteRange{1, start, old})
 }
 
+// 墙钟回拨越过边界：落盘起点仍是当前重置日下的边界，不是配置改动，周期保持原状、不查桶；起点留在未来，
+// 告警引擎据此拒绝转换状态。墙钟再越过边界后起点与应当的起点相等。
+func TestClockRollbackKeepsTheFuturePeriod(t *testing.T) {
+	st := newMem()
+	st.bytesBetween = func(int64, time.Time, time.Time) (int64, int64, error) { return 80, 20, nil }
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, shanghai)
+	st.recs[1] = store.TrafficRecord{NodeID: 1, BootID: "b1", Baseline: []store.TrafficCounter{{Rx: 1000, Tx: 1000}}, TotalRx: 5000, TotalTx: 5000, PeriodRx: 100, PeriodTx: 100, PeriodStart: start}
+	st.days[1] = 1
+	b, clk := newBook(t, st) // 9 月 15 日，起点 10 月 1 日在未来
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(start) || e.PeriodRx != 100 || e.PeriodTx != 100 {
+		t.Fatalf("rolled-back clock changed the period: %+v", e)
+	}
+	queried(t, st)
+	clk.Advance(20 * 24 * time.Hour) // 10 月 5 日
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(start) || e.PeriodRx != 100 {
+		t.Fatalf("after the clock passed the boundary again: %+v", e)
+	}
+	queried(t, st)
+}
+
 // 读桶失败：起点往后挪时周期量按 0 起算（不滚动会让后续入账记进旧周期，而那些增量到下次重算时未必已刷进桶）；
 // 起点往前挪时保持原状、下次触碰重试（旧周期的入账本来就整个落在新周期内，不会丢）。
 func TestBucketReadFailureStartsLaterPeriodFromZeroAndRetriesExtension(t *testing.T) {

@@ -176,9 +176,11 @@ const backfillTimeout = 10 * time.Second
 //   - 应当的起点晚于落盘起点：新周期 [want, now) 的量取桶的和，旧周期的入账与校正不再算数（校正断言的是旧区间的用量）。
 //     正常滚动时这个和为 0：Account 先滚动再入账、再进桶，边界之后第一次触碰之前没有任何上报进过新周期的桶。
 //     连续错过多个周期时直接跳到 now 所在的周期——中间周期的用量没有载体，本来就丢了。
-//   - 应当的起点早于落盘起点（重置日或时区把起点往前挪，或墙钟回拨越过了边界）：周期延长，旧周期的入账与校正仍整个
-//     落在新周期内，只把 [want, old) 的桶量加上；这段桶量当时已记进总量，总量仍不小于周期量。墙钟回拨时加进来的是
-//     上一周期的量，墙钟再次越过边界后按上一条重算。
+//   - 应当的起点早于落盘起点，且落盘起点在当前重置日与时区下不是边界：只有重置日或时区改了才会这样，周期延长，
+//     旧周期的入账与校正仍整个落在新周期内，只把 [want, old) 的桶量加上；这段桶量当时已记进总量，总量仍不小于周期量。
+//   - 应当的起点早于落盘起点，但落盘起点仍是当前配置下的边界：配置没变，是墙钟回拨越过了边界。保持原状：延长会把
+//     上一周期的桶量并进来、再次越过边界时又用桶和替掉这个周期的入账与校正；不动则起点留在未来，告警引擎对这样的
+//     周期拒绝转换状态，墙钟再次越过边界后 want 与起点相等、一切照旧。
 //
 // 桶的和不含 hub 重启后首报与跨离线 TTL 的增量，也不含校正（Storage.NetBytesBetween），重算后的周期量不大于账本本会
 // 记到的量，差额由 Adjust 校正。读桶失败时：起点往后挪按 0 起算并记日志——不滚动会让后续入账继续记进旧周期，而那些
@@ -198,6 +200,9 @@ func (b *Book) rolled(ctx context.Context, nodeID int64, s State, day int, now t
 		}
 		s.PeriodStart, s.PeriodRx, s.PeriodTx = want, max(rx, 0), max(tx, 0)
 		return s, true
+	}
+	if PeriodStart(s.PeriodStart, day, b.tz).Equal(s.PeriodStart) {
+		return s, false
 	}
 	rx, tx, err := b.st.NetBytesBetween(ctx, nodeID, want, s.PeriodStart)
 	if err != nil {
