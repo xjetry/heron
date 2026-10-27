@@ -33,6 +33,7 @@ import (
 	"github.com/xjetry/heron/internal/hub/web"
 	"github.com/xjetry/heron/internal/releasesig"
 	"github.com/xjetry/heron/internal/shutdown"
+	"github.com/xjetry/heron/internal/tcpstall"
 	"github.com/xjetry/heron/internal/update"
 )
 
@@ -372,6 +373,14 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	srv := &http.Server{
 		Addr: h.opts.listen, Handler: drain, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
+		// 写侧没有超时：响应写阻塞在内核发送缓冲上，ReadTimeout 与 IdleTimeout（零值沿用 ReadTimeout）都管不到，
+		// 对端停止接收的连接会一直占着 goroutine 与描述符。上界由内核在连接层兜住（tcpstall），每条接受的连接都设。
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if err := tcpstall.Bound(c, stallTimeout); err != nil {
+				log.Warn("stall timeout not set on a connection", "peer", c.RemoteAddr(), "err", err)
+			}
+			return ctx
+		},
 	}
 
 	retention := h.opts.retention
@@ -423,6 +432,11 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	// 最后由 defer 依次停止后台循环、关库，避免晚到的上报落在最后一次刷出之后。
 	return errors.Join(err, shutdownHTTP(srv, drain, drainTimeout))
 }
+
+// stallTimeout 是对端连续不确认已发出数据的上界（tcpstall.Bound）。hub 没有流式响应，最大的响应是更新中转的二进制
+// 与 QueryMetrics 的历史，正常对端对每个分段的确认在毫秒到秒级；60 秒容得下跨洲链路上一次重传退避，又把一条坏连接
+// 能占住的时间从"内核放弃零窗口探测的十几分钟"压到一分钟。它只管写侧的停滞，不限制一次下载的总时长。
+const stallTimeout = 60 * time.Second
 
 // drainTimeout 是关停时排空在途请求的上限。到点后断开连接以中止慢请求体，仍等待已经进入的处理器。
 // 空闲关停和请求完成后的退出从发信号或 cancel 起算，必须早于它；否则是在等这个超时，而不是在等请求结束。
