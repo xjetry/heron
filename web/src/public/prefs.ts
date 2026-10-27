@@ -14,7 +14,7 @@ export const PUBLIC_TAG_MATCH_KEY = "heron-public-tag-match";
 const TAG_MATCHES: readonly TagMatch[] = ["all", "any"];
 
 // 访客的视图、状态墙分组与标签多选的匹配方式按浏览器记住（lib/storedChoice），不认识的值用默认值：视图默认卡片（卡片视图
-// 只放在线与维护中节点，离线、从未上报与已出租列在网格下方），分组默认地区，标签匹配默认同时满足（与管理端一致）。
+// 只放在线与维护中节点，离线与从未上报、已出租各一张表列在网格下方），分组默认地区，标签匹配默认同时满足（与管理端一致）。
 export const readPublicView = (): View => readChoice(PUBLIC_VIEW_KEY, VIEWS, "cards");
 export const writePublicView = (view: View): void => writeChoice(PUBLIC_VIEW_KEY, view);
 export const readWallGroupBy = (): GroupBy => readChoice(PUBLIC_WALL_GROUP_KEY, GROUP_BYS.map((option) => option.value), "region");
