@@ -29,6 +29,40 @@ type memStore struct {
 	days     map[int64]int
 	fail     error
 	writes   int
+	// bytesBetween 应答 NetBytesBetween；nil 时恒为 0。ranges 记录每次查询的节点与区间。
+	bytesBetween func(nodeID int64, from, to time.Time) (int64, int64, error)
+	ranges       []byteRange
+}
+
+type byteRange struct {
+	nodeID   int64
+	from, to time.Time
+}
+
+func (m *memStore) NetBytesBetween(_ context.Context, nodeID int64, from, to time.Time) (int64, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ranges = append(m.ranges, byteRange{nodeID, from, to})
+	if m.bytesBetween == nil {
+		return 0, 0, nil
+	}
+	return m.bytesBetween(nodeID, from, to)
+}
+
+// queried 断言账本到目前为止恰好按给定区间查过分钟桶。
+func queried(t *testing.T, st *memStore, want ...byteRange) {
+	t.Helper()
+	st.mu.Lock()
+	got := append([]byteRange(nil), st.ranges...)
+	st.mu.Unlock()
+	if len(got) != len(want) {
+		t.Fatalf("bucket queries %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i].nodeID != want[i].nodeID || !got[i].from.Equal(want[i].from) || !got[i].to.Equal(want[i].to) {
+			t.Fatalf("bucket query %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
 }
 
 func newMem() *memStore {
@@ -229,7 +263,8 @@ func TestPeriodBoundaries(t *testing.T) {
 }
 
 func TestPeriodRollsOverAtResetDayMidnightKeepingTotals(t *testing.T) {
-	b, clk := newBook(t, newMem())
+	st := newMem()
+	b, clk := newBook(t, st)
 	b.Account(1, counters("b1", 0, 0), nil)
 	b.Account(1, counters("b1", 500, 700), nil)
 	clk.Advance(16 * 24 * time.Hour) // 上海 10 月 1 日 12:00
@@ -241,11 +276,86 @@ func TestPeriodRollsOverAtResetDayMidnightKeepingTotals(t *testing.T) {
 	if e.PeriodRx != 100 || e.PeriodTx != 100 || e.TotalRx != 600 || e.TotalTx != 800 {
 		t.Fatalf("period not reset / totals changed: %+v", e)
 	}
-	if want := time.Date(2026, 10, 1, 0, 0, 0, 0, shanghai); !e.PeriodStart.Equal(want) {
-		t.Fatalf("period start %v, want %v", e.PeriodStart, want)
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, shanghai)
+	if !e.PeriodStart.Equal(start) {
+		t.Fatalf("period start %v, want %v", e.PeriodStart, start)
 	}
 	if want := time.Date(2026, 11, 1, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) {
 		t.Fatalf("next reset %v, want %v", e.NextReset, want)
+	}
+	// 滚动只在边界之后的首次触碰（这里是入账）查一次新周期 [起点, now) 的桶；此后的读不再查。
+	queried(t, st, byteRange{1, start, clk.Now()})
+}
+
+// 重置日把周期起点往后挪：新周期的量按分钟桶在 [新起点, now) 的和重算，旧周期的入账不再算数；总量不变。
+func TestResetDayMovedLaterRecomputesThePeriodFromBuckets(t *testing.T) {
+	st := newMem()
+	st.bytesBetween = func(int64, time.Time, time.Time) (int64, int64, error) { return 120, 30, nil }
+	b, clk := newBook(t, st) // 9 月 15 日 12:00，周期起点 9 月 1 日
+	b.Account(1, counters("b1", 0, 0), nil)
+	b.Account(1, counters("b1", 500, 700), nil)
+	b.SetResetDay(1, 10)
+	e, _ := b.Get(1)
+	start := time.Date(2026, 9, 10, 0, 0, 0, 0, shanghai)
+	if !e.PeriodStart.Equal(start) || e.PeriodRx != 120 || e.PeriodTx != 30 || e.TotalRx != 500 || e.TotalTx != 700 {
+		t.Fatalf("after moving the reset day later: %+v", e)
+	}
+	if want := time.Date(2026, 10, 10, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) || e.ResetDay != 10 {
+		t.Fatalf("next reset %v day %d, want %v day 10", e.NextReset, e.ResetDay, want)
+	}
+	b.Get(1)
+	queried(t, st, byteRange{1, start, clk.Now()})
+}
+
+// 重置日把周期起点往前挪：旧周期的入账与校正仍整个落在新周期内，只把起点之间的桶量加上；总量不变。
+func TestResetDayMovedEarlierExtendsThePeriod(t *testing.T) {
+	st := newMem()
+	st.bytesBetween = func(int64, time.Time, time.Time) (int64, int64, error) { return 80, 20, nil }
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)
+	st.recs[1] = store.TrafficRecord{NodeID: 1, BootID: "b1", Baseline: []store.TrafficCounter{{Rx: 1000, Tx: 1000}}, TotalRx: 5000, TotalTx: 5000, PeriodRx: 100, PeriodTx: 100, PeriodStart: old}
+	st.days[1] = 1
+	b, _ := newBook(t, st)
+	if _, err := b.Adjust(context.Background(), 1, 900, 700); err != nil {
+		t.Fatal(err)
+	}
+	b.SetResetDay(1, 20)
+	e, _ := b.Get(1)
+	start := time.Date(2026, 8, 20, 0, 0, 0, 0, shanghai)
+	if !e.PeriodStart.Equal(start) || e.PeriodRx != 980 || e.PeriodTx != 720 || e.TotalRx != 5800 || e.TotalTx != 5600 {
+		t.Fatalf("after moving the reset day earlier: %+v", e)
+	}
+	if want := time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) {
+		t.Fatalf("next reset %v, want %v", e.NextReset, want)
+	}
+	b.Get(1)
+	queried(t, st, byteRange{1, start, old})
+}
+
+// 读桶失败：起点往后挪时周期量按 0 起算（不滚动会让后续入账记进旧周期，而那些增量到下次重算时未必已刷进桶）；
+// 起点往前挪时保持原状、下次触碰重试（旧周期的入账本来就整个落在新周期内，不会丢）。
+func TestBucketReadFailureStartsLaterPeriodFromZeroAndRetriesExtension(t *testing.T) {
+	st := newMem()
+	fail := errors.New("db down")
+	st.bytesBetween = func(int64, time.Time, time.Time) (int64, int64, error) { return 80, 20, fail }
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)
+	st.recs[1] = store.TrafficRecord{NodeID: 1, BootID: "b1", Baseline: []store.TrafficCounter{{Rx: 1000, Tx: 1000}}, TotalRx: 5000, TotalTx: 5000, PeriodRx: 100, PeriodTx: 100, PeriodStart: old}
+	st.days[1] = 1
+	b, _ := newBook(t, st)
+	b.SetResetDay(1, 20)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(old) || e.PeriodRx != 100 || e.PeriodTx != 100 {
+		t.Fatalf("failed extension changed the entry: %+v", e)
+	}
+	fail = nil
+	start := time.Date(2026, 8, 20, 0, 0, 0, 0, shanghai)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(start) || e.PeriodRx != 180 || e.PeriodTx != 120 {
+		t.Fatalf("retried extension: %+v", e)
+	}
+	queried(t, st, byteRange{1, start, old}, byteRange{1, start, old})
+	fail = errors.New("db down again")
+	b.SetResetDay(1, 10)
+	later := time.Date(2026, 9, 10, 0, 0, 0, 0, shanghai)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(later) || e.PeriodRx != 0 || e.PeriodTx != 0 || e.TotalRx != 5000 {
+		t.Fatalf("failed recompute did not restart the period from zero: %+v", e)
 	}
 }
 
@@ -368,7 +478,7 @@ func TestSetResetDayMovesTheNextBoundaryAndViewCoversUnknownNodes(t *testing.T) 
 	b, _ := newBook(t, newMem())
 	b.Account(1, counters("b1", 0, 0), nil) // 周期起点 9 月 1 日
 	b.SetResetDay(1, 20)
-	if e, _ := b.Get(1); e.ResetDay != 20 || !e.NextReset.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai)) {
+	if e, _ := b.Get(1); e.ResetDay != 20 || !e.NextReset.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai)) || !e.PeriodStart.Equal(time.Date(2026, 8, 20, 0, 0, 0, 0, shanghai)) {
 		t.Fatalf("after changing the day: %+v", e)
 	}
 	v := b.View(2)

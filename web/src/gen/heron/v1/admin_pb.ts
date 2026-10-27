@@ -659,7 +659,8 @@ export type Node = Message<"heron.v1.Node"> & {
   factsUpdatedAt?: bigint | undefined;
 
   /**
-   * 周期重置日 1–28：周期在 hub 时区的该日零点重置。
+   * 周期重置日 1–28：周期在 hub 时区的该日零点重置。改动后周期起点按新日子重算，当前周期用量随之按分钟桶重算
+   * （口径见 Traffic.period_rx）。
    *
    * @generated from field: uint32 traffic_reset_day = 10;
    */
@@ -1036,7 +1037,8 @@ export type UpdateNodeRequest = Message<"heron.v1.UpdateNodeRequest"> & {
   note: string;
 
   /**
-   * 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
+   * 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。改动让周期起点移动时，当前周期用量
+   * 按分钟桶重算（口径见 Traffic.period_rx），此前的校正不再算数。
    *
    * @generated from field: uint32 traffic_reset_day = 5;
    */

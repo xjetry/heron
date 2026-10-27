@@ -2046,7 +2046,9 @@ type Traffic struct {
 	// 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
 	TotalRx uint64 `protobuf:"varint,1,opt,name=total_rx,json=totalRx,proto3" json:"total_rx,omitempty"`
 	TotalTx uint64 `protobuf:"varint,2,opt,name=total_tx,json=totalTx,proto3" json:"total_tx,omitempty"`
-	// 当前周期内的字节数。
+	// 当前周期内的字节数。周期起点因重置日或 hub 时区改变而移动时按分钟桶重算：起点往后挪，新周期的量取
+	// [新起点, 现在) 的桶和，此前的校正不再算数；起点往前挪，原周期量加上两个起点之间的桶和。桶里没有 hub 重启后
+	// 首报与跨过离线 TTL 的增量（与 QueryMetrics 的 rx_bytes 同一来源），重算后的值可能比实际少，可经 AdjustTraffic 校正。
 	PeriodRx uint64 `protobuf:"varint,3,opt,name=period_rx,json=periodRx,proto3" json:"period_rx,omitempty"`
 	PeriodTx uint64 `protobuf:"varint,4,opt,name=period_tx,json=periodTx,proto3" json:"period_tx,omitempty"`
 	// 当前周期起点与下次重置时刻，Unix 秒。

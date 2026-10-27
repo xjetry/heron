@@ -26,6 +26,9 @@ type Storage interface {
 	LoadTraffic(ctx context.Context) ([]store.TrafficRecord, error)
 	WriteTraffic(ctx context.Context, recs []store.TrafficRecord) ([]int64, error)
 	TrafficResetDays(ctx context.Context) (map[int64]int, error)
+	// NetBytesBetween 是节点在 [from, to) 内分钟桶里的收发字节和（store.Store.NetBytesBetween）：只含 ingest 能归到
+	// 某一分钟的增量，不含 hub 重启后首报、跨过离线 TTL 的增量与校正，所以不大于账本在同一区间的入账。
+	NetBytesBetween(ctx context.Context, nodeID int64, from, to time.Time) (rx, tx int64, err error)
 }
 
 var _ Storage = (*store.Store)(nil)
@@ -162,20 +165,51 @@ func (b *Book) day(nodeID int64) int {
 	return DefaultResetDay
 }
 
+// backfillTimeout 限制周期起点移动时在 mu 下读分钟桶的时长：读挂住时所有入账跟着等，这个上界让它不无限期等下去。
+const backfillTimeout = 10 * time.Second
+
 // rolled 只计算状态副本，校正写库失败时不能把周期滚动留在内存里。
-// 周期起点按旧时区落盘；换时区后若该起点之后的首个新边界已过，下一次读取、入账或刷出会清零周期量。
-// 连续错过多个周期时直接跳到 now 所在的周期——中间周期的用量没有载体，本来就丢了。
-func (b *Book) rolled(s State, day int, now time.Time) (State, bool) {
-	if now.Before(NextResetAfter(s.PeriodStart, day, b.tz)) {
+//
+// 周期起点应当是按当前重置日与 hub 时区算出的、不晚于 now 的最近边界（PeriodStart）。落盘的起点与它不同有三种来由：
+// 时间越过了边界（正常滚动）、重置日改了（SetResetDay）、时区改了（起点按旧时区落盘）。三种都按同一规则收敛到应当的
+// 起点，周期量按分钟桶重算：
+//   - 应当的起点晚于落盘起点：新周期 [want, now) 的量取桶的和，旧周期的入账与校正不再算数（校正断言的是旧区间的用量）。
+//     正常滚动时这个和为 0：Account 先滚动再入账、再进桶，边界之后第一次触碰之前没有任何上报进过新周期的桶。
+//     连续错过多个周期时直接跳到 now 所在的周期——中间周期的用量没有载体，本来就丢了。
+//   - 应当的起点早于落盘起点（重置日或时区把起点往前挪，或墙钟回拨越过了边界）：周期延长，旧周期的入账与校正仍整个
+//     落在新周期内，只把 [want, old) 的桶量加上；这段桶量当时已记进总量，总量仍不小于周期量。墙钟回拨时加进来的是
+//     上一周期的量，墙钟再次越过边界后按上一条重算。
+//
+// 桶的和不含 hub 重启后首报与跨离线 TTL 的增量，也不含校正（Storage.NetBytesBetween），重算后的周期量不大于账本本会
+// 记到的量，差额由 Adjust 校正。读桶失败时：起点往后挪按 0 起算并记日志——不滚动会让后续入账继续记进旧周期，而那些
+// 增量到下一次重算时未必已刷进桶；起点往前挪保持原状、下次触碰重试——旧周期的入账本来就整个落在新周期内，不会丢。
+func (b *Book) rolled(ctx context.Context, nodeID int64, s State, day int, now time.Time) (State, bool) {
+	want := PeriodStart(now, day, b.tz)
+	if want.Equal(s.PeriodStart) {
 		return s, false
 	}
-	s.PeriodStart = PeriodStart(now, day, b.tz)
-	s.PeriodRx, s.PeriodTx = 0, 0
+	ctx, cancel := context.WithTimeout(ctx, backfillTimeout)
+	defer cancel()
+	if want.After(s.PeriodStart) {
+		rx, tx, err := b.st.NetBytesBetween(ctx, nodeID, want, now)
+		if err != nil {
+			b.log.Error("traffic period restarted from zero: reading its minute buckets failed", "node", nodeID, "period_start", want, "err", err)
+			rx, tx = 0, 0
+		}
+		s.PeriodStart, s.PeriodRx, s.PeriodTx = want, max(rx, 0), max(tx, 0)
+		return s, true
+	}
+	rx, tx, err := b.st.NetBytesBetween(ctx, nodeID, want, s.PeriodStart)
+	if err != nil {
+		b.log.Error("traffic period not extended yet: reading its minute buckets failed", "node", nodeID, "period_start", want, "err", err)
+		return s, false
+	}
+	s.PeriodStart, s.PeriodRx, s.PeriodTx = want, satAdd(s.PeriodRx, max(rx, 0)), satAdd(s.PeriodTx, max(tx, 0))
 	return s, true
 }
 
-func (b *Book) roll(nodeID int64, e *entry, now time.Time) {
-	if next, changed := b.rolled(e.State, b.day(nodeID), now); changed {
+func (b *Book) roll(ctx context.Context, nodeID int64, e *entry, now time.Time) {
+	if next, changed := b.rolled(ctx, nodeID, e.State, b.day(nodeID), now); changed {
 		e.State, e.dirty = next, true
 	}
 }
@@ -231,7 +265,7 @@ func (b *Book) Account(nodeID int64, m *heronv1.Metrics, ifaces []*heronv1.NetIn
 		e = &entry{State: b.fresh(nodeID, now)}
 		b.entries[nodeID] = e
 	} else {
-		b.roll(nodeID, e, now)
+		b.roll(context.Background(), nodeID, e, now)
 	}
 	d, ok := increment(e.State, m, next, view, now)
 	e.BootID, e.NetCounterEpoch, e.Baseline, e.dirty = m.GetBootId(), epoch, next, true
@@ -299,7 +333,7 @@ func interfaceDelta(prev, cur []store.TrafficCounter) (Delta, bool) {
 	return d, ok
 }
 
-// Get 返回有条目的节点的视图；读也会推进周期，所以周期量在边界之后读到的一定是清零的。
+// Get 返回有条目的节点的视图；读也会推进周期，所以周期量在边界之后读到的一定是按新周期重算过的（rolled）。
 func (b *Book) Get(nodeID int64) (Entry, bool) {
 	now := b.clk.Now()
 	b.mu.Lock()
@@ -308,7 +342,7 @@ func (b *Book) Get(nodeID int64) (Entry, bool) {
 	if !ok {
 		return Entry{}, false
 	}
-	b.roll(nodeID, e, now)
+	b.roll(context.Background(), nodeID, e, now)
 	return b.view(nodeID, e.State), true
 }
 
@@ -348,7 +382,7 @@ func (b *Book) Commit(ctx context.Context, nodeID int64) (Entry, error) {
 	if e == nil {
 		e = &entry{State: b.fresh(nodeID, b.clk.Now())}
 	}
-	next, _ := b.rolled(e.State, b.day(nodeID), b.clk.Now())
+	next, _ := b.rolled(ctx, nodeID, e.State, b.day(nodeID), b.clk.Now())
 	written, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
 	if err != nil {
 		return Entry{}, err
@@ -361,8 +395,8 @@ func (b *Book) Commit(ctx context.Context, nodeID int64) (Entry, error) {
 	return b.view(nodeID, next), nil
 }
 
-// SetResetDay 只更新配置。边界按新日子在下一次入账、读取或刷出时判定：若 now 已越过
-// 按新日子算出的下一个边界，周期立即开始新的一段、周期量清零。
+// SetResetDay 只更新配置。周期起点在下一次入账、读取或刷出时按新日子重算（rolled）：起点往后挪时新周期的量按
+// 分钟桶重算，往前挪时原周期量加上起点之间的桶量。
 func (b *Book) SetResetDay(nodeID int64, day int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -391,7 +425,7 @@ func (b *Book) Adjust(ctx context.Context, nodeID int64, periodRx, periodTx uint
 	if e == nil {
 		e = &entry{State: b.fresh(nodeID, now)}
 	}
-	next, _ := b.rolled(e.State, b.day(nodeID), now)
+	next, _ := b.rolled(ctx, nodeID, e.State, b.day(nodeID), now)
 	next.TotalRx = satAdd(max(next.TotalRx-next.PeriodRx, 0), rx)
 	next.TotalTx = satAdd(max(next.TotalTx-next.PeriodTx, 0), tx)
 	next.PeriodRx, next.PeriodTx = rx, tx
@@ -427,7 +461,7 @@ func (b *Book) Flush(ctx context.Context) error {
 	var ids []int64
 	written := map[int64]State{}
 	for id, e := range b.entries {
-		b.roll(id, e, now)
+		b.roll(ctx, id, e, now)
 		if e.dirty {
 			recs = append(recs, record(id, e.State))
 			ids = append(ids, id)

@@ -129,7 +129,7 @@ systemd 安装把这类定制放进 drop-in（`systemctl edit heron-hub`）：�
 
 ## 时区
 
-hub 按 `--timezone` 判定流量周期的重置日与节点到期日的天边界。不指定时取宿主时区（`TZ` 或 `/etc/localtime`），都解析不到时按 UTC 并在启动日志里告警。Docker 镜像里没有 `/etc/localtime`，用 `-e TZ=Asia/Shanghai`（不替换默认参数），或在写全的参数里加 `--timezone`；两者都给时以 `--timezone` 为准。
+hub 按 `--timezone` 判定流量周期的重置日与节点到期日的天边界。不指定时取宿主时区（`TZ` 或 `/etc/localtime`），都解析不到时按 UTC 并在启动日志里告警。Docker 镜像里没有 `/etc/localtime`，用 `-e TZ=Asia/Shanghai`（不替换默认参数），或在写全的参数里加 `--timezone`；两者都给时以 `--timezone` 为准。换时区会让每个节点的流量周期起点按新时区重算，当前周期用量随之按分钟桶重算（口径见 proto 的 `Traffic.period_rx`）。
 
 ## 宿主机本地策略
 

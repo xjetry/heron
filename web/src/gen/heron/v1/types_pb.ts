@@ -818,7 +818,9 @@ export type Traffic = Message<"heron.v1.Traffic"> & {
   totalTx: bigint;
 
   /**
-   * 当前周期内的字节数。
+   * 当前周期内的字节数。周期起点因重置日或 hub 时区改变而移动时按分钟桶重算：起点往后挪，新周期的量取
+   * [新起点, 现在) 的桶和，此前的校正不再算数；起点往前挪，原周期量加上两个起点之间的桶和。桶里没有 hub 重启后
+   * 首报与跨过离线 TTL 的增量（与 QueryMetrics 的 rx_bytes 同一来源），重算后的值可能比实际少，可经 AdjustTraffic 校正。
    *
    * @generated from field: uint64 period_rx = 3;
    */

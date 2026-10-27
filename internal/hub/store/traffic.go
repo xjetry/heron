@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/xjetry/heron/internal/agentwire"
+	"github.com/xjetry/heron/internal/hub/metric"
 )
 
 // TrafficCounter 是差分基线的一项：Name 为空是合计形态的唯一一项，非空是一张网卡。计数是入账时截到 MaxInt64 的值，
@@ -220,4 +222,37 @@ func (s *Store) TrafficResetDays(ctx context.Context) (map[int64]int, error) {
 		out[id] = day
 	}
 	return out, rows.Err()
+}
+
+// NetBytesBetween 返回节点在 [from, to) 内分钟桶里的收发字节和。读法与 QueryMetrics 的小时级相同：1h 行加上水位之后
+// 尚未上卷的 5m、1m 行，所以边界按小时桶取整（from 向下、to 向上对齐到整点）；周期零点落在整点上的时区（hub 的
+// --timezone 偏移是整小时）不受取整影响。桶里只有 ingest 判定能归到某一分钟的增量：hub 重启后的首次上报与跨过离线
+// TTL 的上报不进桶（ingest.Service.Report），校正也不进，所以这个和不大于账本在同一区间的入账。to 不晚于 from 时为 0。
+func (s *Store) NetBytesBetween(ctx context.Context, nodeID int64, from, to time.Time) (rx, tx int64, err error) {
+	if !to.After(from) {
+		return 0, 0, nil
+	}
+	hour, _ := LevelByName("1h")
+	rows, err := s.queryMetrics(ctx, requestRead, nodeID, from.Unix(), to.Unix(), hour, hour.Bucket)
+	if err != nil {
+		return 0, 0, err
+	}
+	var rxSum, txSum float64
+	for _, r := range rows {
+		rxSum += r.Bucket.Sum[metric.RxBytes]
+		txSum += r.Bucket.Sum[metric.TxBytes]
+	}
+	return bytesInt(rxSum), bytesInt(txSum), nil
+}
+
+// bytesInt 把桶里以 float64 累加的字节和转回 int64：和在 2^53 以内精确（见 metric.Bucket），到界时停在 MaxInt64，
+// 手工改库留下的负和收敛到 0。
+func bytesInt(v float64) int64 {
+	switch {
+	case v >= math.MaxInt64:
+		return math.MaxInt64
+	case v <= 0:
+		return 0
+	}
+	return int64(v)
 }

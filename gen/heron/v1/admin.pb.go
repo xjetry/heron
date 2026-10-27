@@ -2129,7 +2129,8 @@ type Node struct {
 	// 主机静态信息；从未上报则缺失。
 	Facts          *Facts `protobuf:"bytes,8,opt,name=facts,proto3" json:"facts,omitempty"`
 	FactsUpdatedAt *int64 `protobuf:"varint,9,opt,name=facts_updated_at,json=factsUpdatedAt,proto3,oneof" json:"facts_updated_at,omitempty"`
-	// 周期重置日 1–28：周期在 hub 时区的该日零点重置。
+	// 周期重置日 1–28：周期在 hub 时区的该日零点重置。改动后周期起点按新日子重算，当前周期用量随之按分钟桶重算
+	// （口径见 Traffic.period_rx）。
 	TrafficResetDay uint32 `protobuf:"varint,10,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
 	// 离线告警宽限期（秒）；缺失表示取 HERON_OFFLINE_AFTER。
 	// HERON_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
@@ -2793,7 +2794,8 @@ type UpdateNodeRequest struct {
 	Public bool                   `protobuf:"varint,3,opt,name=public,proto3" json:"public,omitempty"`
 	// 最长 1024 个字符。
 	Note string `protobuf:"bytes,4,opt,name=note,proto3" json:"note,omitempty"`
-	// 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
+	// 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。改动让周期起点移动时，当前周期用量
+	// 按分钟桶重算（口径见 Traffic.period_rx），此前的校正不再算数。
 	TrafficResetDay uint32 `protobuf:"varint,5,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
 	// 必填，缺失拒绝；0 表示清除（取 HERON_OFFLINE_AFTER），非 0 须 ≥ HERON_OFFLINE_AFTER 的秒数。
 	OfflineGraceS *uint32 `protobuf:"varint,6,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
