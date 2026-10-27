@@ -114,24 +114,32 @@ it("只有在线与维护中出卡片；离线与从未上报列在网格下方�
   ]);
   expect.soft(screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"))).toEqual(["on", "maint"]);
   expect.soft(within(screen.getByRole("article", { name: "maint" })).getByText("维护中")).toHaveAttribute("data-status", "maintenance");
-  const folded = screen.getByText("离线、从未上报与已出租 · 2").closest("details")!;
+  const folded = screen.getByText("离线与从未上报 · 2").closest("details")!;
   expect.soft(folded).toHaveAttribute("open");
+  expect.soft(screen.queryByText(/^已出租 · /)).toBeNull();
   const rows = within(folded).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
   expect.soft(rows).toEqual([["off", "HK", "离线", "10 分钟前"], ["fresh", "", "从未上报", "–"]]);
   expect.soft(within(folded).getByRole("link", { name: "off" })).toHaveAttribute("href", "/nodes/3");
 });
 
-it("已出租且仍在上报的节点不出卡片，进紧凑表并带「已出租」徽章", async () => {
+it("已出租且仍在上报的节点不出卡片，也不进离线表，列在自己的表里（名称、地区、到期）", async () => {
   await renderCards([
     { id: 1n, name: "on", online: true, lastSeenAt: 998n },
-    { id: 2n, name: "leased", online: true, lastSeenAt: 998n, rented: true, country: "US", metrics: { cpuPct: 40 } },
+    { id: 2n, name: "leased", online: true, lastSeenAt: 998n, rented: true, country: "US", metrics: { cpuPct: 40 }, billing: { expiresOn: "2030-01-31", daysLeft: 3 } },
     { id: 3n, name: "off", online: false, lastSeenAt: 400n },
+    { id: 4n, name: "leased-open", online: false, rented: true },
   ]);
   expect(screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"))).toEqual(["on"]);
-  const folded = screen.getByText("离线、从未上报与已出租 · 2").closest("details")!;
-  const rows = within(folded).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
-  expect(rows).toEqual([["leased", "US", "已出租", "刚刚"], ["off", "", "离线", "10 分钟前"]]);
-  expect(within(folded).getByText("已出租")).toHaveAttribute("data-status", "rented");
+  const cells = (details: HTMLElement) => within(details).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+  const offline = screen.getByText("离线与从未上报 · 1").closest("details")!;
+  expect(cells(offline)).toEqual([["off", "", "离线", "10 分钟前"]]);
+  const rented = screen.getByText("已出租 · 2").closest("details")!;
+  expect(rented).toHaveAttribute("open");
+  expect(within(rented).getAllByRole("columnheader").map((th) => th.textContent)).toEqual(["名称", "地区", "到期"]);
+  expect(cells(rented)).toEqual([["leased", "US", "2030-01-31剩 3 天"], ["leased-open", "", "–"]]);
+  // 已出租的到期日照常显示但不上色：出租期间的续费是租约的事。
+  expect(within(rented).getByText(/2030-01-31/).closest(".expiry")).toHaveAttribute("data-level", "neutral");
+  expect(within(rented).getByRole("link", { name: "leased" })).toHaveAttribute("href", "/nodes/2");
 });
 
 it("访客收起离线分组后，轮询带来新数据也不会把它再展开", async () => {
@@ -140,7 +148,7 @@ it("访客收起离线分组后，轮询带来新数据也不会把它再展开"
     { id: 1n, name: "on", online: true, lastSeenAt: now - 2n },
     { id: 3n, name: "off", online: false, lastSeenAt: 400n },
   ], tags: [] }) }, [{ path: "/", Component: PublicOverview }], "/");
-  const folded = () => screen.getByText("离线、从未上报与已出租 · 1").closest("details")!;
+  const folded = () => screen.getByText("离线与从未上报 · 1").closest("details")!;
   expect(await screen.findByText("10 分钟前")).toBeInTheDocument();
   expect(folded()).toHaveAttribute("open");
   // 访客点 summary 收起时，浏览器只改 DOM 上的 open。

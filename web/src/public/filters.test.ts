@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { expect, it } from "vitest";
 import { PublicNodeSchema, type PublicNode } from "../gen/heron/v1/public_pb";
-import { NODE_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, sortNodes, statusCounts, summarize, tileLevel, type NodeSort, type ColorBy, type PublicFilters } from "./filters";
+import { NODE_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, groupHead, matchesSearch, NO_FILTERS, sortNodes, statusCounts, summarize, tileLevel, type NodeSort, type ColorBy, type PublicFilters } from "./filters";
 
 const node = (init: Parameters<typeof create<typeof PublicNodeSchema>>[1]): PublicNode => create(PublicNodeSchema, init);
 const nodes = [
@@ -36,22 +36,29 @@ it.each<[PublicFilters, string[]]>([
   expect(names(filterPublicNodes(nodes, filters))).toEqual(expected);
 });
 
-it("已出租的节点即使 online 为真也归离线，不归在线：在线与离线互补", () => {
+it("已出租的节点即使 online 为真也单独成档，不归在线也不归离线：三档互斥且互补", () => {
   const rented = node({ id: 6n, name: "rented-1", country: "JP", online: true, lastSeenAt: 9n, rented: true });
   const list = [...nodes, rented];
-  expect(names(filterPublicNodes(list, { ...NO_FILTERS, status: "online" }))).not.toContain("rented-1");
-  expect(names(filterPublicNodes(list, { ...NO_FILTERS, status: "offline" }))).toContain("rented-1");
-  const online = filterPublicNodes(list, { ...NO_FILTERS, status: "online" });
-  const offline = filterPublicNodes(list, { ...NO_FILTERS, status: "offline" });
-  expect(online.length + offline.length).toBe(list.length);
-  expect(online.filter((n) => offline.includes(n))).toEqual([]);
+  const tier = (status: "online" | "offline" | "rented") => filterPublicNodes(list, { ...NO_FILTERS, status });
+  expect(names(tier("rented"))).toEqual(["rented-1"]);
+  expect(names(tier("online"))).not.toContain("rented-1");
+  expect(names(tier("offline"))).not.toContain("rented-1");
+  expect(tier("online").length + tier("offline").length + tier("rented").length).toBe(list.length);
+  expect(tier("online").filter((n) => tier("offline").includes(n) || tier("rented").includes(n))).toEqual([]);
+  expect(statusCounts(list, NO_FILTERS)).toEqual({ all: 6, online: 2, offline: 3, rented: 1 });
 });
 
-it("状态计数按其余筛选算、不看状态筛选本身，在线加离线等于全部", () => {
-  expect(statusCounts(nodes, NO_FILTERS)).toEqual({ all: 5, online: 2, offline: 3 });
-  expect(statusCounts(nodes, { ...NO_FILTERS, status: "offline" })).toEqual({ all: 5, online: 2, offline: 3 });
-  expect(statusCounts(nodes, { ...NO_FILTERS, search: "hk", status: "online" })).toEqual({ all: 2, online: 1, offline: 1 });
-  expect(statusCounts(nodes, { ...NO_FILTERS, regions: ["JP"] })).toEqual({ all: 2, online: 1, offline: 1 });
+it("状态计数按其余筛选算、不看状态筛选本身，在线加离线加已出租等于全部", () => {
+  expect(statusCounts(nodes, NO_FILTERS)).toEqual({ all: 5, online: 2, offline: 3, rented: 0 });
+  expect(statusCounts(nodes, { ...NO_FILTERS, status: "offline" })).toEqual({ all: 5, online: 2, offline: 3, rented: 0 });
+  expect(statusCounts(nodes, { ...NO_FILTERS, search: "hk", status: "online" })).toEqual({ all: 2, online: 1, offline: 1, rented: 0 });
+  expect(statusCounts(nodes, { ...NO_FILTERS, regions: ["JP"] })).toEqual({ all: 2, online: 1, offline: 1, rented: 0 });
+});
+
+it("分组头：在线 / 未出租总数，有已出租时另计；组序仍按在线数、总节点数", () => {
+  const rented = node({ id: 6n, name: "rented-1", country: "JP", online: true, lastSeenAt: 9n, rented: true });
+  const heads = groupByRegion([...nodes, rented]).map((g) => [g.name, groupHead(g)]);
+  expect(heads).toEqual([["日本", "1 / 2 在线 · 已出租 1"], ["香港", "1 / 2 在线"], ["未知", "0 / 1 在线"]]);
 });
 
 it.each<[NodeSort, string[]]>([

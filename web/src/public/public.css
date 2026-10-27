@@ -17,7 +17,7 @@
 .segments > [data-status="rented"] { background: var(--status-rented); }
 .segments > [data-status="never"] { background: var(--status-never); }
 .segments > [data-status="offline"] { background: var(--status-offline); }
-.summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
+.summary-rented, .summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
 
 /* 卡片视图（NodeCard.tsx）：宽屏五列，1px 边框分层，不用阴影与渐变。 */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(240px, (100% - 40px) / 5)), 1fr)); gap: 10px; }

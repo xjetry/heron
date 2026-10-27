@@ -6,15 +6,21 @@ import { literalPattern } from "../lib/fold";
 import { expiryLevel, nodeStatus, STATUS_ORDER, usageLevel, type Level, type NodeStatus } from "../lib/status";
 import { matchesTags, sameTag, type TagMatch } from "../lib/tags";
 
-// 节点状态筛选把五态分成互补的两档：在线就是 nodeStatus 的「在线」，离线是其余四态（离线、从未上报、维护中、已出租）。
-// 已出租即使仍在上报也归离线，与 nodeStatus 先判已出租的次序一致。互补保证「在线 + 离线 = 全部」，三档计数对得上。
-export type StatusFilter = "all" | "online" | "offline";
+// 节点状态筛选把五态分成互斥且互补的三档：在线就是 nodeStatus 的「在线」；已出租单独一档——机器租出去了、不会有上报，
+// 离线是它的常态而不是故障，即使仍在上报也归这一档（与 nodeStatus 先判已出租的次序一致）；离线是其余三态（离线、
+// 从未上报、维护中）。互补保证「在线 + 离线 + 已出租 = 全部」，四个计数对得上。
+export type StatusFilter = "all" | "online" | "offline" | "rented";
 export const STATUS_FILTERS: readonly { value: StatusFilter; label: string }[] = [
-  { value: "all", label: "全部" }, { value: "online", label: "在线" }, { value: "offline", label: "离线" },
+  { value: "all", label: "全部" }, { value: "online", label: "在线" }, { value: "offline", label: "离线" }, { value: "rented", label: "已出租" },
 ];
 
+function statusTier(node: PublicNode): Exclude<StatusFilter, "all"> {
+  const status = nodeStatus(node);
+  return status === "online" || status === "rented" ? status : "offline";
+}
+
 function matchesStatus(node: PublicNode, status: StatusFilter): boolean {
-  return status === "all" || (nodeStatus(node) === "online") === (status === "online");
+  return status === "all" || statusTier(node) === status;
 }
 
 // tagMatch 只在选了至少两个标签时影响结果；默认交集，与管理端的标签过滤同一口径。
@@ -38,11 +44,12 @@ export function filterPublicNodes(nodes: readonly PublicNode[], f: PublicFilters
     && matchesStatus(n, f.status));
 }
 
-// 三档计数按其余筛选（搜索、地区、标签）算，不看状态筛选本身：切换状态时数字不变，访客能先看到每一档有多少台再选。
+// 各档计数按其余筛选（搜索、地区、标签）算，不看状态筛选本身：切换状态时数字不变，访客能先看到每一档有多少台再选。
 export function statusCounts(nodes: readonly PublicNode[], f: PublicFilters): Record<StatusFilter, number> {
   const scope = filterPublicNodes(nodes, { ...f, status: "all" });
-  const online = scope.filter((n) => matchesStatus(n, "online")).length;
-  return { all: scope.length, online, offline: scope.length - online };
+  const counts: Record<StatusFilter, number> = { all: scope.length, online: 0, offline: 0, rented: 0 };
+  for (const n of scope) counts[statusTier(n)]++;
+  return counts;
 }
 
 export type NodeSort = "default" | "expiry" | "cpu" | "traffic";
@@ -93,9 +100,17 @@ export function tileLevel(node: PublicNode, by: ColorBy): Level | undefined {
 export type GroupBy = "region" | "tag";
 export const GROUP_BYS: readonly { value: GroupBy; label: string }[] = [{ value: "region", label: "地区" }, { value: "tag", label: "标签" }];
 
-export type WallGroup = { key: string; name: string; nodes: PublicNode[]; online: number };
+// online 与 rented 是组内按五态数出的在线数与已出租数；组头写「在线 / 未出租的总数」，已出租另计，
+// 租出去的机器不会有上报，不能让它看起来像离线。
+export type WallGroup = { key: string; name: string; nodes: PublicNode[]; online: number; rented: number };
 
 const countOnline = (nodes: readonly PublicNode[]) => nodes.filter((n) => nodeStatus(n) === "online").length;
+const countRented = (nodes: readonly PublicNode[]) => nodes.filter((n) => nodeStatus(n) === "rented").length;
+
+// 组头文案与可访问名共用：在线 / 未出租总数，有已出租时再带上它的数。
+export function groupHead(g: WallGroup): string {
+  return `${g.online} / ${g.nodes.length - g.rented} 在线${g.rented > 0 ? ` · 已出租 ${g.rented}` : ""}`;
+}
 
 // 两种分组同一排序：兜底组（未知地区、无标签）固定最后；其余按五态在线数降序、总数降序，再按各自的 tiebreak。
 function ordered(groups: WallGroup[], fallbackKey: string, tiebreak: (a: WallGroup, b: WallGroup) => number): WallGroup[] {
@@ -109,11 +124,14 @@ function ordered(groups: WallGroup[], fallbackKey: string, tiebreak: (a: WallGro
 export function groupByRegion(nodes: readonly PublicNode[]): WallGroup[] {
   const groups = new Map<string, WallGroup>();
   for (const n of nodes) {
-    const g = groups.get(n.country) ?? { key: n.country, name: regionName(n.country), nodes: [], online: 0 };
+    const g = groups.get(n.country) ?? { key: n.country, name: regionName(n.country), nodes: [], online: 0, rented: 0 };
     g.nodes.push(n);
     groups.set(n.country, g);
   }
-  for (const g of groups.values()) g.online = countOnline(g.nodes);
+  for (const g of groups.values()) {
+    g.online = countOnline(g.nodes);
+    g.rented = countRented(g.nodes);
+  }
   return ordered([...groups.values()], "", (a, b) => a.key.localeCompare(b.key));
 }
 
@@ -128,10 +146,10 @@ export function groupByTag(nodes: readonly PublicNode[], tags: readonly string[]
   for (const tag of tags) {
     const members = nodes.filter((n) => n.tags.some((t) => sameTag(t, tag)));
     for (const n of members) placed.add(n);
-    if (members.length > 0) groups.push({ key: `tag:${tag}`, name: tag, nodes: members, online: countOnline(members) });
+    if (members.length > 0) groups.push({ key: `tag:${tag}`, name: tag, nodes: members, online: countOnline(members), rented: countRented(members) });
   }
   const rest = nodes.filter((n) => !placed.has(n));
-  if (rest.length > 0) groups.push({ key: UNTAGGED, name: "无标签", nodes: rest, online: countOnline(rest) });
+  if (rest.length > 0) groups.push({ key: UNTAGGED, name: "无标签", nodes: rest, online: countOnline(rest), rented: countRented(rest) });
   const order = new Map(tags.map((tag, i) => [`tag:${tag}`, i]));
   return ordered(groups, UNTAGGED, (a, b) => order.get(a.key)! - order.get(b.key)!);
 }

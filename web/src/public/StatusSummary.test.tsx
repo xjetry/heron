@@ -18,8 +18,16 @@ function summary() {
   return within(screen.getByRole("region", { name: "汇总" }));
 }
 
-it("在线 / 总数按五态算，维护中与已出租不算在线", () => {
-  expect(summary().getByText("1 / 5 在线")).toBeInTheDocument();
+it("在线 / 总数按五态算，维护中不算在线；已出租不进分母、另计", () => {
+  const s = summary();
+  expect(s.getByText("1 / 4 在线")).toBeInTheDocument();
+  expect(s.getByText("已出租 1")).toBeInTheDocument();
+});
+
+it("没有已出租节点时不出已出租计数", () => {
+  render(<StatusSummary nodes={nodes.filter((n) => !n.rented)} />);
+  expect(screen.getByText("1 / 4 在线")).toBeInTheDocument();
+  expect(screen.queryByText(/已出租/)).toBeNull();
 });
 
 it("五态分段有可访问计数，按固定顺序与比例显示", () => {

@@ -9,10 +9,11 @@ import { SEARCH_KEYSHORTCUTS, useSearchShortcut } from "../lib/useSearchShortcut
 import { NODE_SORTS, COLOR_BYS, GROUP_BYS, STATUS_FILTERS, type NodeSort, type ColorBy, type GroupBy, type PublicFilters, type StatusFilter } from "./filters";
 import type { View } from "./prefs";
 
-// 筛选行：搜索、地区与标签两个筛选入口、节点状态（全部、在线、离线）、视图切换；状态墙多一个分组依据（有标签时）与着色依据，
-// 卡片与列表多一个排序（两者共用同一个排序选择）。地区与标签的选项、三档状态的计数都由调用方从当前快照算出。
-export function FilterRow({ filters, onFilters, statusCounts, regions, tags, modes, onMode, onTagMatch, view, onView, groupBy, onGroupBy, colorBy, onColorBy, sort, onSort }: {
-  filters: PublicFilters; onFilters: (next: PublicFilters) => void; statusCounts: Readonly<Record<StatusFilter, number>>;
+// 筛选行：搜索、地区与标签两个筛选入口、节点状态（全部、在线、离线，有已出租节点时多一档已出租）、视图切换；状态墙多一个
+// 分组依据（有标签时）与着色依据，卡片与列表多一个排序（两者共用同一个排序选择）。地区与标签的选项、各档状态的计数都由
+// 调用方从当前快照算出；rentedTier 为假时不出已出租这一档（多数站点没有已出租节点，常驻一个「已出租 0」只是噪音）。
+export function FilterRow({ filters, onFilters, statusCounts, rentedTier, regions, tags, modes, onMode, onTagMatch, view, onView, groupBy, onGroupBy, colorBy, onColorBy, sort, onSort }: {
+  filters: PublicFilters; onFilters: (next: PublicFilters) => void; statusCounts: Readonly<Record<StatusFilter, number>>; rentedTier: boolean;
   regions: readonly FacetOption[]; tags: readonly FacetOption[];
   modes: Readonly<Record<Facet, FacetMode>>; onMode: (facet: Facet, mode: FacetMode) => void; onTagMatch: (match: TagMatch) => void;
   view: View; onView: (view: View) => void;
@@ -35,7 +36,7 @@ export function FilterRow({ filters, onFilters, statusCounts, regions, tags, mod
         tags={tags.length > 0 ? { options: tags, selected: filters.tags, onChange: (next) => onFilters({ ...filters, tags: next }), match: filters.tagMatch, onMatch: onTagMatch } : undefined} />
       {/* 计数写进可访问名称，与地区、标签胶囊同一写法：读屏读到的是「在线 12」而不是拆开的两段。 */}
       <div className="button-group" role="group" aria-label="节点状态">
-        {STATUS_FILTERS.map(({ value, label }) => (
+        {STATUS_FILTERS.filter(({ value }) => value !== "rented" || rentedTier).map(({ value, label }) => (
           <button key={value} type="button" aria-pressed={filters.status === value} aria-label={`${label} ${statusCounts[value]}`} onClick={() => onFilters({ ...filters, status: value })}>
             {label}{" "}<span className="num">{statusCounts[value]}</span>
           </button>

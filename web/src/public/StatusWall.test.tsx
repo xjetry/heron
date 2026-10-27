@@ -200,6 +200,10 @@ it("已出租方块 data-status 为 rented、不画读数条，宽屏标「已�
   expect(within(li).getAllByText("已出租")).toHaveLength(1);
   expect(within(li).getByText("已出租")).toHaveClass("tile-note");
   expect(li.querySelector(".tile-status")).toBeNull();
+  // 组头的分母不含已出租，已出租另计；可访问名同一段文字。
+  const group = li.closest("details")!;
+  expect(group.querySelector("summary")).toHaveTextContent("美国 · 0 / 0 在线 · 已出租 1");
+  expect(group).toHaveAttribute("aria-label", "美国 0 / 0 在线 · 已出租 1");
 });
 
 it("已出租方块窄屏也标「已出租」且不画读数条", async () => {

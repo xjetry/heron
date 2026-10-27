@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { PublicService, PublicSnapshotSchema } from "../gen/heron/v1/public_pb";
+import { PublicNodeSchema, PublicService, PublicSnapshotSchema } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
@@ -119,8 +119,27 @@ it("多选：地区并集、标签交集，与搜索、节点状态叠加；计�
 });
 
 const statusGroup = () => screen.getByRole("group", { name: "节点状态" });
-const status = (name: "全部" | "在线" | "离线") => within(statusGroup()).getByRole("button", { name: new RegExp(`^${name} \\d+$`) });
+const status = (name: "全部" | "在线" | "离线" | "已出租") => within(statusGroup()).getByRole("button", { name: new RegExp(`^${name} \\d+$`) });
 const statusButtons = () => within(statusGroup()).getAllByRole("button").map((b) => [b.getAttribute("aria-label"), b.getAttribute("aria-pressed") === "true"]);
+
+it("已出租这一档只在快照里有已出租节点时出现：选它只看已出租；节点都不再出租时这一档消失、筛选退回全部", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const leased = create(PublicNodeSchema, { id: 5n, name: "leased-1", online: true, lastSeenAt: 998n, sortOrder: 4, country: "JP", rented: true });
+  let current: typeof snapshot = { ...snapshot, nodes: [...snapshot.nodes, leased] };
+  render(async () => current);
+  await screen.findByText("2 / 4 在线");
+  wall();
+  expect(screen.getByRole("region", { name: "汇总" }).textContent).toContain("已出租 1");
+  expect(statusButtons()).toEqual([["全部 5", true], ["在线 2", false], ["离线 2", false], ["已出租 1", false]]);
+  fireEvent.click(status("已出租"));
+  expect(shown()).toEqual(["leased-1"]);
+  expect(groupHeads()).toEqual(["日本 · 0 / 0 在线 · 已出租 1"]);
+  current = snapshot;
+  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
+  await waitFor(() => expect(statusButtons()).toEqual([["全部 4", true], ["在线 2", false], ["离线 2", false]]));
+  expect(screen.queryByText(/已出租/)).toBeNull();
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+});
 
 it("标签折叠比较：选 db 时 DB 的节点也命中", async () => {
   render();

@@ -6,7 +6,7 @@ import { ago, bytes, percent } from "../lib/format";
 import { nodeStatus, STATUS_LABEL, usageLevel } from "../lib/status";
 import { useMediaQuery, WIDE_QUERY } from "../lib/useMediaQuery";
 import { DetailPanel } from "./DetailPanel";
-import { groupByRegion, groupByTag, tileLevel, type ColorBy, type GroupBy } from "./filters";
+import { groupByRegion, groupByTag, groupHead, tileLevel, type ColorBy, type GroupBy } from "./filters";
 
 // 状态墙：左侧按地区或标签分组的方块（tags 是 hub 下发的标签并集，按标签分组时用），右侧固定详情面板随点选切换。方块是节点页的链接：宽屏上不带修饰键的左键点击
 // 只切换详情（面板里有「查看完整历史」去节点页），其余情况（窄屏、中键、⌘ / Ctrl / Shift）都是普通链接。
@@ -26,8 +26,8 @@ export function StatusWall({ nodes, tags, now, groupBy, colorBy, selectedId, onS
     <div className="wall-layout">
       <div className="wall">
         {groups.map((group) => (
-          <details className="wall-group" role="group" aria-label={`${group.name} ${group.online} / ${group.nodes.length} 在线`} key={group.key} open>
-            <summary>{group.name} · {group.online} / {group.nodes.length} 在线</summary>
+          <details className="wall-group" role="group" aria-label={`${group.name} ${groupHead(group)}`} key={group.key} open>
+            <summary>{group.name} · {groupHead(group)}</summary>
             <ul className="tiles">
               {group.nodes.map((n) => {
                 const status = nodeStatus(n);

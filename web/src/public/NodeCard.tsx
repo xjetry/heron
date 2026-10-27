@@ -92,13 +92,16 @@ function Capacity({ label, used, total }: { label: string; used?: bigint; total?
   return <Meter label={label} value={u.pct} detail={`${bytes(u.used)} / ${bytes(u.total)}`} />;
 }
 
-// 卡片网格 + 网格下方离线、从未上报与已出租的紧凑表。传入的 nodes 已按调用方的排序；紧凑表保持同一顺序。
+// 卡片网格 + 网格下方两张紧凑表：离线与从未上报一张（名称、地区、状态、最后上报），已出租一张（名称、地区、到期）——
+// 租出去的机器不会有上报，状态与最后上报对它没有意义，到期是它仍关心的事；并进离线那张表会让它看起来像故障。
+// 传入的 nodes 已按调用方的排序；紧凑表保持同一顺序。
 // 紧凑表默认展开：open 与状态墙的地区分组一样只是初始值，React 只在这个 prop 变化时写 DOM，
 // 轮询带来的重渲染不会把访客收起的分组再展开。
 export function CardGrid({ nodes, now }: { nodes: readonly PublicNode[]; now: number }) {
-  // 卡片只属于在线与维护中。已出租由 nodeStatus 排在二者之前，即使 online 仍为真也进紧凑表，不在这里再判一次 rented。
+  // 卡片只属于在线与维护中。已出租由 nodeStatus 排在二者之前，即使 online 仍为真也进已出租表，不在这里再判一次 rented。
   const live = nodes.filter((n) => { const s = nodeStatus(n); return s === "online" || s === "maintenance"; });
-  const rest = nodes.filter((n) => !live.includes(n));
+  const rented = nodes.filter((n) => nodeStatus(n) === "rented");
+  const rest = nodes.filter((n) => !live.includes(n) && !rented.includes(n));
   return (
     <>
       <div className="cards">
@@ -106,7 +109,7 @@ export function CardGrid({ nodes, now }: { nodes: readonly PublicNode[]; now: nu
       </div>
       {rest.length > 0 && (
         <details className="folded-nodes" open>
-          <summary>离线、从未上报与已出租 · {rest.length}</summary>
+          <summary>离线与从未上报 · {rest.length}</summary>
           <table className="compact-table">
             <thead><tr><th>名称</th><th>地区</th><th>状态</th><th>最后上报</th></tr></thead>
             <tbody>
@@ -116,6 +119,23 @@ export function CardGrid({ nodes, now }: { nodes: readonly PublicNode[]; now: nu
                   <td>{n.country && <CountryBadge code={n.country} />}</td>
                   <td><StatusBadge status={nodeStatus(n)} /></td>
                   <td className="num">{n.lastSeenAt !== undefined ? ago(n.lastSeenAt, now) : "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+      {rented.length > 0 && (
+        <details className="folded-nodes" open>
+          <summary>已出租 · {rented.length}</summary>
+          <table className="compact-table">
+            <thead><tr><th>名称</th><th>地区</th><th>到期</th></tr></thead>
+            <tbody>
+              {rented.map((n) => (
+                <tr key={String(n.id)}>
+                  <td><Link to={`/nodes/${n.id}`}>{n.name}</Link></td>
+                  <td>{n.country && <CountryBadge code={n.country} />}</td>
+                  <td>{n.billing?.expiresOn ? <Expiry billing={n.billing} rented={n.rented} /> : "–"}</td>
                 </tr>
               ))}
             </tbody>

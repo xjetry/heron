@@ -35,8 +35,12 @@ export function PublicOverview() {
   // 从选择集里移除，而不是留下一个看不见的过滤条件。
   const liveRegions = filters.regions.filter((code) => regions.some((r) => r.value === code));
   const liveTags = gate.data.tags.filter((tag) => filters.tags.some((s) => sameTag(s, tag)));
-  if (liveRegions.length !== filters.regions.length || liveTags.length !== filters.tags.length) setFilters({ ...filters, regions: liveRegions, tags: liveTags });
-  const effective: PublicFilters = { ...filters, regions: liveRegions, tags: liveTags };
+  // 已出租这一档只在快照里有已出租节点时存在（FilterRow）；选中它之后节点都不再出租，这一档消失，筛选退回全部，
+  // 不留下一个看不见的过滤条件。
+  const rentedTier = all.some((n) => n.rented);
+  const liveStatus = filters.status === "rented" && !rentedTier ? "all" : filters.status;
+  if (liveRegions.length !== filters.regions.length || liveTags.length !== filters.tags.length || liveStatus !== filters.status) setFilters({ ...filters, regions: liveRegions, tags: liveTags, status: liveStatus });
+  const effective: PublicFilters = { ...filters, regions: liveRegions, tags: liveTags, status: liveStatus };
   const nodes = filterPublicNodes(all, effective);
   // 没有任何标签时分组下拉不出现，按标签分组也只剩「无标签」一组：此时按地区分组，不留下看不见的设置。
   const wallGroupBy: GroupBy = gate.data.tags.length > 0 ? groupBy : "region";
@@ -47,7 +51,7 @@ export function PublicOverview() {
       {all.length > 0 && (
         <>
           <StatusSummary nodes={nodes} />
-          <FilterRow filters={effective} onFilters={setFilters} statusCounts={statusCounts(all, effective)} regions={regions} tags={tags} modes={modes} onMode={chooseMode} onTagMatch={chooseTagMatch} view={view} onView={chooseView} groupBy={wallGroupBy} onGroupBy={chooseGroupBy} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
+          <FilterRow filters={effective} onFilters={setFilters} statusCounts={statusCounts(all, effective)} rentedTier={rentedTier} regions={regions} tags={tags} modes={modes} onMode={chooseMode} onTagMatch={chooseTagMatch} view={view} onView={chooseView} groupBy={wallGroupBy} onGroupBy={chooseGroupBy} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
           {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} tags={gate.data.tags} now={now} groupBy={wallGroupBy} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
           {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortNodes(nodes, sort)} now={now} />}

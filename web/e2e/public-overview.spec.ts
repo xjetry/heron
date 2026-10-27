@@ -119,8 +119,8 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
   await page.screenshot({ path: testInfo.outputPath("wall-dark.png"), fullPage: true });
 
-  // 筛选：地区入口（默认单选，点一个只看它，再点回到全部）+ 节点状态。离线是在线以外的全部：维护中的 hk-edge 虽仍在上报，
-  // 也计入离线，所以不加筛选时是 5 = 2 + 3。三档计数跟随地区筛选，不跟随状态筛选本身。
+  // 筛选：地区入口（默认单选，点一个只看它，再点回到全部）+ 节点状态。离线是在线与已出租以外的全部：维护中的 hk-edge 虽仍在
+  // 上报，也计入离线，所以不加筛选时是 5 = 2 + 3；快照里没有已出租节点，不出已出租那一档。三档计数跟随地区筛选，不跟随状态筛选本身。
   const statuses = page.getByRole("group", { name: "节点状态" });
   const status = (name: "全部" | "在线" | "离线") => statuses.getByRole("button", { name: new RegExp(`^${name} \\d+$`) });
   await expect(statuses.getByRole("button")).toHaveText(["全部 5", "在线 2", "离线 3"]);
@@ -181,7 +181,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(longCard.locator(".node-card-meta").getByRole("group", { name: "公网出口" })).toHaveText("IPv4");
   // 离线、从未上报与已出租默认展开；访客收起后，轮询带来新数据也不会再展开。
   const folded = page.locator("details.folded-nodes");
-  await expect(folded.locator("summary")).toHaveText("离线、从未上报与已出租 · 2");
+  await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
   await expect(folded).toHaveAttribute("open");
   await expect(folded.getByRole("row")).toHaveCount(3);
   await expect(folded.getByRole("link", { name: "tokyo-home" })).toBeVisible();
