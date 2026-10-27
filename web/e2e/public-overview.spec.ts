@@ -179,7 +179,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   expect(await card.getByRole("link", { name: "tokyo-core" }).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   const longCard = page.getByRole("article", { name: nodes[3].name });
   await expect(longCard.locator(".node-card-meta").getByRole("group", { name: "公网出口" })).toHaveText("IPv4");
-  // 离线、从未上报与已出租默认展开；访客收起后，轮询带来新数据也不会再展开。
+  // 离线与从未上报默认展开；访客收起后，轮询带来新数据也不会再展开。
   const folded = page.locator("details.folded-nodes");
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
   await expect(folded).toHaveAttribute("open");
@@ -195,10 +195,10 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   const withExtra = (route: Route) => fulfillRpc(route, PublicService.method.getSnapshot, () => ({ now: BigInt(now), nodes: [...nodes, { id: 6n, name: "新离线节点", country: "", online: false, tags: [], lastSeenAt: BigInt(now - 600) }], tags: ["家宽", "机房"] }));
   // 换上与撤掉路由后的变化都要等下一次快照轮询：一个周期加请求耗时可能超过断言默认的 5 秒，等两个周期。
   await page.route(rpcRoute(PublicService.method.getSnapshot), withExtra);
-  await expect(folded.locator("summary")).toHaveText("离线、从未上报与已出租 · 3", { timeout: 2 * POLL_MS });
+  await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 3", { timeout: 2 * POLL_MS });
   await expect(folded).not.toHaveAttribute("open");
   await page.unroute(rpcRoute(PublicService.method.getSnapshot), withExtra);
-  await expect(folded.locator("summary")).toHaveText("离线、从未上报与已出租 · 2", { timeout: 2 * POLL_MS });
+  await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2", { timeout: 2 * POLL_MS });
   await folded.locator("summary").click();
   await expect(folded.getByRole("link", { name: "tokyo-home" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("cards-dark.png"), fullPage: true });
