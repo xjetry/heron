@@ -418,8 +418,8 @@ function RuleState({ states, nodeName, onSilence, silenceDisabled }: {
   onSilence?: (id: bigint, opener: HTMLElement) => void; silenceDisabled: boolean;
 }) {
   if (!states) return <span className="muted">正常</span>;
-  // flapping 由 hub 的离线巡检判定（pending 且只因抖动抑制而未触发），silenced 由事件生成处标记
-  // （firing 进入时处于维护静默覆盖内，本次触发与它的恢复都不投递），面板只标出，不重算。
+  // flapping 由 hub 的离线巡检判定（pending 且只因抖动抑制而未触发），silenced 由 hub 维护（firing 进入时处于维护静默
+  // 覆盖内、尚未发出触发通知；静默解除后补发即清除），面板只标出，不重算。
   const names = (list: RuleStates["firing"]) => list.map((s) => nodeName(s.nodeId) + (s.flapping ? "（抖动中）" : "") + (s.state === "firing" && s.silenced ? "（已静默）" : "")).join("、");
   return (
     <>

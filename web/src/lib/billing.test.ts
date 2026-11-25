@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingCycle, BillingCycleSchema } from "../gen/heron/v1/types_pb";
-import { BILLING_CYCLES, byExpiryDay, canRenew, cycleLabel, hubToday, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
+import { BILLING_CYCLES, byExpiryDay, canRenew, costSummary, cycleLabel, hubToday, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };
 
@@ -21,6 +21,8 @@ describe("cycleLabel", () => {
       expect(cycleLabel(cycle), name).not.toMatch(/^(|未知（\d+）)$/);
     }
     expect(BILLING_CYCLES.map((e) => e.label)).toEqual(["月", "季", "半年", "年", "两年", "三年", "五年"]);
+    // 月数与 types.proto 里各枚举值的注释一致，摊销按它折算。
+    expect(BILLING_CYCLES.map((e) => e.months)).toEqual([1, 3, 6, 12, 24, 36, 60]);
   });
   it("未指定是没有周期，表外值显示编号", () => {
     expect([cycleLabel(BillingCycle.UNSPECIFIED), cycleLabel(9 as BillingCycle)]).toEqual(["", "未知（9）"]);
@@ -128,5 +130,93 @@ describe("canRenew", () => {
     expect(canRenew({ ...none, expiresOn: "2026-01-10" })).toBe(false);
     expect(canRenew({ ...none, billingCycle: BillingCycle.YEARLY })).toBe(false);
     expect(canRenew(undefined)).toBe(false);
+  });
+});
+
+describe("costSummary", () => {
+  type Row = { name: string; rented: boolean; billing?: BillingView };
+  const own = (name: string, price: string, currency: string, billingCycle: BillingCycle, daysLeft?: number): Row =>
+    ({ name, rented: false, billing: { price, currency, billingCycle, expiresOn: daysLeft === undefined ? "" : "2030-07-01", daysLeft } });
+
+  it("待续费现金流：0 至 30 天（含两端）的自用带价有周期节点按原币种分列，币种按代码排序", () => {
+    const got = costSummary([
+      own("today", "10.50", "USD", BillingCycle.MONTHLY, 0),
+      own("edge", "0.25", "USD", BillingCycle.YEARLY, 30),
+      own("later", "99", "USD", BillingCycle.MONTHLY, 31),
+      own("euro", "7", "EUR", BillingCycle.QUARTERLY, 12),
+      // 十进制定点相加：0.1 + 0.2 按浮点是 0.30000000000000004。
+      own("dime", "0.1", "CNY", BillingCycle.MONTHLY, 3),
+      own("dimes", "0.2", "CNY", BillingCycle.MONTHLY, 4),
+    ]);
+    expect(got.upcoming).toEqual([
+      { currency: "CNY", count: 2, amount: "0.30" },
+      { currency: "EUR", count: 1, amount: "7" },
+      { currency: "USD", count: 2, amount: "10.75" },
+    ]);
+  });
+
+  it("待续费现金流不含已出租、没有周期、价格不合法与没有到期日的节点；含自动续期的节点", () => {
+    const renewing: Row = { name: "auto", rented: false, billing: { ...own("auto", "3", "USD", BillingCycle.MONTHLY, 5).billing!, autoRenew: true } as BillingView };
+    const got = costSummary([
+      renewing,
+      { ...own("leased", "100", "USD", BillingCycle.MONTHLY, 5), rented: true },
+      own("oneoff", "100", "USD", BillingCycle.UNSPECIFIED, 5),
+      own("legacy", "1e3", "USD", BillingCycle.MONTHLY, 5),
+      own("lower", "100", "usd", BillingCycle.MONTHLY, 5),
+      own("unpriced", "", "", BillingCycle.MONTHLY, 5),
+      own("undated", "100", "USD", BillingCycle.MONTHLY),
+      { name: "bare", rented: false },
+    ]);
+    expect(got.upcoming).toEqual([{ currency: "USD", count: 1, amount: "3" }]);
+  });
+
+  it("已过期（daysLeft < 0）的自用带价有周期节点单列为逾期金额，不混入待续费", () => {
+    const got = costSummary([
+      own("gone", "12.34", "USD", BillingCycle.MONTHLY, -1),
+      own("long-gone", "1", "USD", BillingCycle.YEARLY, -400),
+      own("due", "5", "USD", BillingCycle.MONTHLY, 0),
+      { ...own("leased", "100", "USD", BillingCycle.MONTHLY, -3), rented: true },
+      own("oneoff", "100", "USD", BillingCycle.UNSPECIFIED, -3),
+    ]);
+    expect(got.overdue).toEqual([{ currency: "USD", count: 2, amount: "13.34" }]);
+    expect(got.upcoming).toEqual([{ currency: "USD", count: 1, amount: "5" }]);
+  });
+
+  it("月均持有成本按周期月数折算全部自用带价有周期节点，与到期日远近无关；合计后只舍入一次", () => {
+    const got = costSummary([
+      own("m", "10", "USD", BillingCycle.MONTHLY, 400),
+      own("q", "30", "USD", BillingCycle.QUARTERLY, -9),
+      own("y", "100", "USD", BillingCycle.YEARLY),
+      own("t", "0.01", "USD", BillingCycle.TRIENNIAL, 2),
+      own("h", "60", "EUR", BillingCycle.SEMIANNUAL, 1),
+      own("b", "48", "EUR", BillingCycle.BIENNIAL, 1),
+      own("p", "120", "EUR", BillingCycle.QUINQUENNIAL, 1),
+      own("oneoff", "999", "USD", BillingCycle.UNSPECIFIED, 1),
+      own("legacy", "12.345", "USD", BillingCycle.MONTHLY, 1),
+      { ...own("leased", "999", "USD", BillingCycle.MONTHLY, 1), rented: true },
+    ]);
+    // USD：10 + 10 + 8.333… + 0.000277… = 28.3336… → 28.33；年化 120 + 120 + 100 + 0.0033… = 340.0033… → 340。
+    // 先把每台的月均舍入到分再乘 12 会得到 339.96。EUR：10 + 2 + 2 = 14，年化 168。
+    expect(got.amortized).toEqual([
+      { currency: "EUR", count: 3, monthly: "14", yearly: "168" },
+      { currency: "USD", count: 4, monthly: "28.33", yearly: "340" },
+    ]);
+  });
+
+  it("月均金额在分位四舍五入（半分进位）", () => {
+    expect(costSummary([own("half", "0.18", "JPY", BillingCycle.YEARLY, 1)]).amortized).toEqual([{ currency: "JPY", count: 1, monthly: "0.02", yearly: "0.18" }]);
+  });
+
+  it("已出租节点的月均金额单列，不进自用的现金流、逾期与持有成本", () => {
+    const got = costSummary([
+      { ...own("leased", "30", "USD", BillingCycle.QUARTERLY, 3), rented: true },
+      { ...own("leased-gone", "5", "EUR", BillingCycle.MONTHLY, -2), rented: true },
+      { ...own("leased-oneoff", "500", "USD", BillingCycle.UNSPECIFIED, 3), rented: true },
+    ]);
+    expect(got.rentedAmortized).toEqual([
+      { currency: "EUR", count: 1, monthly: "5", yearly: "60" },
+      { currency: "USD", count: 1, monthly: "10", yearly: "120" },
+    ]);
+    expect([got.upcoming, got.overdue, got.amortized]).toEqual([[], [], []]);
   });
 });

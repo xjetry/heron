@@ -81,8 +81,13 @@ type stateEntry struct {
 	// 的同一规则发布（从非 firing 进入 firing 取这次的 since，其余沿用），冷却判定读它。
 	firedAt time.Time
 	// firedSilenced 与库里的 alert_state.fired_silenced 同值（含义见 store.StateRow.FiredSilenced）：恢复是否投递只看它，
-	// 与恢复时刻的静默状态无关，所以必须在内存里与状态同行记到 Load 之后的下一轮评估。
+	// 与恢复时刻的静默状态无关，所以必须在内存里与状态同行记到 Load 之后的下一轮评估；静默解除后的补发巡检也按它找待补发的项。
 	firedSilenced bool
+	// firedSummary、firedValue 与 notifiedAt 与库里的同名列同值（含义见 store.StateRow 的同名字段）：Load 读入，apply 与
+	// renotifyUnsilenced 写库成功后按写入口的同一规则发布。补发读前两项成文，冷却读 notifiedAt。
+	firedSummary string
+	firedValue   float64
+	notifiedAt   time.Time
 	// flapping 是离线巡检最近一次对这对规则与节点的判定：pending 且只因抖动抑制而未进入 firing（FlapDeferred）。
 	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。apply 把它与 state 在同一个 mu 临界区里写入。
 	flapping bool
@@ -105,6 +110,7 @@ type Storage interface {
 	SaveNotifyChannel(ctx context.Context, c store.NotifyChannel) (store.NotifyChannel, error)
 	DeleteNotifyChannel(ctx context.Context, id int64) error
 	ListAlertStates(ctx context.Context) ([]store.StateRow, error)
+	RecordUnsilencedFiring(ctx context.Context, ruleID, nodeID int64, ev store.AlertEvent, targets []store.DeliveryTarget) (store.AlertEvent, error)
 	SetAlertState(ctx context.Context, ruleID, nodeID int64, state store.AlertState, since, recoveredAt time.Time) error
 	DeleteAlertState(ctx context.Context, ruleID, nodeID int64) error
 	RecordTransition(ctx context.Context, ruleID, nodeID int64, state store.AlertState, firedExpiresOn string, recoveredAt time.Time, ev store.AlertEvent, targets []store.DeliveryTarget) (store.AlertEvent, error)
@@ -220,7 +226,8 @@ func (e *Engine) Load(ctx context.Context) error {
 	}
 	for _, s := range states {
 		if _, ok := validRules[s.RuleID]; ok {
-			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt, firedSilenced: s.FiredSilenced, firedAt: s.FiredAt}
+			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt, firedSilenced: s.FiredSilenced, firedAt: s.FiredAt,
+				firedSummary: s.FiredSummary, firedValue: s.FiredValue, notifiedAt: s.NotifiedAt}
 		}
 	}
 	return nil
@@ -256,7 +263,8 @@ func (e *Engine) States() []StateView {
 	defer e.mu.RUnlock()
 	var out []StateView
 	for k, s := range e.states {
-		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt, FiredSilenced: s.firedSilenced, FiredAt: s.firedAt}, s.flapping})
+		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt, FiredSilenced: s.firedSilenced, FiredAt: s.firedAt,
+			FiredSummary: s.firedSummary, FiredValue: s.firedValue, NotifiedAt: s.notifiedAt}, s.flapping})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RuleID != out[j].RuleID {
@@ -514,9 +522,11 @@ func (e *Engine) entry(k stateKey) stateEntry {
 // 状态记的始终是它进入 firing 那一刻的到期日。
 // flapping 是同一轮观测算出的抖动标记：离线巡检传 FlapDeferred，其余种类传 false。它与状态在同一个 mu 临界区里写进
 // states，状态不变、不写库时也更新；States 在 mu 下取快照，所以 ListAlertRules 读到的状态与标记来自同一轮观测。
-// 维护静默只在事件生成这一处生效：maintenance 是节点当前的维护开关，抑制发生在 RecordTransition 的参数里——
-// firing 转换被静默时事件照常落库（silenced=1）但没有投递行，状态行记 fired_silenced；恢复转换是否投递只看配对的
-// firing 是否投递过（cur.firedSilenced），与恢复时刻是否静默无关，所以静默在 firing 中途结束不会补发通知。
+// 维护静默在转换上只在这一处生效：maintenance 是节点当前的维护开关，抑制发生在 RecordTransition 的参数里——
+// firing 转换被静默时事件照常落库（silenced=1）但没有投递行，状态行记 fired_silenced 与这条事件的摘要、观测值；恢复转换
+// 是否投递只看配对的 firing 是否已发出通知（cur.firedSilenced），与恢复时刻是否静默无关。静默在 firing 中途结束时，
+// 补发由离线巡检里的 renotifyUnsilenced 负责，它把 fired_silenced 写回 0，此后的恢复照常投递；静默期内就恢复的，
+// 恢复也不投递，前后都不打扰。
 // maintenance 由调用方从节点读；日历类规则（到期、证书到期）传 false——日历提醒永远不被静默，系统事件不经 apply。
 func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, maintenance bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
@@ -563,14 +573,8 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 	var err error
 	var merged map[int64]bool
 	if tr != nil {
-		targets := make([]store.DeliveryTarget, len(r.ChannelIDs))
-		merged = e.mergedChannels(r.ChannelIDs)
-		for i, id := range r.ChannelIDs {
-			targets[i] = store.DeliveryTarget{ChannelID: id}
-			if merged[id] {
-				targets[i].Batch = cy.batches[batchKey{id, r.ID, *tr}]
-			}
-		}
+		var targets []store.DeliveryTarget
+		targets, merged = e.deliveryTargets(cy, r, *tr)
 		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value, Silenced: silenced}, targets)
 	} else {
 		// SetAlertState 不写触发日期，内存与库记同一个值。
@@ -580,25 +584,106 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 	if err != nil {
 		return err
 	}
-	// 与 setAlertState 推出 fired_at 的规则相同：状态在这里一定变了，进入 firing 即从非 firing 进入。
-	firedAt := cur.firedAt
+	// 与 setAlertState 推出 fired_at、notified_at 的规则相同：状态在这里一定变了，进入 firing 即从非 firing 进入。
+	firedAt, notifiedAt := cur.firedAt, cur.notifiedAt
+	silencedFiring := next == store.StateFiring && silenced
 	if next == store.StateFiring {
 		firedAt = since
+		if !silenced {
+			notifiedAt = since
+		}
+	}
+	// 与库同事务写下的 fired_silenced、fired_summary、fired_value 保持一致：只有被静默的 firing 携带它们，其余状态恒为
+	// 假、空与 0（见 RecordTransition）。
+	entry := stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, firedSilenced: silencedFiring, flapping: flapping, firedAt: firedAt, notifiedAt: notifiedAt}
+	if silencedFiring {
+		entry.firedSummary, entry.firedValue = summary, value
 	}
 	e.mu.Lock()
-	// 与库同事务写下的 fired_silenced 保持一致：只有 firing 携带触发时的静默标记，其余状态恒为假（见 RecordTransition）。
-	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, firedSilenced: next == store.StateFiring && silenced, flapping: flapping, firedAt: firedAt}
+	e.states[k] = entry
 	e.mu.Unlock()
 	if tr != nil {
-		// 记下实际所在的批次而不是请求的：请求加入的批次已开始尝试时，store 新开了一批，后续同键的行加入新批。
-		for _, d := range ev.Deliveries {
-			if merged[d.ChannelID] {
-				cy.batches[batchKey{d.ChannelID, r.ID, *tr}] = d.BatchID
-			}
-		}
-		cy.events = append(cy.events, ev)
+		cy.record(r.ID, *tr, merged, ev)
 	}
 	return nil
+}
+
+// deliveryTargets 按 r 的渠道给出一次 tr 方向转换的投递目标：合并发送的渠道请求加入本周期同键已开的批次。
+// 返回的 merged 交给 cycle.record，在事件落库后记下实际所在的批次。
+func (e *Engine) deliveryTargets(cy *cycle, r store.AlertRule, tr store.Transition) ([]store.DeliveryTarget, map[int64]bool) {
+	targets := make([]store.DeliveryTarget, len(r.ChannelIDs))
+	merged := e.mergedChannels(r.ChannelIDs)
+	for i, id := range r.ChannelIDs {
+		targets[i] = store.DeliveryTarget{ChannelID: id}
+		if merged[id] {
+			targets[i].Batch = cy.batches[batchKey{id, r.ID, tr}]
+		}
+	}
+	return targets, merged
+}
+
+// record 把一条已落库的规则事件记入本周期。记下实际所在的批次而不是请求的：请求加入的批次已开始尝试时，store 新开了
+// 一批，后续同键的行加入新批。
+func (cy *cycle) record(ruleID int64, tr store.Transition, merged map[int64]bool, ev store.AlertEvent) {
+	for _, d := range ev.Deliveries {
+		if merged[d.ChannelID] {
+			cy.batches[batchKey{d.ChannelID, ruleID, tr}] = d.BatchID
+		}
+	}
+	cy.events = append(cy.events, ev)
+}
+
+// renotifyUnsilenced 为静默期内进入、此刻已不再被静默的 firing 补发触发通知，调用方持 writeMu。
+//
+// 被静默的 firing 状态不变就不经 apply，而状态是否变化取决于新的观测：节点断联后探测与资源规则不再有新的分钟样本，
+// 状态机既不恢复也不再转换。补发因此不挂在任何一种评估上，而是由离线巡检（RunOfflineSweep，每 OfflineSweepEvery
+// 一轮）统一扫一遍内存里全部 firedSilenced 的状态项，按节点当前的维护开关与此刻的静默快照重新判定，与这一项属于哪种
+// 规则、最近有没有观测无关。nodes 是这一轮巡检读到的节点，不在其中的节点（已删除）跳过。
+//
+// 补发是一条新事件（RecordUnsilencedFiring），状态行的 fired_at 不变：恢复文案的持续时长仍从最初触发起算。
+// 日历类规则从不被静默，不会有 firedSilenced 的状态项；规则停用或删除时状态项已随 publishRule、DeleteRule 移除。
+func (e *Engine) renotifyUnsilenced(ctx context.Context, cy *cycle, nodes []store.Node) error {
+	byID := make(map[int64]store.Node, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	now := e.clk.Now()
+	var errs []error
+	for _, s := range e.States() {
+		if s.State != store.StateFiring || !s.FiredSilenced {
+			continue
+		}
+		node, ok := byID[s.NodeID]
+		if !ok {
+			continue
+		}
+		e.mu.RLock()
+		r, ok := e.rules[s.RuleID]
+		r = cloneRule(r)
+		stillSilenced := e.silenced(s.RuleID, s.NodeID, node.Maintenance, now)
+		e.mu.RUnlock()
+		if !ok || stillSilenced {
+			continue
+		}
+		// fired_at 对 firing 状态恒非零：setAlertState 在进入 firing 时写下它，迁移 39 为当时已在 firing 的行回填了 since_at。
+		summary := s.FiredSummary + "（静默结束时仍未恢复，已持续 " + formatAlertDuration(now.Sub(s.FiredAt)) + "）"
+		targets, merged := e.deliveryTargets(cy, r, store.TransitionFiring)
+		ev, err := e.st.RecordUnsilencedFiring(ctx, r.ID, node.ID, store.AlertEvent{At: now, Summary: summary, Value: s.FiredValue}, targets)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		k := stateKey{r.ID, node.ID}
+		e.mu.Lock()
+		// 与 RecordUnsilencedFiring 同事务写下的值一致；它的准入保证库里这一项此刻仍是被静默的 firing，内存随库。
+		if entry, ok := e.states[k]; ok {
+			entry.firedSilenced, entry.firedSummary, entry.firedValue, entry.notifiedAt = false, "", 0, ev.At
+			e.states[k] = entry
+		}
+		e.mu.Unlock()
+		cy.record(r.ID, store.TransitionFiring, merged, ev)
+	}
+	return errors.Join(errs...)
 }
 
 // mergedChannels 按当前渠道快照给出 ids 中合并发送的渠道（mergesBatches）。已删除的渠道不在快照里，按不合并处理，
@@ -716,6 +801,10 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	// 放在本轮各规则评估之后：这一轮已恢复的项不再是 firing，不会先补发触发再紧跟一条恢复。
+	if err := e.renotifyUnsilenced(ctx, cy, nodes); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

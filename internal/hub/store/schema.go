@@ -615,6 +615,14 @@ const ddlAlertState = `CREATE TABLE alert_state (
   -- 最近一次进入 firing 的墙钟（Unix 秒），0 表示从未触发；由 setAlertState 按上一行推出（见 StateRow.FiredAt），冷却判定读它。
   -- 列序与迁移 39 的 ADD COLUMN 结果一致，同样写在 PRIMARY KEY 约束之前。
   fired_at INTEGER NOT NULL DEFAULT 0,
+  -- 被静默的触发留给补发的内容：进入 firing 时这次触发被静默（fired_silenced = 1）才写入当时事件的摘要与观测值，
+  -- 其余状态恒为 '' 与 0（见 StateRow.FiredSummary）。补发时引擎从这里取原文，不回读可能已按保留期清理的事件。
+  -- 列序与迁移 50 的 ADD COLUMN 结果一致，同样写在 PRIMARY KEY 约束之前。
+  fired_summary TEXT NOT NULL DEFAULT '',
+  fired_value REAL NOT NULL DEFAULT 0,
+  -- 最近一次以未静默的触发事件发出通知的墙钟（Unix 秒），0 表示从未发出过；冷却判定读它（见 StateRow.NotifiedAt）。
+  -- 列序与迁移 50 的 ADD COLUMN 结果一致。
+  notified_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (rule_id, node_id)
 )`
 
