@@ -76,7 +76,7 @@ func themePath(meta store.Theme, file string) string {
 
 func TestThemeDocumentsAreAlwaysSandboxed(t *testing.T) {
 	src := testThemeSource()
-	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	h := NewThemes(src, slog.Default()).Handler(builtinSentinel, nil)
 	for _, url := range []string{"/", "/nodes/3"} {
 		code, _, body := serveWithin(t, h, url)
 		if code != 200 || !strings.Contains(body, `sandbox="allow-scripts"`) || !strings.Contains(body, themePath(src.current, "index.html")) || strings.Contains(body, "theme HTML") {
@@ -114,9 +114,9 @@ func TestThemePublishedAdmissionAndPreview(t *testing.T) {
 	p.meta = meta
 	src.versions[meta.Digest] = p
 	valid := true
-	h := ThemeHandler(src, builtinSentinel, func(_ context.Context, token string) (string, string, bool) {
+	h := NewThemes(src, slog.Default()).Handler(builtinSentinel, func(_ context.Context, token string) (string, string, bool) {
 		return meta.ID, meta.Digest, valid && token == "cap"
-	}, slog.Default())
+	})
 	if code, _, _ := serveWithin(t, h, themePath(meta, "index.html")); code != 404 {
 		t.Fatalf("unpublished is public: %d", code)
 	}
@@ -145,7 +145,7 @@ func TestThemePublishedAdmissionAndPreview(t *testing.T) {
 
 func TestThemeResourceRequiresCompleteIdentity(t *testing.T) {
 	src := testThemeSource()
-	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	h := NewThemes(src, slog.Default()).Handler(builtinSentinel, nil)
 	for _, url := range []string{
 		"/_heron/themes//" + src.current.Digest + "/index.html",
 		"/_heron/themes/" + src.current.ID + "//index.html",
@@ -158,7 +158,7 @@ func TestThemeResourceRequiresCompleteIdentity(t *testing.T) {
 
 func TestThemeSnapshotGenerationAndFailure(t *testing.T) {
 	src := testThemeSource()
-	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	h := NewThemes(src, slog.Default()).Handler(builtinSentinel, nil)
 	first := src.current
 	src.afterRead = func() { src.current = store.Theme{}; src.gen++ }
 	if _, _, body := serveWithin(t, h, "/"); !strings.Contains(body, first.Digest) {
@@ -188,7 +188,7 @@ func TestThemeSnapshotGenerationAndFailure(t *testing.T) {
 
 func TestThemeConcurrentResourcesReuseSnapshot(t *testing.T) {
 	src := testThemeSource()
-	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	h := NewThemes(src, slog.Default()).Handler(builtinSentinel, nil)
 	var wg sync.WaitGroup
 	for range 32 {
 		wg.Go(func() {
@@ -214,7 +214,7 @@ func TestThemeHandlerAllocationPerRequestIsIndependentOfFileSize(t *testing.T) {
 		src := testThemeSource()
 		p := src.versions[src.current.Digest]
 		p.files["file.bin"] = []byte(strings.Repeat("x", size))
-		return allocBytesPerRequest(t, ThemeHandler(src, builtinSentinel, nil, slog.Default()), themePath(src.current, "file.bin"), int64(size))
+		return allocBytesPerRequest(t, NewThemes(src, slog.Default()).Handler(builtinSentinel, nil), themePath(src.current, "file.bin"), int64(size))
 	}
 	small, big := perRequest(1024), perRequest(16<<20)
 	if big > 2*small+4096 || big > (16<<20)/256 {
@@ -244,10 +244,10 @@ func TestThemeResourceAllocationIgnoresUnrelatedPackageFiles(t *testing.T) {
 		paths = append(paths, themePath(meta, "app.js"))
 	}
 	measure := func(versions int, cold bool) uint64 {
-		h := ThemeHandler(s, builtinSentinel, nil, slog.Default())
+		h := NewThemes(s, slog.Default()).Handler(builtinSentinel, nil)
 		read := func(i int) {
 			if cold {
-				h = ThemeHandler(s, builtinSentinel, nil, slog.Default())
+				h = NewThemes(s, slog.Default()).Handler(builtinSentinel, nil)
 			}
 			code, _, body := serveWithin(t, h, paths[i%versions])
 			if code != 200 || body != "module" {
@@ -282,7 +282,8 @@ func TestThemeResourceCacheIsBounded(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := testThemeSource()
 			p := src.versions[src.current.Digest]
-			h := ThemeHandler(src, builtinSentinel, nil, slog.Default()).(*themeHandler)
+			themes := NewThemes(src, slog.Default())
+			h := themes.Handler(builtinSentinel, nil)
 			for i := range tc.count {
 				file := fmt.Sprintf("file%d.bin", i)
 				p.files[file] = make([]byte, tc.size)
@@ -292,8 +293,8 @@ func TestThemeResourceCacheIsBounded(t *testing.T) {
 					t.Fatalf("response=%d %d", w.code, w.n)
 				}
 			}
-			if h.cacheBytes > 32<<20 || len(h.resources) > 256 {
-				t.Fatalf("unbounded cache: %d bytes %d entries", h.cacheBytes, len(h.resources))
+			if themes.cacheBytes > 32<<20 || len(themes.resources) > 256 {
+				t.Fatalf("unbounded cache: %d bytes %d entries", themes.cacheBytes, len(themes.resources))
 			}
 		})
 	}

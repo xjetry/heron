@@ -109,7 +109,7 @@ func TestEmbeddedServesFilesAndFallsBackToIndex(t *testing.T) {
 // 文件，开闸时的应答只由回落规则决定；存在的文件另列在后面，关闸时一律不经文件服务。
 func TestPublicGateClosedFollowsTheFallbackRule(t *testing.T) {
 	open := true
-	gate := PublicGate(embedded(builtFS("dist-public"), "dist-public", "/", notBuiltPublic), func() bool { return open })
+	gate := PublicGate(embedded(builtFS("dist-public"), "dist-public", "/", notBuiltPublic), func() bool { return open }, Prefix)
 	checkClosed := func(t *testing.T, path string, wantNotFound bool) string {
 		t.Helper()
 		resp := get(t, gate, path)
@@ -118,7 +118,7 @@ func TestPublicGateClosedFollowsTheFallbackRule(t *testing.T) {
 			if resp.StatusCode != http.StatusNotFound {
 				t.Fatalf("closed %s: status %d body %q, want 404", path, resp.StatusCode, body)
 			}
-		} else if resp.StatusCode != http.StatusOK || body != closedPage || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+		} else if resp.StatusCode != http.StatusOK || body != closedPage(Prefix) || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
 			t.Fatalf("closed %s: status %d body %q type %q, want the closed page", path, resp.StatusCode, body, resp.Header.Get("Content-Type"))
 		}
 		if resp.Header.Get("Cache-Control") != "no-store" {
