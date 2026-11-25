@@ -7849,8 +7849,12 @@ func (*GetSettingsRequest) Descriptor() ([]byte, []int) {
 }
 
 type GetSettingsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Settings      *Settings              `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Settings *Settings              `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
+	// hub 实际生效的 --timezone（IANA 名），与 GetTraffic.timezone、PublicSite.timezone 同一个值：流量周期、到期日、
+	// 维护静默与面板按日历切的时段（晚高峰 20:00–24:00 等）都按它判定，客户端不得改用浏览器本地时区。
+	// 只读：它是启动参数，不是可保存的设置，所以放在响应里而不在 Settings，UpdateSettings 的读改写不经过它。
+	Timezone      string `protobuf:"bytes,2,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7890,6 +7894,13 @@ func (x *GetSettingsResponse) GetSettings() *Settings {
 		return x.Settings
 	}
 	return nil
+}
+
+func (x *GetSettingsResponse) GetTimezone() string {
+	if x != nil {
+		return x.Timezone
+	}
+	return ""
 }
 
 type GetBackupStatusRequest struct {
@@ -12791,9 +12802,10 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vLoginNotify\x12\x1f\n" +
 	"\vchannel_ids\x18\x01 \x03(\x03R\n" +
 	"channelIds\"\x14\n" +
-	"\x12GetSettingsRequest\"E\n" +
+	"\x12GetSettingsRequest\"a\n" +
 	"\x13GetSettingsResponse\x12.\n" +
-	"\bsettings\x18\x01 \x01(\v2\x12.heron.v1.SettingsR\bsettings\"\x18\n" +
+	"\bsettings\x18\x01 \x01(\v2\x12.heron.v1.SettingsR\bsettings\x12\x1a\n" +
+	"\btimezone\x18\x02 \x01(\tR\btimezone\"\x18\n" +
 	"\x16GetBackupStatusRequest\"\xd5\x01\n" +
 	"\x17GetBackupStatusResponse\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x123\n" +

@@ -238,12 +238,12 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 	h.login(t)
 	client := h.publicClient()
 	got, err := client.GetSite(t.Context(), connect.NewRequest(&heronv1.GetSiteRequest{}))
-	if err != nil || !proto.Equal(got.Msg, &heronv1.PublicSite{Theme: "auto"}) {
+	if err != nil || !proto.Equal(got.Msg, &heronv1.PublicSite{Theme: "auto", Timezone: "UTC"}) {
 		t.Fatalf("never saved: %v %v", got, err)
 	}
 	saveSettings(t, h, validSettings())
 	got, err = client.GetSite(t.Context(), connect.NewRequest(&heronv1.GetSiteRequest{}))
-	want := &heronv1.PublicSite{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }"}
+	want := &heronv1.PublicSite{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", Timezone: "UTC"}
 	if err != nil || !proto.Equal(got.Msg, want) {
 		t.Fatalf("site = %v %v, want %v", got, err, want)
 	}
@@ -253,7 +253,7 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 // 必须同时改这份清单——与 access_test 的 readMethods 同一口径。共用的 Traffic 与历史查询类型同样在列：
 // 给它们加字段也会出现在公开页。
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
-	"heron.v1.PublicSite":             {"title", "theme", "accent_color", "logo", "custom_css", "admin_path"},
+	"heron.v1.PublicSite":             {"title", "theme", "accent_color", "logo", "custom_css", "admin_path", "timezone"},
 	"heron.v1.PublicSnapshot":         {"now", "report_interval_ms", "nodes", "tags"},
 	"heron.v1.PublicNode":             {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags", "maintenance", "public_remark", "rented"},
 	"heron.v1.PublicFacts":            {"os", "arch", "virtualization", "cpu_model", "cpu_cores", "network"},

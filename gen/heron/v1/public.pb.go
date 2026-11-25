@@ -71,7 +71,10 @@ type PublicSite struct {
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
 	// 应答这次请求的 origin 上管理面板的入口路径（/admin/），供公开页放登录入口；该 origin 上没有面板时为空串。
 	// 主题 SDK 桥接不转交此字段，主题不能通过桥接调用管理服务。
-	AdminPath     string `protobuf:"bytes,6,opt,name=admin_path,json=adminPath,proto3" json:"admin_path,omitempty"`
+	AdminPath string `protobuf:"bytes,6,opt,name=admin_path,json=adminPath,proto3" json:"admin_path,omitempty"`
+	// hub 实际生效的 --timezone（IANA 名），与 AdminService.GetSettings 的 timezone 同一个值。公开页与主题按它切日历时段
+	// （如晚高峰 20:00–24:00），不按访客浏览器的时区：同一条线路的"晚间"对所有访客是同一段时间。主题 SDK 桥接原样转交。
+	Timezone      string `protobuf:"bytes,7,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -144,6 +147,13 @@ func (x *PublicSite) GetCustomCss() string {
 func (x *PublicSite) GetAdminPath() string {
 	if x != nil {
 		return x.AdminPath
+	}
+	return ""
+}
+
+func (x *PublicSite) GetTimezone() string {
+	if x != nil {
+		return x.Timezone
 	}
 	return ""
 }
@@ -965,7 +975,7 @@ var File_heron_v1_public_proto protoreflect.FileDescriptor
 const file_heron_v1_public_proto_rawDesc = "" +
 	"\n" +
 	"\x15heron/v1/public.proto\x12\bheron.v1\x1a\x14heron/v1/cache.proto\x1a\x14heron/v1/query.proto\x1a\x14heron/v1/types.proto\"\x10\n" +
-	"\x0eGetSiteRequest\"\xad\x01\n" +
+	"\x0eGetSiteRequest\"\xc9\x01\n" +
 	"\n" +
 	"PublicSite\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x14\n" +
@@ -975,7 +985,8 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\n" +
 	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12\x1d\n" +
 	"\n" +
-	"admin_path\x18\x06 \x01(\tR\tadminPath\"!\n" +
+	"admin_path\x18\x06 \x01(\tR\tadminPath\x12\x1a\n" +
+	"\btimezone\x18\a \x01(\tR\btimezone\"!\n" +
 	"\x1fPublicServiceGetSnapshotRequest\"\x90\x01\n" +
 	"\x0ePublicSnapshot\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +

@@ -256,18 +256,21 @@ grep -q 'src="/admin/assets/' "$work/admin.html" || { echo "FAIL: panel does not
 curl -sS -D "$work/admin.headers" -o /dev/null "$base/admin/" && grep -qi '^content-security-policy:' "$work/admin.headers" || { echo "FAIL: CSP header missing"; exit 1; }
 
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: anonymous GetSnapshot was not 401"; exit 1; }
-# 公开服务匿名可达；从未保存过外观时明暗为 auto，其余为空（JSON 里省略）。
+# 公开服务匿名可达；从未保存过外观时明暗为 auto，其余外观为空（JSON 里省略）；timezone 是 hub 的 --timezone。
 [ "$(pubget site-default GetSite '{}')" = 200 ] || { echo "FAIL: anonymous GetSite"; cat "$work/pub-site-default.json"; exit 1; }
-jq -e '. == {theme: "auto", adminPath: "/admin/"}' "$work/pub-site-default.json" > /dev/null || { echo "FAIL: default site settings"; cat "$work/pub-site-default.json"; exit 1; }
+jq -e '. == {theme: "auto", adminPath: "/admin/", timezone: "UTC"}' "$work/pub-site-default.json" > /dev/null || { echo "FAIL: default site settings"; cat "$work/pub-site-default.json"; exit 1; }
 [ "$(hdr site-default Cache-Control)" = "max-age=300" ] || { echo "FAIL: GetSite Cache-Control"; cat "$work/pub-site-default.headers"; exit 1; }
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
+# 面板按日历切时段用的时区与公开页、流量周期是同一个 --timezone。
+[ "$(rpc GetSettings '{}')" = 200 ] || { echo "FAIL: GetSettings"; cat "$work/GetSettings.json"; exit 1; }
+jq -e '.timezone == "UTC"' "$work/GetSettings.json" > /dev/null || { echo "FAIL: GetSettings.timezone"; cat "$work/GetSettings.json"; exit 1; }
 # 外观整体替换并回显 hub 实际保存的值（主色转小写），公开页随即拿到；被拒的更新什么都不写。
 settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColor": "#FF5500", "customCss": ".card { border-width: 2px; }", "publicEnabled": true}}'
 [ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: UpdateSettings"; cat "$work/UpdateSettings.json"; exit 1; }
 jq -e '.settings.accentColor == "#ff5500"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: UpdateSettings echo"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site GetSite '{}')" = 200 ] || { echo "FAIL: GetSite after update"; exit 1; }
-jq -e '. == {title: "e2e 状态", theme: "dark", accentColor: "#ff5500", customCss: ".card { border-width: 2px; }", adminPath: "/admin/"}' "$work/pub-site.json" > /dev/null || { echo "FAIL: GetSite does not serve the saved settings"; cat "$work/pub-site.json"; exit 1; }
+jq -e '. == {title: "e2e 状态", theme: "dark", accentColor: "#ff5500", customCss: ".card { border-width: 2px; }", adminPath: "/admin/", timezone: "UTC"}' "$work/pub-site.json" > /dev/null || { echo "FAIL: GetSite does not serve the saved settings"; cat "$work/pub-site.json"; exit 1; }
 [ "$(rpc UpdateSettings '{"settings": {"theme": "auto", "customCss": "a</style>"}}')" = 400 ] || { echo "FAIL: CSS containing </ was accepted"; cat "$work/UpdateSettings.json"; exit 1; }
 grep -q 'settings.custom_css must not contain' "$work/UpdateSettings.json" || { echo "FAIL: error must name the field"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site-after-reject GetSite '{}')" = 200 ] && cmp -s "$work/pub-site.json" "$work/pub-site-after-reject.json" || { echo "FAIL: a rejected update changed the site"; cat "$work/pub-site-after-reject.json"; exit 1; }

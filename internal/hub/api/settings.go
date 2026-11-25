@@ -411,7 +411,7 @@ func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[heronv1.Ge
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&heronv1.GetSettingsResponse{Settings: s.settingsProto(st)}), nil
+	return connect.NewResponse(&heronv1.GetSettingsResponse{Settings: s.settingsProto(st), Timezone: s.cfg.Location.String()}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[heronv1.UpdateSettingsRequest]) (*connect.Response[heronv1.UpdateSettingsResponse], error) {

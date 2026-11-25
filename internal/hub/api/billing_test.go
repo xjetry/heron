@@ -261,7 +261,8 @@ func TestPublicSnapshotReadsTheClockOnce(t *testing.T) {
 	req := billed(id, &heronv1.Billing{ExpiresOn: "2026-03-01"})
 	req.Public = true
 	h.update(t, req)
-	loc := time.FixedZone("UTC+8", 8*3600)
+	// 与夹具的账本同一个时区对象：NewPublic 要求 Location 就是账本的时区。
+	loc := h.pub.cfg.Location
 	clk := &steppingClock{next: time.Date(2026, 1, 1, 23, 59, 59, 0, loc)}
 	deps := h.publicDeps()
 	deps.Clock = clk
