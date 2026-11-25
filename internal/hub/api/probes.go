@@ -78,6 +78,7 @@ var saveProbeTaskClass = map[string]string{
 	"cert_pin": "action", "expected_config_id": "action",
 	"task.id": "identity", "task.kind": "editable", "task.target": "editable", "task.interval_s": "editable",
 	"task.timeout_ms": "editable", "task.dns_server": "editable", "task.ip_family": "editable", "task.dns_record_type": "editable",
+	"task.http_status_policy": "editable", "task.http_expected_status": "editable",
 	"task.cert_spki_sha256": "output", "task.config_id": "output",
 }
 

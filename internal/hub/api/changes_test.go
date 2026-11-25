@@ -334,6 +334,37 @@ func TestAgenticSharedRulesAndReadSurfaces(t *testing.T) {
 	if err != nil || len(pl.Msg.Tasks) != 1 || pl.Msg.Tasks[0].Task.Target != "127.0.0.2" || pl.Msg.Tasks[0].Task.IpFamily != heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4 {
 		t.Fatalf("masked family edit: %v %v", pl, err)
 	}
+	// 状态码判据同样可预授权修改，掩码路径就是字段名。ICMP 任务带判据被准入拒绝；把任务改成 HTTP 并给出精确码时
+	// 一并生效，之后只改精确码也换配置身份。
+	statusEdit := func(id string, paths []string, task *heronv1.ProbeTask) *heronv1.ExecuteChangeRequest {
+		task.Id = created.Task.Task.Id
+		return &heronv1.ExecuteChangeRequest{RequestId: id, UpdateMask: &fieldmaskpb.FieldMask{Paths: paths}, Change: &heronv1.ExecuteChangeRequest_SaveProbeTask{SaveProbeTask: &heronv1.SaveProbeTaskRequest{Task: task}}}
+	}
+	onICMP := statusEdit("probe-status-icmp", []string{"task.http_status_policy"}, &heronv1.ProbeTask{HttpStatusPolicy: heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_SUCCESS})
+	onICMP.Preview = true
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(onICMP)); connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "http_status_policy only applies to an HTTP task") {
+		t.Fatalf("status policy on an ICMP task through a masked change: %v", err)
+	}
+	toHTTP := statusEdit("probe-status-http", []string{"task.kind", "task.target", "task.ip_family", "task.http_status_policy", "task.http_expected_status"},
+		&heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_HTTP, Target: "http://127.0.0.2/health", HttpStatusPolicy: heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT, HttpExpectedStatus: 204})
+	previewChange(t, client, toHTTP)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(toHTTP)); err != nil {
+		t.Fatal(err)
+	}
+	pl, err = client.ListProbeTasks(t.Context(), connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
+	if err != nil || len(pl.Msg.Tasks) != 1 || pl.Msg.Tasks[0].Task.HttpStatusPolicy != heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT || pl.Msg.Tasks[0].Task.HttpExpectedStatus != 204 {
+		t.Fatalf("masked status policy edit: %v %v", pl, err)
+	}
+	before := pl.Msg.Tasks[0].Task.ConfigId
+	onlyCode := statusEdit("probe-status-code", []string{"task.http_expected_status"}, &heronv1.ProbeTask{HttpExpectedStatus: 200})
+	previewChange(t, client, onlyCode)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(onlyCode)); err != nil {
+		t.Fatal(err)
+	}
+	pl, err = client.ListProbeTasks(t.Context(), connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
+	if err != nil || len(pl.Msg.Tasks) != 1 || pl.Msg.Tasks[0].Task.HttpExpectedStatus != 200 || pl.Msg.Tasks[0].Task.HttpStatusPolicy != heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT || bytes.Equal(pl.Msg.Tasks[0].Task.ConfigId, before) {
+		t.Fatalf("masked expected status edit: %v %v (config id before %x)", pl, err, before)
+	}
 	channel := saveChannel(t, h, webhook("http://127.0.0.1/SECRET"))
 	refs, err := client.ListNotifyChannelRefs(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelRefsRequest{}))
 	if err != nil || len(refs.Msg.Channels) != 1 || refs.Msg.Channels[0].Id != channel.Id {
