@@ -59,6 +59,13 @@ message ReportRequest {
   // 带列表时 hub 用推导值覆盖 metrics 中的合计与摘要（ingest.normalizeNetTotals），agent 可以不重复发送；metrics 仍须通过形状校验。
   // 列表只是流量账本的输入，不进实时读数与任何 API。
   repeated NetInterfaceCounter net_interfaces = 10;
+  // 与 metrics 同一次采样的本地数据盘逐盘容量：按使用率（used ÷ total）降序、同使用率按路径字节序升序，取前至多
+  // 16 项（agentwire.MaxDiskMounts）；根盘 "/" 与其余挂载点同样参与排序，可能被截掉。hub 只把它放进内存里的实时状态
+  // （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。
+  repeated DiskMountUsage disk_mounts = 11;
+  // 截断前的总数：0 表示这次没有逐盘读数（采集失败或 agent 不提供），此时列表为空；否则列表长度恰为
+  // min(disk_mounts_total, 16)。
+  uint32 disk_mounts_total = 12;
 }
 
 // ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响。

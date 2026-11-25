@@ -147,6 +147,34 @@ func (s *darwinSyscalls) statfs(path string) (uint64, uint64, error) {
 	return total, used, nil
 }
 
+// mounts 用 MNT_NOWAIT：返回内核缓存的各挂载信息，不向任何文件系统要新的统计，远端挂载失联时也立即返回。
+// 用量不取这里的缓存值，选中的本地卷另做一次 statfs（darwinHost.mountUsage）。挂载数在两次调用之间增长时多取一轮。
+func (s *darwinSyscalls) mounts() ([]fsstatRecord, error) {
+	for range 3 {
+		n, err := unix.Getfsstat(nil, unix.MNT_NOWAIT)
+		if err != nil {
+			return nil, err
+		}
+		buf := make([]unix.Statfs_t, n+8)
+		got, err := unix.Getfsstat(buf, unix.MNT_NOWAIT)
+		if err != nil {
+			return nil, err
+		}
+		if got >= len(buf) {
+			continue
+		}
+		out := make([]fsstatRecord, got)
+		for i, st := range buf[:got] {
+			out[i] = fsstatRecord{
+				mntOn: unix.ByteSliceToString(st.Mntonname[:]), mntFrom: unix.ByteSliceToString(st.Mntfromname[:]),
+				fsType: unix.ByteSliceToString(st.Fstypename[:]), flags: st.Flags, fsid: st.Fsid.Val,
+			}
+		}
+		return out, nil
+	}
+	return nil, errors.New("getfsstat: mount table kept growing")
+}
+
 // monotonicSeconds 用 CLOCK_MONOTONIC：clock_gettime(3) 写明它在系统睡眠时继续计数，与 Linux 的
 // /proc/uptime 同口径（含挂起）；本机实测它只有微秒粒度（纳秒部分 2000 次全是 1000 的倍数），
 // 与 gettimeofday − kern.boottime 相差几微秒。CLOCK_UPTIME_RAW 睡眠时不计数（实测一台睡过的机器上

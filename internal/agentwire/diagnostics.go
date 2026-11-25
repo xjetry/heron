@@ -49,18 +49,23 @@ func ValidateInterfaceName(name string) error {
 
 // ValidateNetFilters 同时约束本机启动参数和上报预算，避免本机接受的配置只能生成被 hub 永久拒绝的请求。
 func ValidateNetFilters(include, exclude []string) error {
-	for i, patterns := range [][]string{include, exclude} {
-		name := []string{"net_include", "net_exclude"}[i]
-		if len(patterns) > MaxNetPatterns {
-			return fmt.Errorf("%s: must contain at most %d patterns", name, MaxNetPatterns)
+	if err := validatePatterns("net_include", include); err != nil {
+		return err
+	}
+	return validatePatterns("net_exclude", exclude)
+}
+
+// validatePatterns 是一组 glob 规则的预算与写法：网卡规则与本地数据盘排除规则共用。
+func validatePatterns(name string, patterns []string) error {
+	if len(patterns) > MaxNetPatterns {
+		return fmt.Errorf("%s: must contain at most %d patterns", name, MaxNetPatterns)
+	}
+	for _, p := range patterns {
+		if !safeDiagnosticText(p, MaxNetPatternBytes) {
+			return fmt.Errorf("%s: patterns must be non-empty UTF-8 without control characters, at most %d bytes", name, MaxNetPatternBytes)
 		}
-		for _, p := range patterns {
-			if !safeDiagnosticText(p, MaxNetPatternBytes) {
-				return fmt.Errorf("%s: patterns must be non-empty UTF-8 without control characters, at most %d bytes", name, MaxNetPatternBytes)
-			}
-			if _, err := path.Match(p, ""); err != nil {
-				return fmt.Errorf("%s: invalid glob pattern", name)
-			}
+		if _, err := path.Match(p, ""); err != nil {
+			return fmt.Errorf("%s: invalid glob pattern", name)
 		}
 	}
 	return nil
@@ -104,6 +109,12 @@ func ValidateDiagnostics(d *heronv1.AgentDiagnostics) error {
 	}
 	if err := validateNetStructure(d, netFailed); err != nil {
 		return err
+	}
+	if err := ValidateDiskExclude(d.DiskExclude); err != nil {
+		return err
+	}
+	if slices.Contains(d.FailedCollectors, heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_MOUNTS) && d.DiskMountsTotal != 0 {
+		return fmt.Errorf("diagnostics.disk_mounts_total: failed disk mount collection must not claim a sampled set")
 	}
 	if d.ReportIntervalMs != 0 {
 		if _, ok := ClampReportInterval(d.ReportIntervalMs); !ok {

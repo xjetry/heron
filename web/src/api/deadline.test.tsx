@@ -18,6 +18,7 @@ const reads = [
   "QueryMetrics", "GetTraffic", "ListProbeTasks", "QueryProbes", "ListProbeComparisonNodes", "QueryProbeComparison",
   "ListProbeCertificates", "ListAlertRules", "ListSilences", "ListAlertEvents", "GetSettings", "GetBackupStatus",
   "GetHeartbeatStatus", "GetStorageStats", "GetApiReference", "ListRestoreRecords", "GetCaller",
+  "GetNodeDisks",
 ];
 const others = [
   "ExecuteChange", "StartUpdate", "CancelUpdate", "Login", "BeginPasskeyLogin", "FinishPasskeyLogin", "GetSecurity",

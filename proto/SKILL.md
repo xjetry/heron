@@ -80,6 +80,8 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 历史网络速率有两种口径：`rx_bytes` / `tx_bytes` 的 `sum / stepS` 是桶均值；`net_rx_bps` / `net_tx_bps` 的 `max` 是 agent 本地采样速率峰值（bytes/s）。`n=0` 或缺少速率序列表示没有读数，不能补零或拿均值代替峰值。CPU 与内存的 `max` 同样表示采样峰值。`load1_per_core` 是 agent 采样时算好的按核负载，无单位，与 `load1` 同形；`n=0` 或缺席表示这一分钟没有采样，不能用 `load1` 除以核数补出来。agent 不上报 load_cores 时这一分钟没有这个序列。TCP 的四条序列 `tcp_active_opens_ps`、`tcp_passive_opens_ps`、`tcp_out_segs_ps`、`tcp_retrans_segs_ps` 单位 count/s；重传率不是一条序列，取同一个点上 `tcp_retrans_segs_ps` 与 `tcp_out_segs_ps` 的 mean × n 之比再乘 100，分母为 0 时没有重传率。没有采样的分钟（含序列引入之前留下的分钟）没有这四条的读数。
 
+本地数据盘的逐盘容量不进历史，也不在 `GetSnapshot` 里：`GetNodeDisks`（`{"nodeId":"42"}`）返回节点最近一次上报的逐盘读数，只在 hub 内存里，hub 重启后到节点再次上报前为空。`mounts` 按使用率（`used ÷ total`）降序、同使用率按 `path` 升序，至多 16 项；`total` 是截断前的盘数，0 表示那次上报没有逐盘读数（采集失败或 agent 版本不提供）；`sampledAt` 缺席表示 hub 启动后还没收到该节点的上报，`online` 为 false 时是离线前的最后一次读数。共享同一块设备或存储池的挂载点只出现一项（根所在的那组报 `/`，其余报最短路径）。快照与历史里的 `diskTotal` / `diskUsed` 始终是根盘 `/`。公开端没有对应接口，挂载路径不公开。
+
 历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
 
 两个服务的 QueryMetrics 均返回与 ts 对齐的 coverage：minutes 为留存的已准入上报分钟数，observed 为 hub 观测分钟数，observedReported 为两者交集；三项独立可缺席（未知）。纯观测点的指标 n=0，不能画成零读数。coverageSummary 按请求窗口的完整已闭合分钟汇总，不随 maxPoints 改变：覆盖率为 observedReportedMinutes/observedMinutes，未知分钟为 eligibleMinutes−observedMinutes；分母为零时无可观测区间，coverageStart 缺席时尚无覆盖记录。覆盖起点是接收首报的分钟，迁移前节点为最早留存证据；不等于在线率或 SLA。公开节点的 observed 暴露 hub 在保留期内的观测分钟。

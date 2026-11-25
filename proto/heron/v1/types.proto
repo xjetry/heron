@@ -71,6 +71,18 @@ message NetInterfaceCounter {
   uint64 tx_bytes = 3;
 }
 
+// 一个本地数据盘挂载点的容量，与同一请求的 Metrics 同一次采样。字节口径与 Metrics.disk_total / disk_used 相同：
+// total 是文件系统的全部块，used 是全部块减空闲块（含 root 保留）。共享同一块设备或同一存储池的多个挂载点只出现一项，
+// 代表路径取根 "/"，其次取最短路径（同长按字节序）。
+message DiskMountUsage {
+  // 被观测主机上的挂载路径：以 "/" 开头的规范绝对路径（path.Clean 不变），非空 UTF-8、无控制字符、至多 256 字节
+  // （agentwire.ValidateDiskMountPath）。容器里以 --host-root 采集时是宿主机上的路径，不带宿主根前缀。
+  string path = 1;
+  // 大于 0；used 不超过它。
+  uint64 total = 2;
+  uint64 used = 3;
+}
+
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
 message Facts {
   string hostname = 1;
@@ -195,6 +207,13 @@ message AgentDiagnostics {
   uint32 net_structure_excluded_total = 9;
   // 结构规则把名字规则放行的网卡全部排除，本次退回只按名字规则计入；此时排除列表为空。
   bool net_structure_fallback = 10;
+  // 生效的本地数据盘排除规则（heron-agent 的 --disk-exclude 或配置的 disk_exclude），按挂载路径做 glob 匹配；
+  // 至多 64 个，每个以 "/" 开头、至多 128 字节。根 "/" 不受排除规则影响。
+  repeated string disk_exclude = 11;
+  // 本次纳入监测的本地数据盘总数（含根盘，已去重、已排除），即 ReportRequest.disk_mounts_total 的同一次取值；
+  // 逐盘容量不进诊断，它们随每次上报走 ReportRequest.disk_mounts。本次逐盘采集失败（failed_collectors 含
+  // DISK_MOUNTS）或 agent 不提供时为 0。只在集合大小变化时改变，不随容量读数变化。
+  uint32 disk_mounts_total = 12;
 }
 
 message NetStructureExclusion {
@@ -232,6 +251,8 @@ enum CollectionComponent {
   COLLECTION_COMPONENT_DISK_IO = 11;
   // /proc/net/snmp 的 TCP 计数；平台不提供时（darwin）不记失败。
   COLLECTION_COMPONENT_TCP_STATS = 12;
+  // 本地数据盘的逐盘容量（挂载表与各挂载点的 statfs）；根盘用量仍记在 DISK。
+  COLLECTION_COMPONENT_DISK_MOUNTS = 13;
 }
 
 // NetworkInfo 保留 agent 对两个地址族的原始探测结果；AddressDetection 的状态与地址由

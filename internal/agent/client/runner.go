@@ -133,7 +133,8 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		list := r.Collector.NetInterfaces()
 		omitDerivedNetTotals(m, list)
-		req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m, NetInterfaces: list})
+		disks, disksTotal := r.Collector.DiskMounts()
+		req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m, NetInterfaces: list, DiskMounts: disks, DiskMountsTotal: disksTotal})
 		if r.Updates != nil {
 			if u := r.Updates.Snapshot(); u != nil {
 				h := UpdateHash(u)

@@ -248,6 +248,9 @@ const (
 	AdminServiceGetApiReferenceProcedure = "/heron.v1.AdminService/GetApiReference"
 	// AdminServiceGetCallerProcedure is the fully-qualified name of the AdminService's GetCaller RPC.
 	AdminServiceGetCallerProcedure = "/heron.v1.AdminService/GetCaller"
+	// AdminServiceGetNodeDisksProcedure is the fully-qualified name of the AdminService's GetNodeDisks
+	// RPC.
+	AdminServiceGetNodeDisksProcedure = "/heron.v1.AdminService/GetNodeDisks"
 )
 
 // AdminServiceClient is a client for the heron.v1.AdminService service.
@@ -443,6 +446,9 @@ type AdminServiceClient interface {
 	// 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
 	// 试错；会话返回 session。指定节点的 token 也能调用。
 	GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error)
+	// 节点最近一次上报的本地数据盘逐盘容量，只在 hub 内存里（hub 重启后到该节点再次上报前为空）。挂载路径是 agent 自报的
+	// 任意文本，所以不进可压缩的 GetSnapshot，也没有公开对应。节点不存在或不在调用方范围内返回 NotFound。
+	GetNodeDisks(context.Context, *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the heron.v1.AdminService service. By default, it
@@ -912,6 +918,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("GetCaller")),
 			connect.WithClientOptions(opts...),
 		),
+		getNodeDisks: connect.NewClient[v1.GetNodeDisksRequest, v1.GetNodeDisksResponse](
+			httpClient,
+			baseURL+AdminServiceGetNodeDisksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetNodeDisks")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -993,6 +1005,7 @@ type adminServiceClient struct {
 	deleteApiToken           *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
 	getApiReference          *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
 	getCaller                *connect.Client[v1.GetCallerRequest, v1.GetCallerResponse]
+	getNodeDisks             *connect.Client[v1.GetNodeDisksRequest, v1.GetNodeDisksResponse]
 }
 
 // ExecuteChange calls heron.v1.AdminService.ExecuteChange.
@@ -1375,6 +1388,11 @@ func (c *adminServiceClient) GetCaller(ctx context.Context, req *connect.Request
 	return c.getCaller.CallUnary(ctx, req)
 }
 
+// GetNodeDisks calls heron.v1.AdminService.GetNodeDisks.
+func (c *adminServiceClient) GetNodeDisks(ctx context.Context, req *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error) {
+	return c.getNodeDisks.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the heron.v1.AdminService service.
 type AdminServiceHandler interface {
 	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
@@ -1568,6 +1586,9 @@ type AdminServiceHandler interface {
 	// 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
 	// 试错；会话返回 session。指定节点的 token 也能调用。
 	GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error)
+	// 节点最近一次上报的本地数据盘逐盘容量，只在 hub 内存里（hub 重启后到该节点再次上报前为空）。挂载路径是 agent 自报的
+	// 任意文本，所以不进可压缩的 GetSnapshot，也没有公开对应。节点不存在或不在调用方范围内返回 NotFound。
+	GetNodeDisks(context.Context, *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -2033,6 +2054,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("GetCaller")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetNodeDisksHandler := connect.NewUnaryHandler(
+		AdminServiceGetNodeDisksProcedure,
+		svc.GetNodeDisks,
+		connect.WithSchema(adminServiceMethods.ByName("GetNodeDisks")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/heron.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceExecuteChangeProcedure:
@@ -2187,6 +2214,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceGetApiReferenceHandler.ServeHTTP(w, r)
 		case AdminServiceGetCallerProcedure:
 			adminServiceGetCallerHandler.ServeHTTP(w, r)
+		case AdminServiceGetNodeDisksProcedure:
+			adminServiceGetNodeDisksHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2498,4 +2527,8 @@ func (UnimplementedAdminServiceHandler) GetApiReference(context.Context, *connec
 
 func (UnimplementedAdminServiceHandler) GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetCaller is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetNodeDisks(context.Context, *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetNodeDisks is not implemented"))
 }

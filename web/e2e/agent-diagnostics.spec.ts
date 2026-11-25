@@ -20,15 +20,24 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
   const diagnostics = {
     netInclude: ["private-uplink-*"], netInterfaces: ["private-uplink-0"], netInterfacesTotal: 1,
     failedCollectors: [CollectionComponent.DISK], reportIntervalMs: 10000,
+    diskExclude: ["/mnt/private-*"], diskMountsTotal: 2,
   };
   must(await rpc(page, AgentService.method.report, {
     metrics: { bootId: "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f", netCounterEpoch: "a".repeat(64), netRxTotal: 100n, netTxTotal: 200n },
     factsHash: 101n, facts: { agentVersion: "browser-diagnostic-version", diagnostics },
+    diskMounts: [{ path: "/srv/private-disk", total: 1000n, used: 900n }, { path: "/", total: 1000n, used: 100n }], diskMountsTotal: 2,
   }, token));
   await expect(card.getByText("private-uplink-0", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(card.getByText("磁盘", { exact: true })).toBeVisible();
   await expect(card.getByText("10000 ms", { exact: false })).toBeVisible();
   await expect(card.getByText("最近保存的诊断，不保证实时健康。生效参数只读。")).toBeVisible();
+  await expect(card.getByText("2 块（含根盘）", { exact: true })).toBeVisible();
+  // 逐盘容量只在内存实时状态里，经 GetNodeDisks 显示在概览；最满的排在最前。
+  await page.getByRole("tab", { name: "概览", exact: true }).click();
+  const disks = page.getByRole("region", { name: "本地磁盘" });
+  await expect(disks.getByRole("row").nth(1)).toContainText("/srv/private-disk");
+  await page.getByRole("tab", { name: "Agent 诊断", exact: true }).click();
+  await expect(card).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("diagnostics-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 375, height: 812 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
@@ -44,5 +53,5 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
   const snapshot = must(await rpc(page, PublicService.method.getSnapshot, {}));
   expect(snapshot.nodes.some((entry) => entry.id === node.id)).toBe(true);
   const json = toJsonString(PublicSnapshotSchema, snapshot);
-  for (const value of ["private-uplink", "diagnostics", "netCounterEpoch", token]) expect(json).not.toContain(value);
+  for (const value of ["private-uplink", "private-disk", "/mnt/private-", "diagnostics", "netCounterEpoch", token]) expect(json).not.toContain(value);
 });

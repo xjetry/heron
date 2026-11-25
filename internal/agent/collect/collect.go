@@ -31,6 +31,9 @@ type Collector struct {
 	Version    string
 	// IcmpAvailable 默认为 false；须在 Runner.Run 前赋值，运行期间只读。
 	IcmpAvailable bool
+	// DiskExclude 是本地数据盘的排除规则（agentwire.ValidateDiskExclude），按挂载路径做 path.Match；根 "/" 不受影响。
+	// 生效规则随诊断上报。
+	DiskExclude []string
 
 	// 两次采样的差分基线。这组 prev* 字段都在休眠重置范围内：跨越休眠的区间会把停机时段
 	// 混进分母，休眠信号到达时全部作废，下一个周期只重建基线、不出速率与占比读数。
@@ -53,6 +56,10 @@ type Collector struct {
 	netList     []*heronv1.NetInterfaceCounter
 	netListOver bool
 	netFallback bool // 上一次采样是否退回了名字规则，只在切换时记日志
+	// diskList、diskTotal 是最近一次 Metrics 的逐盘容量与截断前总数，交给 ReportRequest.disk_mounts；
+	// 逐盘采集失败时为 nil 与 0，不回显上一次的读数。
+	diskList  []*heronv1.DiskMountUsage
+	diskTotal uint32
 }
 
 // Close 释放 Host 持有的资源。cmd/agent 退出时调用；之后 Collector 不能再用。
@@ -92,7 +99,10 @@ func (c *Collector) netFilters() (include, exclude []string) {
 
 // Validate 在上报循环启动前约束参数；错误配置不进入不断上报、不断被拒绝的循环。
 func (c *Collector) Validate() error {
-	return agentwire.ValidateNetFilters(c.NetInclude, c.NetExclude)
+	if err := agentwire.ValidateNetFilters(c.NetInclude, c.NetExclude); err != nil {
+		return err
+	}
+	return agentwire.ValidateDiskExclude(c.DiskExclude)
 }
 
 func (c *Collector) includeIface(name string) bool {
@@ -137,7 +147,7 @@ func (c *Collector) Identify() *execSnapshot { return c.Host.identify() }
 func (c *Collector) Metrics(snap *execSnapshot) (*heronv1.Metrics, error) {
 	m := &heronv1.Metrics{}
 	include, exclude := c.netFilters()
-	c.diagnostics = &heronv1.AgentDiagnostics{NetInclude: slices.Clone(include), NetExclude: slices.Clone(exclude)}
+	c.diagnostics = &heronv1.AgentDiagnostics{NetInclude: slices.Clone(include), NetExclude: slices.Clone(exclude), DiskExclude: slices.Clone(c.DiskExclude)}
 	c.diagnostics.NetStructureRules = c.structureRules()
 	var errs []error
 	fail := func(part heronv1.CollectionComponent, err error) {
@@ -217,11 +227,19 @@ func (c *Collector) Metrics(snap *execSnapshot) (*heronv1.Metrics, error) {
 	} else if !errors.Is(err, errScopeUnknown) {
 		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_SWAP, err)
 	}
-	if u, err := checkUsage(h.disk()); err == nil {
-		m.DiskTotal, m.DiskUsed = proto.Uint64(u.total), proto.Uint64(u.used)
+	root, rootErr := checkUsage(h.disk())
+	if rootErr == nil {
+		m.DiskTotal, m.DiskUsed = proto.Uint64(root.total), proto.Uint64(root.used)
 	} else {
-		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK, err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK, rootErr)
 	}
+	c.diskList, c.diskTotal = nil, 0
+	if list, total, err := c.diskMounts(snap, root, rootErr); err == nil {
+		c.diskList, c.diskTotal = list, total
+	} else {
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_MOUNTS, err)
+	}
+	c.diagnostics.DiskMountsTotal = c.diskTotal
 
 	if snap.exec.GetLoad() == heronv1.ResourceScope_RESOURCE_SCOPE_HOST ||
 		snap.exec.GetLoad() == heronv1.ResourceScope_RESOURCE_SCOPE_LEGACY {

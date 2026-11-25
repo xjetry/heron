@@ -118,7 +118,8 @@ func TestCollectionDiagnosticsReflectEffectiveSampling(t *testing.T) {
 	fixtureOf(c.Host.(*ProcFS)).UsageFunc = func() (uint64, uint64, error) { return 0, 0, errors.New("secret raw filesystem error") }
 	c.Metrics(c.Identify())
 	d = c.Facts(c.Identify()).GetDiagnostics()
-	if d == nil || !slices.Equal(d.FailedCollectors, []heronv1.CollectionComponent{heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK}) {
+	// 根盘读不出时逐盘读数也缺失：没有根的列表会被当成"根以外的盘都正常"。
+	if d == nil || !slices.Equal(d.FailedCollectors, []heronv1.CollectionComponent{heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK, heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_MOUNTS}) || d.DiskMountsTotal != 0 {
 		t.Fatalf("failed collector not identified: %v", d)
 	}
 	encoded, err := protojson.Marshal(d)
