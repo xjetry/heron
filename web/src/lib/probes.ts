@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
 import type { ProbeSample, ProbeSeries, QueryProbesResponse } from "../gen/heron/v1/query_pb";
-import { ProbeKind } from "../gen/heron/v1/types_pb";
+import { DnsRecordType, ProbeIpFamily, ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;
@@ -13,6 +13,54 @@ export const PROBE_KINDS: readonly { kind: ProbeKind; label: string }[] = [
   { kind: ProbeKind.DNS, label: "DNS" },
 ];
 export const kindLabel = (kind: ProbeKind): string => PROBE_KINDS.find((entry) => entry.kind === kind)!.label;
+
+// 探测地址族只对 ICMP、TCP、HTTP 适用，DNS 用记录类型；与 probelimit.CheckTask 的适用范围同源，页面只提交适用的那一项。
+export const PROBE_FAMILIES: readonly { family: ProbeIpFamily; label: string }[] = [
+  { family: ProbeIpFamily.UNSPECIFIED, label: "自动" },
+  { family: ProbeIpFamily.IPV4, label: "IPv4" },
+  { family: ProbeIpFamily.IPV6, label: "IPv6" },
+];
+export const DNS_RECORD_TYPES: readonly { type: DnsRecordType; label: string }[] = [
+  { type: DnsRecordType.UNSPECIFIED, label: "A" },
+  { type: DnsRecordType.AAAA, label: "AAAA" },
+];
+export const familyApplies = (kind: ProbeKind): boolean => kind !== ProbeKind.DNS;
+
+// 列表里的类型：缺省（自动地址族、A 记录）只写种类，非缺省值跟在后面。
+export const taskTypeLabel = (task: ProbeTask): string => {
+  const extra = task.kind === ProbeKind.DNS
+    ? (task.dnsRecordType !== DnsRecordType.UNSPECIFIED ? DNS_RECORD_TYPES.find((entry) => entry.type === task.dnsRecordType)?.label : undefined)
+    : (task.ipFamily !== ProbeIpFamily.UNSPECIFIED ? PROBE_FAMILIES.find((entry) => entry.family === task.ipFamily)?.label : undefined);
+  return extra ? `${kindLabel(task.kind)} · ${extra}` : kindLabel(task.kind);
+};
+
+// 用一个地址替换目标里的主机，生成该种类的目标写法（DNS 的目标是名字，不经这里）。TCP 保留原目标的端口，没有端口时
+// 留出冒号由人补上；IPv6 按 probelimit 的规范形式加方括号（net.JoinHostPort）。HTTP 只换主机，协议、端口、路径照旧，
+// 原目标不是 http(s) URL 时给出 http://地址/。
+export function targetWithAddress(kind: ProbeKind, current: string, address: string, v6: boolean): string {
+  const host = v6 ? `[${address}]` : address;
+  switch (kind) {
+    case ProbeKind.TCP: {
+      const text = current.trim();
+      const port = (text.startsWith("[") ? /^\[[^\]]*\]:(\d*)$/.exec(text) : /^[^:]*:(\d*)$/.exec(text))?.[1] ?? "";
+      return `${host}:${port}`;
+    }
+    case ProbeKind.HTTP: {
+      try {
+        const url = new URL(current.trim());
+        if (url.protocol === "http:" || url.protocol === "https:") {
+          url.hostname = host;
+          return url.toString();
+        }
+      } catch {
+        // 不是绝对 URL：按新目标生成。
+      }
+      return `http://${host}/`;
+    }
+    default:
+      return address;
+  }
+}
 
 // 按种类的目标约束与 probelimit.CheckTask 同源：页面只用原生表单属性做提示，最终裁决在 hub。
 export const targetRule = (kind: ProbeKind): { placeholder: string; maxLength: number } => {
@@ -33,9 +81,11 @@ export const targetRule = (kind: ProbeKind): { placeholder: string; maxLength: n
 // 不各写一份大小写敏感的前缀判断——那会让 "HTTPS://" 的任务在页面与 hub 上得到相反的结论。
 export const isHTTPSTarget = (kind: ProbeKind, target: string): boolean => kind === ProbeKind.HTTP && /^https:\/\//i.test(target.trim());
 
-// 丢包率只看超时：error 是本地无法发起（无 socket、解析失败），不是链路事实。
-// hub 只返回 sent > 0 的点；这里仍显式守住除零，让不变式不依赖上游。
-export const lossPercent: ProbeValue = (s) => (s.sent > 0 ? (s.lost / s.sent) * 100 : null);
+// 丢包率与 hub 的 ProbeBucket.LossPct 同一口径：分子只计超时，分母是全部结果。error 是本机没能发起测量
+// （缺地址族、无 socket、解析失败），不是可达性事实：全是 error 的点（含 sent 为 0）没有丢包率，返回 null
+// 而不是 0%——画成 0% 会把本机失去地址的时段显示成链路完好。单点与窗口汇总都经这一个函数。
+export const lossOf = (sent: number, lost: number, errors: number): number | null => (sent > errors ? (lost / sent) * 100 : null);
+export const lossPercent: ProbeValue = (s) => lossOf(s.sent, s.lost, s.errors);
 // rtt 只在该点有成功探测时存在；没有就是空洞，不能画成 0。
 export const rttMeanMs: ProbeValue = (s) => (s.rttMeanUs === undefined ? null : s.rttMeanUs / 1000);
 export const rttMinMs: ProbeValue = (s) => (s.rttMinUs === undefined ? null : s.rttMinUs / 1000);
@@ -43,7 +93,8 @@ export const rttMaxMs: ProbeValue = (s) => (s.rttMaxUs === undefined ? null : s.
 
 // 一组样本在整个窗口上的汇总：单节点探测历史的每个任务、跨节点对比的每个节点都经它算，晚高峰切片只换喂进来的样本。
 // 每个桶的成功数可能不同，窗口均值按成功数加权，不能简单平均桶均值；最小 / 最大取各桶的最值。
-// ProbeSample 的 sent 包含超时与本地错误；丢包只计 lost，错误单独累计。没有成功探测时三个 RTT 都缺，没有发送时丢包率缺。
+// ProbeSample 的 sent 包含超时与本地错误；丢包率按 lossOf 的口径（全是错误时没有丢包率），错误单独累计。
+// 没有成功探测时三个 RTT 都缺。
 export type ProbeSummary = { mean: number | null; min: number | null; max: number | null; lossPercent: number | null; errors: number };
 
 export function summarizeProbes(samples: readonly ProbeSample[]): ProbeSummary {
@@ -61,7 +112,7 @@ export function summarizeProbes(samples: readonly ProbeSample[]): ProbeSummary {
     if (s.rttMinUs !== undefined) min = min === null ? s.rttMinUs / 1000 : Math.min(min, s.rttMinUs / 1000);
     if (s.rttMaxUs !== undefined) max = max === null ? s.rttMaxUs / 1000 : Math.max(max, s.rttMaxUs / 1000);
   }
-  return { mean: ok > 0 ? weighted / ok : null, min, max, lossPercent: sent > 0 ? (lost / sent) * 100 : null, errors };
+  return { mean: ok > 0 ? weighted / ok : null, min, max, lossPercent: lossOf(sent, lost, errors), errors };
 }
 
 // 同一任务的取值共用时间网格，Chart 据此对齐均值与最小 / 最大之间的填充带。

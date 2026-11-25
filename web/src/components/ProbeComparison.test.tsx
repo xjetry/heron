@@ -122,7 +122,7 @@ it("FailedPrecondition 显示服务端消息", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("读量超出额度，请缩小窗口");
 });
 
-it("全超时 100%、全本地错误 0%、混合按 lost/sent，三者都不进 RTT 图；同名消歧，不可见单列", async () => {
+it("全超时 100%、全本地错误无丢包率读数、混合按 lost/sent，三者都不进 RTT 图；同名消歧，不可见单列", async () => {
   const { ts } = pinClock();
   renderComparison({
     listProbeComparisonNodes: async () => listed([1n, 2n, 3n, 5n, 4n], 8),
@@ -139,7 +139,7 @@ it("全超时 100%、全本地错误 0%、混合按 lost/sent，三者都不进 
   const rtt = await screen.findByTestId("chart-ms");
   expect(rtt.dataset.labels).toBe("ok");
   expect(rtt.dataset.values).toBe("[0]");
-  for (const [name, loss, errors] of [["edge #1", "100%", "0"], ["edge #2", "0.0%", "5"], ["edge #3", "40%", "3"]]) {
+  for (const [name, loss, errors] of [["edge #1", "100%", "0"], ["edge #2", "–", "5"], ["edge #3", "40%", "3"]]) {
     expect(within(screen.getByRole("row", { name })).getAllByRole("cell").map((td) => td.textContent)).toEqual(["", name, "–", "–", "–", loss, errors]);
   }
   expect(screen.getByRole("checkbox", { name: "显示 gone" })).toBeDisabled();
@@ -298,7 +298,7 @@ it("换窗口后新窗口的结果未到时，提示图表还不是该窗口的�
   await waitFor(() => expect(screen.queryByText(/图表还不是/)).toBeNull());
 });
 
-it("没有 RTT 的节点仍逐行显示丢包和错误，不折叠汇总表", async () => {
+it("没有 RTT、也没有丢包率读数的节点仍逐行显示错误数，不折叠汇总表", async () => {
   const { ts } = pinClock();
   const ids = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n];
   renderComparison({
@@ -308,7 +308,7 @@ it("没有 RTT 的节点仍逐行显示丢包和错误，不折叠汇总表", as
   const table = within(await screen.findByRole("table"));
   expect(table.getAllByRole("row")).toHaveLength(10);
   for (const id of ids) {
-    expect(within(table.getByRole("row", { name: `n${id}` })).getAllByRole("cell").map((td) => td.textContent)).toEqual(["", `n${id}`, "–", "–", "–", "0.0%", "1"]);
+    expect(within(table.getByRole("row", { name: `n${id}` })).getAllByRole("cell").map((td) => td.textContent)).toEqual(["", `n${id}`, "–", "–", "–", "–", "1"]);
     expect(table.getByRole("checkbox", { name: `显示 n${id}` })).toBeDisabled();
   }
   expect(screen.getByText("窗口内没有读数")).toBeInTheDocument();
@@ -349,7 +349,7 @@ it("页头显示类型、目标与节点数，汇总表排序、显隐和悬停�
   expect(table.getByRole("columnheader", { name: "均值" })).toHaveAttribute("aria-sort", "descending");
   fireEvent.click(screen.getByTestId("focus-1"));
   expect(table.getByRole("row", { name: "ok" })).toHaveAttribute("data-focused", "true");
-  expect(screen.getByText("丢包率 = 超时数 ÷ 发送数；错误不计入丢包。")).toBeInTheDocument();
+  expect(screen.getByText("丢包率 = 超时数 ÷ 发送数；错误不计入丢包，全是错误时没有丢包率。")).toBeInTheDocument();
 });
 
 it("管理端任务行进入对比页，公开端只给已标注的任务入口", async () => {

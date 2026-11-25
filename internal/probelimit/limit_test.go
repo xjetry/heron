@@ -163,3 +163,63 @@ func TestCheckTaskPinAndConfigID(t *testing.T) {
 		})
 	}
 }
+
+// 探测地址族只对 ICMP、TCP、HTTP 生效，DNS 用自己的记录类型；目标是 IP 字面量时显式地址族必须与之同族。
+// hub 保存与 agent 应用都调用 CheckTask，所以这里的每个拒绝在两侧一致。
+func TestCheckTaskFamilyAndRecordType(t *testing.T) {
+	const (
+		auto = heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED
+		v4   = heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4
+		v6   = heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6
+		a    = heronv1.DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED
+		aaaa = heronv1.DnsRecordType_DNS_RECORD_TYPE_AAAA
+	)
+	icmp, tcp, http, dns := heronv1.ProbeKind_PROBE_KIND_ICMP, heronv1.ProbeKind_PROBE_KIND_TCP, heronv1.ProbeKind_PROBE_KIND_HTTP, heronv1.ProbeKind_PROBE_KIND_DNS
+	for _, tc := range []struct {
+		name      string
+		kind      heronv1.ProbeKind
+		target    string
+		dnsServer string
+		family    heronv1.ProbeIpFamily
+		record    heronv1.DnsRecordType
+		want      string
+	}{
+		{"icmp_name_v6", icmp, "example.com", "", v6, a, ""},
+		{"icmp_name_v4", icmp, "example.com", "", v4, a, ""},
+		{"icmp_literal_auto", icmp, "2001:db8::1", "", auto, a, ""},
+		{"icmp_literal_same_family", icmp, "2001:db8::1", "", v6, a, ""},
+		{"icmp_v6_literal_v4_family", icmp, "2001:db8::1", "", v4, a, "ip_family PROBE_IP_FAMILY_IPV4 conflicts with target address 2001:db8::1"},
+		{"icmp_v4_literal_v6_family", icmp, "192.0.2.1", "", v6, a, "ip_family PROBE_IP_FAMILY_IPV6 conflicts with target address 192.0.2.1"},
+		// 映射地址在 agent 侧还原成 IPv4 发包，所以按 IPv4 判族。
+		{"icmp_mapped_literal_v6_family", icmp, "::ffff:192.0.2.1", "", v6, a, "conflicts with target address"},
+		{"icmp_mapped_literal_v4_family", icmp, "::ffff:192.0.2.1", "", v4, a, ""},
+		{"tcp_v6_literal_v4_family", tcp, "[2001:db8::1]:443", "", v4, a, "conflicts with target address 2001:db8::1"},
+		{"tcp_v4_literal_v4_family", tcp, "192.0.2.1:443", "", v4, a, ""},
+		{"http_v4_literal_v6_family", http, "http://192.0.2.1/x", "", v6, a, "conflicts with target address 192.0.2.1"},
+		{"http_v6_literal_v6_family", http, "https://[2001:db8::1]:8443/", "", v6, a, ""},
+		{"http_name_v6", http, "https://example.com/", "", v6, a, ""},
+		{"family_undefined", icmp, "example.com", "", heronv1.ProbeIpFamily(3), a, "ip_family must be PROBE_IP_FAMILY_UNSPECIFIED, PROBE_IP_FAMILY_IPV4 or PROBE_IP_FAMILY_IPV6"},
+		{"dns_aaaa", dns, "example.com", "1.1.1.1:53", auto, aaaa, ""},
+		{"dns_aaaa_via_v6_resolver", dns, "example.com", "[2606:4700:4700::1111]:53", auto, aaaa, ""},
+		{"dns_a_via_v6_resolver", dns, "example.com", "[2606:4700:4700::1111]:53", auto, a, ""},
+		{"dns_family", dns, "example.com", "1.1.1.1:53", v4, a, "ip_family does not apply to a DNS task"},
+		{"dns_family_v6", dns, "example.com", "1.1.1.1:53", v6, aaaa, "ip_family does not apply to a DNS task"},
+		{"record_undefined", dns, "example.com", "1.1.1.1:53", auto, heronv1.DnsRecordType(2), "dns_record_type must be DNS_RECORD_TYPE_UNSPECIFIED or DNS_RECORD_TYPE_AAAA"},
+		{"icmp_record", icmp, "example.com", "", auto, aaaa, "dns_record_type only applies to a DNS task"},
+		{"tcp_record", tcp, "example.com:80", "", auto, aaaa, "dns_record_type only applies to a DNS task"},
+		{"http_record", http, "http://example.com/", "", auto, aaaa, "dns_record_type only applies to a DNS task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckTask(&heronv1.ProbeTask{Kind: tc.kind, Target: tc.target, IntervalS: 60, TimeoutMs: 1000, DnsServer: tc.dnsServer, IpFamily: tc.family, DnsRecordType: tc.record})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("CheckTask = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CheckTask = %v, want error containing %q", err, tc.want)
+			}
+		})
+	}
+}

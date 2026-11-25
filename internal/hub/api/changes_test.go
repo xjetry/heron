@@ -316,6 +316,24 @@ func TestAgenticSharedRulesAndReadSurfaces(t *testing.T) {
 	if err != nil || len(pl.Msg.Tasks) != 1 || pl.Msg.Tasks[0].Task.Target != "127.0.0.2" {
 		t.Fatalf("probe projection: %v %v", pl, err)
 	}
+	// 地址族是可预授权修改的字段：只改它时其余字段取自库里；与 IPv4 字面量目标冲突的 IPv6 照样被准入拒绝。
+	familyEdit := func(family heronv1.ProbeIpFamily) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{RequestId: "probe-family-" + family.String(), UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"task.ip_family"}}, Change: &heronv1.ExecuteChangeRequest_SaveProbeTask{SaveProbeTask: &heronv1.SaveProbeTaskRequest{Task: &heronv1.ProbeTask{Id: created.Task.Task.Id, IpFamily: family}}}}
+	}
+	conflicting := familyEdit(heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6)
+	conflicting.Preview = true
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(conflicting)); connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "conflicts with target address 127.0.0.2") {
+		t.Fatalf("conflicting family through a masked change: %v", err)
+	}
+	v4 := familyEdit(heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4)
+	previewChange(t, client, v4)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(v4)); err != nil {
+		t.Fatal(err)
+	}
+	pl, err = client.ListProbeTasks(t.Context(), connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
+	if err != nil || len(pl.Msg.Tasks) != 1 || pl.Msg.Tasks[0].Task.Target != "127.0.0.2" || pl.Msg.Tasks[0].Task.IpFamily != heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4 {
+		t.Fatalf("masked family edit: %v %v", pl, err)
+	}
 	channel := saveChannel(t, h, webhook("http://127.0.0.1/SECRET"))
 	refs, err := client.ListNotifyChannelRefs(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelRefsRequest{}))
 	if err != nil || len(refs.Msg.Channels) != 1 || refs.Msg.Channels[0].Id != channel.Id {

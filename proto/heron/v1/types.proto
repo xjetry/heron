@@ -333,11 +333,34 @@ message ProbeTask {
   string dns_server = 6;
   // 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
   // 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
-  // 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
   bytes cert_spki_sha256 = 7;
   // 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
   // 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
   bytes config_id = 8;
+  // 探测地址族，只对 ICMP、TCP、HTTP 任务有意义。DNS 任务携带非缺省值即 InvalidArgument：连向解析器的地址族
+  // 已由 dns_server 的字面量唯一决定，查什么记录另由 dns_record_type 表达，两者正交。
+  // 目标（ICMP 的 target、TCP 的 host、HTTP URL 的主机）是 IP 字面量时，显式地址族必须与字面量同族，否则
+  // InvalidArgument；hub 保存与 agent 应用调用同一份校验。
+  ProbeIpFamily ip_family = 9;
+  // DNS 任务查询的记录类型，缺省即 A。其他种类携带非缺省值即 InvalidArgument。
+  DnsRecordType dns_record_type = 10;
+}
+
+// 探测地址族。缺省（UNSPECIFIED）即自动：agent 只在本机具备的地址族里选，本机两族都具备时名字优先取 IPv4。
+// 本机具备某族 ⇔ 本机接口上有该族的非回环、非链路本地地址（ICMP 还要求该族的套接字可用）。显式要求本机
+// 不具备的地址族，或目标字面量属于本机不具备的地址族时，agent 每个周期上报 ProbeError（不计入丢包），不静默跳过。
+enum ProbeIpFamily {
+  PROBE_IP_FAMILY_UNSPECIFIED = 0;
+  // 只解析 A 记录、只经 IPv4 发起。
+  PROBE_IP_FAMILY_IPV4 = 1;
+  // 只解析 AAAA 记录、只经 IPv6 发起。
+  PROBE_IP_FAMILY_IPV6 = 2;
+}
+
+// DNS 探测查询的资源记录类型。缺省（UNSPECIFIED）即 A；应答里带有所查类型的记录才算解析成功。
+enum DnsRecordType {
+  DNS_RECORD_TYPE_UNSPECIFIED = 0;
+  DNS_RECORD_TYPE_AAAA = 1;
 }
 
 message ProbeTasks {

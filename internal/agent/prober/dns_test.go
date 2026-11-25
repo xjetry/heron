@@ -23,6 +23,8 @@ const (
 	answerGarbage
 	answerWrongID
 	answerDrop
+	// 只回答 AAAA 问题（带一条 AAAA 记录），其余问题回空应答。
+	answerAAAA
 )
 
 // 每个解析器只服务自己的回环端口，不替换全局解析器，也不依赖宿主 DNS 或公网。
@@ -74,6 +76,13 @@ func fakeResolver(t *testing.T, mode resolverAnswer) (string, *atomic.Int64) {
 			case answerREFUSED:
 				r.RCode = dnsmessage.RCodeRefused
 			case answerEmpty:
+			case answerAAAA:
+				if q.Questions[0].Type == dnsmessage.TypeAAAA {
+					r.Answers = []dnsmessage.Resource{{
+						Header: dnsmessage.ResourceHeader{Name: q.Questions[0].Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 60},
+						Body:   &dnsmessage.AAAAResource{AAAA: [16]byte{0x20, 0x01, 0x0d, 0xb8, 15: 7}},
+					}}
+				}
 			}
 			packed, err := r.Pack()
 			if err != nil {
