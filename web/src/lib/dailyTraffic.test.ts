@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MetricSampleSchema, MetricSeriesSchema, QueryMetricsResponseSchema } from "../gen/heron/v1/query_pb";
 import { TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { DAILY_MAX_POINTS, dailyTraffic, dailyWindow, periodDays, quotaDirection, topDays, unattributedBytes } from "./dailyTraffic";
+import { addDays } from "./ymd";
 
 const at = (iso: string) => Date.parse(iso) / 1000;
 const sample = (sum: number | undefined) => create(MetricSampleSchema, sum === undefined ? { n: 0 } : { n: 1, sum });
@@ -18,7 +19,7 @@ const response = (points: { ts: number; rx?: number; tx?: number }[]) => create(
 describe("periodDays", () => {
   it("本周期从起点到 hub 时区的今天，上周期是按同一重置日前推一个月到本周期前一天", () => {
     const start = BigInt(at("2026-10-04T16:00:00Z")); // 上海 10-05 00:00
-    const days = periodDays(start, at("2026-10-21T03:00:00Z"), "Asia/Shanghai");
+    const days = periodDays(start, 5, at("2026-10-21T03:00:00Z"), "Asia/Shanghai");
     expect(days.current[0]).toBe("2026-10-05");
     expect(days.current.at(-1)).toBe("2026-10-21");
     expect(days.current).toHaveLength(17);
@@ -28,9 +29,24 @@ describe("periodDays", () => {
   });
 
   it("跨年时上周期落在上一年", () => {
-    const days = periodDays(BigInt(at("2027-01-01T00:00:00Z")), at("2027-01-02T00:00:00Z"), "UTC");
+    const days = periodDays(BigInt(at("2027-01-01T00:00:00Z")), 1, at("2027-01-02T00:00:00Z"), "UTC");
     expect(days.previous[0]).toBe("2026-12-01");
     expect(days.previous.at(-1)).toBe("2026-12-31");
+  });
+
+  // 上周期起点按配置的重置日在上个月取，不足该日时钳到上个月最后一日（与 hub 的 traffic.PeriodStart 同一规则），
+  // 而不是从本周期起点（可能已被钳过）前推一个月。
+  it.each([
+    { resetDay: 31, start: "2026-04-30", previous: "2026-03-31", days: 30 },
+    { resetDay: 31, start: "2026-03-31", previous: "2026-02-28", days: 31 },
+    { resetDay: 31, start: "2026-02-28", previous: "2026-01-31", days: 28 },
+    { resetDay: 30, start: "2028-03-30", previous: "2028-02-29", days: 30 },
+    { resetDay: 29, start: "2027-01-29", previous: "2026-12-29", days: 31 },
+  ])("重置日 $resetDay、本周期起点 $start：上周期从 $previous 起", ({ resetDay, start, previous, days }) => {
+    const got = periodDays(BigInt(at(`${start}T00:00:00Z`)), resetDay, at(`${start}T12:00:00Z`), "UTC");
+    expect(got.previous[0]).toBe(previous);
+    expect(got.previous.at(-1)).toBe(addDays(start, -1));
+    expect(got.previous).toHaveLength(days);
   });
 });
 

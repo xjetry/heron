@@ -42,7 +42,7 @@ export function DailyTraffic({ response, traffic, timeZone, now }: { response: Q
   const titleId = useId();
   const [period, setPeriod] = useState<Period>("current");
   const [hovered, setHovered] = useState<string | null>(null);
-  const days = periodDays(traffic.periodStart, now, timeZone);
+  const days = periodDays(traffic.periodStart, traffic.resetDay, now, timeZone);
   const today = days.current.at(-1) ?? "";
   const list = response ? dailyTraffic(response, timeZone, period === "current" ? days.current : days.previous) : undefined;
   const peak = list ? Math.max(0, ...list.map(total)) : 0;

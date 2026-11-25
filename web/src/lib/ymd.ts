@@ -13,13 +13,16 @@ const fromUtc = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export const addDays = (ymd: string, n: number) => fromUtc(toUtc(ymd) + n * 86_400_000);
 
-// 跨月时日子夹到目标月的最后一天：1 月 31 日的下个月是 2 月 28 / 29 日，不溢出到 3 月。
-export function addMonths(ymd: string, n: number): string {
-  const [y, m, d] = ymd.split("-").map(Number);
+// ymd 所在月往后 n 个月的第 day 日，day 夹到 [1, 该月天数]：31 日遇到 2 月取 2 月 28 / 29 日，不溢出到 3 月。
+export function dayInMonth(ymd: string, n: number, day: number): string {
+  const [y, m] = ymd.split("-").map(Number);
   const first = new Date(utc(y, m - 1 + n, 1));
   const last = new Date(utc(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
-  return fromUtc(utc(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last)));
+  return fromUtc(utc(first.getUTCFullYear(), first.getUTCMonth(), Math.min(Math.max(day, 1), last)));
 }
+
+// 跨月时日子夹到目标月的最后一天：1 月 31 日的下个月是 2 月 28 / 29 日，不溢出到 3 月。
+export const addMonths = (ymd: string, n: number) => dayInMonth(ymd, n, Number(ymd.slice(8, 10)));
 
 // 星期几，周一为 0。
 export const weekdayOf = (ymd: string) => (new Date(toUtc(ymd)).getUTCDay() + 6) % 7;

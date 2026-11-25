@@ -1,6 +1,13 @@
 import { type Traffic, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { bytes } from "./format";
 
+// 重置日的准入范围，与 hub 的 traffic.MinResetDay / MaxResetDay 一致；越界值 hub 会拒绝，表单先禁止保存。
+// 不足该日的月份由 hub 钳到当月最后一日（traffic.PeriodStart），配置的原值不变。
+export const RESET_DAY_MIN = 1;
+export const RESET_DAY_MAX = 31;
+// 2 月最少 28 天，大于 28 的重置日才会在某些月份被钳到月末。
+export const resetDayClamps = (day: number) => day > 28;
+
 export const QUOTA_UNITS = { GiB: 1n << 30n, TiB: 1n << 40n, GB: 1000000000n, TB: 1000000000000n };
 export type QuotaUnit = keyof typeof QUOTA_UNITS;
 
