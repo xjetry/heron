@@ -79,6 +79,38 @@ func applyFlagEnv(fs *flag.FlagSet, lookupEnv func(string) (string, bool)) error
 	return err
 }
 
+// publicListenFlag 是公开监听的 flag 名；错误前缀经 flagSource 点名它与对应的环境变量。
+const publicListenFlag = "public-listen"
+
+// checkListenersApart 拒绝在同一端口上地址范围重叠的两个监听。公开监听存在的意义是让反代按端口区分公开与管理两个
+// 入口；重叠时同一个地址端口上的连接落到哪个监听由内核决定（BSD 系允许更具体的地址再次绑定），或者第二次绑定失败，
+// 而那发生在 run 里、库已经打开并迁移之后。所以在 parseServeOptions 里、打开库之前判定。
+//
+// 地址按 net.ResolveTCPAddr 解析，与 net.Listen 对主机名取首选地址的口径相同。重叠的判定见 listenAddrCovers；
+// 端口 0 由内核各自分配，两个 0 不会落在同一端口上。
+func checkListenersApart(listen, public string) error {
+	a, err := net.ResolveTCPAddr("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("%s: %w", flagSource("listen"), err)
+	}
+	b, err := net.ResolveTCPAddr("tcp", public)
+	if err != nil {
+		return fmt.Errorf("%s: %w", flagSource(publicListenFlag), err)
+	}
+	if a.Port == b.Port && a.Port != 0 && (listenAddrCovers(a.IP, b.IP) || listenAddrCovers(b.IP, a.IP)) {
+		return fmt.Errorf("%s %q overlaps %s %q: use a different port or a different specific address", flagSource(publicListenFlag), public, flagSource("listen"), listen)
+	}
+	return nil
+}
+
+// listenAddrCovers 报告监听在 x 上时同端口的 y 是否落在它的范围里。主机支持 IPv4 映射地址时，net.Listen("tcp", …)
+// 对任何通配写法（空主机、0.0.0.0、::）都建 IPV6_V6ONLY 关闭的 AF_INET6 套接字（标准库 favoriteAddrFamily），通配
+// 因此盖住两个地址族的一切地址。判定不看主机是否支持映射，通配一律按盖住两族算：在不支持的主机上多拒绝的只有
+// "IPv4 通配配 IPv6 具体地址"这一种写法。具体地址只盖住与它相等的地址，net.IP.Equal 把 IPv4 映射的 IPv6 地址与 IPv4 视作相等。
+func listenAddrCovers(x, y net.IP) bool {
+	return x == nil || x.IsUnspecified() || x.Equal(y)
+}
+
 func isLoopback(listen string) bool {
 	host, _, err := net.SplitHostPort(listen)
 	if err != nil || host == "" {

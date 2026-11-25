@@ -253,3 +253,213 @@ func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 	requireStoreClosed(t, h)
 	settledGoroutines(t, baseline)
 }
+
+// freeAddr 返回一个此刻空闲的回环地址：先绑上取内核分配的端口，再关掉。
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	return addr
+}
+
+// 公开监听绑不上时与主监听绑不上同样处理：错误点名 --public-listen，不过更新门，已绑上的主监听放掉，库关掉。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
+func TestRunClosesTheMainListenerAndStoreWhenThePublicListenFails(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Close()
+	mainAddr := freeAddr(t)
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(lifecycleOptions(t, "--listen", mainAddr, "--public-listen", blocker.Addr().String()), clock.NewFake(time.Now()), discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated := false
+	h.gate = func(context.Context) error { gated = true; return nil }
+	if err := h.run(context.Background(), discardLog()); err == nil || !strings.Contains(err.Error(), "--public-listen") || !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("run = %v, want a bind error naming --public-listen", err)
+	}
+	if gated {
+		t.Fatal("update gate ran without the public listener")
+	}
+	l, err := net.Listen("tcp", mainAddr)
+	if err != nil {
+		t.Fatalf("main listener left open after the public listener failed: %v", err)
+	}
+	l.Close()
+	requireStoreClosed(t, h)
+	settledGoroutines(t, baseline)
+}
+
+// 更新门报告就绪时两个监听都已绑上；门拒绝时两个都放掉。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
+func TestRunGatesOnBothListenersAndClosesBothWhenTheGateFails(t *testing.T) {
+	mainAddr, publicAddr := freeAddr(t), freeAddr(t)
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(lifecycleOptions(t, "--listen", mainAddr, "--public-listen", publicAddr), clock.NewFake(time.Now()), discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unbound []string
+	h.gate = func(context.Context) error {
+		for _, addr := range []string{mainAddr, publicAddr} {
+			if l, err := net.Listen("tcp", addr); err == nil {
+				l.Close()
+				unbound = append(unbound, addr)
+			}
+		}
+		return errors.New("refused for the test")
+	}
+	if err := h.run(context.Background(), discardLog()); err == nil || err.Error() != "update startup gate: refused for the test" {
+		t.Fatalf("run = %v, want the gate error", err)
+	}
+	if len(unbound) != 0 {
+		t.Fatalf("gate ran before %v was bound", unbound)
+	}
+	for _, addr := range []string{mainAddr, publicAddr} {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatalf("listener %s left open after the gate failed: %v", addr, err)
+		}
+		l.Close()
+	}
+	requireStoreClosed(t, h)
+	settledGoroutines(t, baseline)
+}
+
+// 关停同样排空公开监听上的在途请求：处理器写完的响应送达后 run 才返回、才关库；关停开始后两个监听都不再接受新请求。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
+func TestRunDrainsThePublicListenerBeforeClosingTheStore(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(lifecycleOptions(t, "--listen", "127.0.0.1:0", "--public-listen", "127.0.0.1:0"), clock.NewFake(time.Now()), discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	next := h.publicHandler
+	h.publicHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/slow" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		close(entered)
+		<-release
+		if _, err := h.st.ListNodes(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		io.WriteString(w, "drained")
+	})
+	events := make(serveEvents, 128)
+	run := runInBackground(t, func(ctx context.Context) error { return h.run(ctx, slog.New(slog.NewJSONHandler(events, nil))) })
+	var released sync.Once
+	unblock := func() { released.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	var mainAddr, publicAddr string
+	for publicAddr == "" {
+		select {
+		case e := <-events:
+			if string(e["msg"]) == `"hub listening"` {
+				if err := errors.Join(json.Unmarshal(e["listen"], &mainAddr), json.Unmarshal(e["public_listen"], &publicAddr)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case <-run.finished:
+			t.Fatalf("run returned before listening: %v", run.result)
+		case <-time.After(testwait.Bound):
+			t.Fatal("no startup line")
+		}
+	}
+	type response struct {
+		status int
+		body   string
+		err    error
+	}
+	responses := make(chan response, 1)
+	go func() {
+		resp, err := ownedClient(t).Get("http://" + publicAddr + "/slow")
+		if err != nil {
+			responses <- response{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		responses <- response{status: resp.StatusCode, body: string(body), err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("request did not reach the public handler")
+	}
+	run.cancel()
+	select {
+	case <-run.finished:
+		t.Fatalf("run returned with a request in flight on the public listener: %v", run.result)
+	// 负向窗口：排空未完成时 run 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等待的 run 判失败。
+	case <-time.After(50 * time.Millisecond):
+	}
+	// 排空期间两个监听都不再接受新连接（Shutdown 先关监听），或已建连接上的新请求得到 503。
+	for _, addr := range []string{mainAddr, publicAddr} {
+		if resp, err := ownedClient(t).Get("http://" + addr + "/healthz"); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("%s admitted a request while draining: %d", addr, resp.StatusCode)
+			}
+		}
+	}
+	unblock()
+	select {
+	case r := <-responses:
+		if r.err != nil || r.status != http.StatusOK || r.body != "drained" {
+			t.Fatalf("in-flight request = %d %q %v, want 200 drained", r.status, r.body, r.err)
+		}
+	case <-time.After(testwait.Bound):
+		t.Fatal("in-flight request got no response")
+	}
+	select {
+	case <-run.finished:
+		if run.result != nil {
+			t.Fatalf("run = %v", run.result)
+		}
+	case <-time.After(testwait.Bound):
+		t.Fatal("run did not return after the drain")
+	}
+	requireStoreClosed(t, h)
+	settledGoroutines(t, baseline)
+}
+
+// 公开监听绑在非回环地址上时与主监听同口径告警，字段名是 public_listen；绑在回环上不告警。
+func TestNewHubWarnsWhenThePublicListenerIsNotLoopback(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		public string
+		warn   bool
+	}{
+		{"0.0.0.0:0", true},
+		{"127.0.0.1:0", false},
+	} {
+		t.Run(tc.public, func(t *testing.T) {
+			var buf lockedBuffer
+			h, err := newHub(lifecycleOptions(t, "--listen", "127.0.0.1:0", "--public-listen", tc.public), clock.NewFake(time.Now()), slog.New(slog.NewTextHandler(&buf, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.st.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Contains(buf.String(), "listening on a non-loopback address") && strings.Contains(buf.String(), "public_listen="+tc.public)
+			if got != tc.warn {
+				t.Fatalf("warned = %v, want %v:\n%s", got, tc.warn, buf.String())
+			}
+		})
+	}
+}
