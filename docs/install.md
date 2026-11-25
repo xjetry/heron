@@ -181,6 +181,21 @@ sudo heron-agent configure --insecure-http=true
 sudo systemctl restart heron-agent
 ```
 
+### 更换 hub 地址
+
+hub 换了域名、端口或反代入口后，在节点上改地址即可，不必重新注册：
+
+```sh
+sudo heron-agent configure --hub https://heron-new.example.com
+sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart；macOS：sudo launchctl kickstart -k system/xyz.heron.agent
+```
+
+- 只改配置里的 hub 地址：运行 token、节点名与本地探测策略原样保留，所以只适用于同一个 hub 换了访问地址。要把节点交给另一个 hub，用那个 hub 面板给出的命令带 `--re-register` 重新注册。
+- 新地址按 agent 启动时的同一条规则检查：`http://` 且主机不是回环地址时，配置里须已放行明文，或在同一条命令里加 `--insecure-http=true`（`heron-agent configure --hub http://10.0.0.2:8080 --insecure-http=true`）。空串、相对地址、非 http(s) 地址同样被拒；被拒时配置文件不变。
+- 配置文件整份原子替换，属主沿用原文件、权限为 0600。运行中的 agent 只在启动时读配置，重启后才连新地址；hub 来源的在线更新每次取包时重新读配置，随之改用新地址。
+- 重跑安装脚本不会改已有配置里的 hub 地址：普通升级沿用现有配置，`--hub` 只在首次安装与 `--re-register` 时使用。
+- Docker：`docker run --rm -v heron-agent:/etc/heron-agent ghcr.io/xjetry/heron-agent:v1.0.0 configure --hub https://heron-new.example.com`，改完 `docker restart heron-agent`。
+
 ### 安装脚本共同的规则
 
 - 脚本内嵌本版全部 tar 包的 SHA-256，只按它校验下载的包。`--base-url URL` 只改从哪个目录下载（镜像站、本地归档），不改变校验依据。
