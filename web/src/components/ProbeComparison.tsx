@@ -269,7 +269,7 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
               })}
             </tbody>
           </table>
-          <p className="muted">丢包率 = 超时数 ÷ 发送数；错误不计入丢包。</p>
+          <p className="muted">丢包率 = 超时数 ÷ 发送数；错误不计入丢包，全是错误时没有丢包率。</p>
         </>
       )}
     </section>
