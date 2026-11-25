@@ -448,14 +448,14 @@ func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, er
 	if kind, ok := store.SystemEventKind(first.Transition); ok {
 		return Message{Rule: "系统事件", Node: "Hub", Kind: kind, Transition: string(first.Transition), Summary: first.Summary, Value: first.Value, At: first.At}, nil
 	}
-	m := Message{Rule: fmt.Sprintf("规则 #%d", first.RuleID), Transition: string(first.Transition), At: first.At}
+	rule, kind := fmt.Sprintf("规则 #%d", first.RuleID), ""
 	rules, err := q.st.ListAlertRules(ctx)
 	if err != nil {
-		return m, err
+		return Message{}, err
 	}
 	for _, r := range rules {
 		if r.ID == first.RuleID {
-			m.Rule, m.Kind = r.Name, string(r.Kind)
+			rule, kind = r.Name, string(r.Kind)
 			break
 		}
 	}
@@ -465,7 +465,7 @@ func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, er
 		name := fmt.Sprintf("节点 #%d", ev.NodeID)
 		node, err := q.st.GetNode(ctx, ev.NodeID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return m, err
+			return Message{}, err
 		}
 		if err == nil {
 			name = node.Name
@@ -473,14 +473,13 @@ func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, er
 		names = append(names, name)
 	}
 	if len(b.Events) == 1 {
-		m.Node, m.Summary, m.Value = names[0], first.Summary, first.Value
-		return m, nil
+		return eventMessage(rule, kind, names[0], first), nil
 	}
 	verb := "触发告警"
 	if first.Transition == store.TransitionRecovered {
 		verb = "已恢复"
 	}
-	lines := []string{fmt.Sprintf("规则 %s：%d 台节点%s", m.Rule, len(b.Events), verb)}
+	lines := []string{fmt.Sprintf("规则 %s：%d 台节点%s", rule, len(b.Events), verb)}
 	for _, ev := range listed {
 		lines = append(lines, ev.Summary)
 	}
@@ -488,8 +487,14 @@ func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, er
 		more := fmt.Sprintf("另外 %d 台", rest)
 		lines, names = append(lines, more), append(names, more)
 	}
-	m.Node, m.Summary = strings.Join(names, "、"), strings.Join(lines, "\n")
-	return m, nil
+	// 合并消息没有单一的观测值，Value 为零。
+	return Message{Rule: rule, Node: strings.Join(names, "、"), Kind: kind, Transition: string(first.Transition), Summary: strings.Join(lines, "\n"), At: first.At}, nil
+}
+
+// eventMessage 是一个规则事件单独成批时发出的消息：rule、kind 与 node 由调用方给出（Queue.message 取规则与节点当前的
+// 名字，Engine.Sample 取草稿与样例节点），其余字段取事件的值。两处都经这里，样例与真实投递的消息同形。
+func eventMessage(rule, kind, node string, ev store.AlertEvent) Message {
+	return Message{Rule: rule, Node: node, Kind: kind, Transition: string(ev.Transition), Summary: ev.Summary, Value: ev.Value, At: ev.At}
 }
 
 // PruneAlertEvents 与投递并发，且在同一事务删除事件和投递；行消失等价于终态，
@@ -698,10 +703,32 @@ func Classify(err error) (store.DeliveryResult, bool) {
 	return store.DeliveryResult{Failure: f.failure, HTTPStatus: f.status, Error: f.detail}, f.retryable()
 }
 
+// SendTest 向渠道 c 同步发送一条固定的测试消息（经 SendNow）。
 func (q *Queue) SendTest(ctx context.Context, c store.NotifyChannel) error {
+	return q.SendNow(ctx, c, Message{Rule: "测试规则", Node: "测试节点", Kind: "test", Transition: "test", Summary: "这是一条测试通知", At: q.clk.Now()})
+}
+
+// SendNow 向渠道 c 同步发送消息 m，与 attempt 同一条路径：ParseChannel 用队列的出站客户端与 Telegram 根地址构造渠道，
+// Channel.Send 发出。它不经窗口、不落库，也不计入渠道节奏：sent 只记 worker 自己的尝试（见 Queue.sent），这里的请求
+// 不占用告警投递的额度。失败形状与投递相同，调用方用 Classify 分类。
+func (q *Queue) SendNow(ctx context.Context, c store.NotifyChannel, m Message) error {
 	channel, err := ParseChannel(c, q.client, q.telegramBase)
 	if err != nil {
 		return err
 	}
-	return channel.Send(ctx, Message{Rule: "测试规则", Node: "测试节点", Kind: "test", Transition: "test", Summary: "这是一条测试通知", At: q.clk.Now()})
+	return channel.Send(ctx, m)
+}
+
+// Preview 渲染消息 m 发往渠道 c 时的请求而不发送：渠道由与 SendNow 相同的 ParseChannel 构造，请求由投递同一个
+// Channel.request 给出，所以预览的请求体就是投递会发出的请求体。失败（渠道配置无效、模板执行出错）形状与投递相同。
+func (q *Queue) Preview(c store.NotifyChannel, m Message) (Preview, error) {
+	channel, err := ParseChannel(c, q.client, q.telegramBase)
+	if err != nil {
+		return Preview{}, err
+	}
+	r, err := channel.request(m)
+	if err != nil {
+		return Preview{}, err
+	}
+	return r.preview()
 }
