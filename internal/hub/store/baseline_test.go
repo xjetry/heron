@@ -261,25 +261,40 @@ func TestSaveAlertBaselineGuards(t *testing.T) {
 	})
 }
 
-// fired_at 是一段历史：从非 firing 写成 firing 记当下，其余写入（含恢复、再次 pending）沿用；没有上一行时为 0。
+// fired_at 与 notified_at 是两段历史：从非 firing 写成 firing 时 fired_at 记当下，未被静默的还把 notified_at 记当下；
+// 其余写入（含恢复、再次 pending、被静默的触发对 notified_at）沿用；没有上一行时为 0。
 func TestFiredAtFollowsFiringTransitions(t *testing.T) {
 	t.Parallel()
 	s, r, nodes := baselineFixture(t)
 	at := func(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
+	orZero := func(sec int64) time.Time {
+		if sec == 0 {
+			return time.Time{}
+		}
+		return at(sec)
+	}
 	for _, step := range []struct {
-		state AlertState
-		since int64
-		want  int64
+		state        AlertState
+		since        int64
+		silenced     bool
+		wantFired    int64
+		wantNotified int64
 	}{
-		{StatePending, 100, 0},
-		{StateFiring, 200, 200},
-		{StateFiring, 250, 200},
-		{StateOK, 300, 200},
-		{StatePending, 400, 200},
-		{StateFiring, 500, 500},
+		{StatePending, 100, false, 0, 0},
+		{StateFiring, 200, false, 200, 200},
+		{StateFiring, 250, false, 200, 200},
+		{StateOK, 300, false, 200, 200},
+		{StatePending, 400, false, 200, 200},
+		{StateFiring, 500, true, 500, 200},
+		{StateOK, 600, false, 500, 200},
+		{StateFiring, 700, false, 700, 700},
 	} {
+		var silenced *AlertEvent
+		if step.silenced {
+			silenced = &AlertEvent{Summary: "被静默", Value: 1}
+		}
 		if err := s.write(t.Context(), func(tx *sql.Tx) error {
-			return setAlertState(tx, r.ID, nodes[0], step.state, at(step.since), "", time.Time{}, false)
+			return setAlertState(tx, r.ID, nodes[0], step.state, at(step.since), "", time.Time{}, silenced)
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -287,12 +302,9 @@ func TestFiredAtFollowsFiringTransitions(t *testing.T) {
 		if err != nil || len(states) != 1 {
 			t.Fatalf("states=%+v err=%v", states, err)
 		}
-		want := time.Time{}
-		if step.want != 0 {
-			want = at(step.want)
-		}
-		if !states[0].FiredAt.Equal(want) {
-			t.Fatalf("after writing %s at %d: fired_at=%v want %v", step.state, step.since, states[0].FiredAt, want)
+		if got := states[0]; !got.FiredAt.Equal(orZero(step.wantFired)) || !got.NotifiedAt.Equal(orZero(step.wantNotified)) {
+			t.Fatalf("after writing %s at %d (silenced=%v): fired_at=%v notified_at=%v, want %d and %d",
+				step.state, step.since, step.silenced, got.FiredAt, got.NotifiedAt, step.wantFired, step.wantNotified)
 		}
 	}
 }

@@ -75,6 +75,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	47: execAll(migrationV47),
 	48: migrateV48Config,
 	49: migrateV49Config,
+	50: execAll(migrationV50Config),
 }
 
 // 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。
@@ -155,6 +156,28 @@ func migrateV49Config(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v50：静默解除后的补发与按实际通知计的冷却，全部在配置层的 alert_state 上。
+//   - notified_at：冷却改为从实际发出的触发通知起算。旧库只知道 fired_at，除"当前 firing 且被静默"的行之外都按
+//     原口径沿用 fired_at——升级不改变已在进行的冷却；被静默的 firing 从未发出通知，记 0。
+//   - fired_summary、fired_value：只为当前被静默的 firing 回填，优先取配对的那条触发事件（该对最新的 firing 事件，
+//     进入 firing 时写下、silenced = 1）；事件已按保留期清理时用节点名与规则名拼一句，保证待补发的行摘要不为空。
+var migrationV50Config = []string{
+	`ALTER TABLE alert_state ADD COLUMN fired_summary TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE alert_state ADD COLUMN fired_value REAL NOT NULL DEFAULT 0`,
+	`ALTER TABLE alert_state ADD COLUMN notified_at INTEGER NOT NULL DEFAULT 0`,
+	`UPDATE alert_state SET notified_at = fired_at WHERE NOT (state = 'firing' AND fired_silenced = 1)`,
+	`UPDATE alert_state SET (fired_summary, fired_value) = (
+  SELECT e.summary, e.value FROM alert_event e
+  WHERE e.rule_id = alert_state.rule_id AND e.node_id = alert_state.node_id AND e.transition = 'firing' AND e.silenced = 1
+  ORDER BY e.id DESC LIMIT 1)
+WHERE state = 'firing' AND fired_silenced = 1 AND EXISTS (
+  SELECT 1 FROM alert_event e
+  WHERE e.rule_id = alert_state.rule_id AND e.node_id = alert_state.node_id AND e.transition = 'firing' AND e.silenced = 1)`,
+	`UPDATE alert_state SET fired_summary = '节点 ' || COALESCE((SELECT name FROM node WHERE id = alert_state.node_id), '') ||
+  ' 规则 ' || COALESCE((SELECT name FROM alert_rule WHERE id = alert_state.rule_id), '') || ' 在静默期内触发'
+WHERE state = 'firing' AND fired_silenced = 1 AND fired_summary = ''`,
 }
 
 // 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。
