@@ -144,9 +144,10 @@ it("四种类型在选项与任务列表使用一致标签", async () => {
   ] }) }, routes, "/probes");
   await screen.findByText("1.1.1.1:443");
   const form = await openCreate();
+  // 列表的类型以种类标签开头；HTTP 后面总跟着状态码判据，这里只核对种类标签一致。
   for (const label of ["ICMP", "TCP", "HTTP", "DNS"]) {
     expect(within(form).getByRole("radio", { name: label })).toBeInTheDocument();
-    expect(screen.getByRole("cell", { name: label })).toBeInTheDocument();
+    expect(screen.getAllByRole("cell", { name: new RegExp(`^${label}( · |$)`) }).length).toBeGreaterThan(0);
   }
 });
 

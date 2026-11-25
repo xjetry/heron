@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
 import type { ProbeSample, ProbeSeries, QueryProbesResponse } from "../gen/heron/v1/query_pb";
-import { DnsRecordType, ProbeIpFamily, ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
+import { DnsRecordType, HttpStatusPolicy, ProbeIpFamily, ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;
@@ -26,12 +26,26 @@ export const DNS_RECORD_TYPES: readonly { type: DnsRecordType; label: string }[]
 ];
 export const familyApplies = (kind: ProbeKind): boolean => kind !== ProbeKind.DNS;
 
-// 列表里的类型：缺省（自动地址族、A 记录）只写种类，非缺省值跟在后面。
+// HTTP 状态码判据只对 HTTP 适用，与 probelimit.CheckTask 同源。严格 2xx 排第一：管理端新建 HTTP 任务默认选它，
+// 协议缺省的 < 400 会把反代跳去登录页或维护页的 3xx 也算作正常，只留给存量任务与明确要它的人。
+export const HTTP_STATUS_POLICIES: readonly { policy: HttpStatusPolicy; label: string }[] = [
+  { policy: HttpStatusPolicy.SUCCESS, label: "2xx" },
+  { policy: HttpStatusPolicy.UNSPECIFIED, label: "< 400" },
+  { policy: HttpStatusPolicy.EXACT, label: "指定状态码" },
+];
+// 精确状态码的取值范围，与 probelimit 的 MinHTTPStatus、MaxHTTPStatus 同源。
+export const HTTP_STATUS_RANGE = { min: 100, max: 599 } as const;
+const statusPolicyLabel = (task: ProbeTask): string => task.httpStatusPolicy === HttpStatusPolicy.EXACT
+  ? String(task.httpExpectedStatus)
+  : HTTP_STATUS_POLICIES.find((entry) => entry.policy === task.httpStatusPolicy)?.label ?? `判据 ${task.httpStatusPolicy}`;
+
+// 列表里的类型：缺省（自动地址族、A 记录）只写种类，非缺省值跟在后面。HTTP 的状态码判据总是写出来：缺省的 < 400
+// 恰是会把跳转当正常的那一种，标出来才看得出哪些存量任务还在用它。
 export const taskTypeLabel = (task: ProbeTask): string => {
   const extra = task.kind === ProbeKind.DNS
     ? (task.dnsRecordType !== DnsRecordType.UNSPECIFIED ? DNS_RECORD_TYPES.find((entry) => entry.type === task.dnsRecordType)?.label : undefined)
     : (task.ipFamily !== ProbeIpFamily.UNSPECIFIED ? PROBE_FAMILIES.find((entry) => entry.family === task.ipFamily)?.label : undefined);
-  return extra ? `${kindLabel(task.kind)} · ${extra}` : kindLabel(task.kind);
+  return [kindLabel(task.kind), extra, task.kind === ProbeKind.HTTP ? statusPolicyLabel(task) : undefined].filter(Boolean).join(" · ");
 };
 
 // 用一个地址替换目标里的主机，生成该种类的目标写法（DNS 的目标是名字，不经这里）。TCP 保留原目标的端口，没有端口时

@@ -14,14 +14,15 @@ import { PageHeader } from "../components/PageHeader";
 import { assignmentValid, NodeAssignment, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { useNodeList } from "../api/useNodeList";
-import { AddressDetectionState, DnsRecordType, ProbeIpFamily, ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
+import { AddressDetectionState, DnsRecordType, HttpStatusPolicy, ProbeIpFamily, ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { formatPin, parsePin } from "../lib/certpin";
 import { ascending, withId } from "../lib/ids";
-import { DNS_RECORD_TYPES, PROBE_FAMILIES, PROBE_KINDS, familyApplies, isHTTPSTarget, targetRule, targetWithAddress, taskTypeLabel } from "../lib/probes";
+import { DNS_RECORD_TYPES, HTTP_STATUS_POLICIES, HTTP_STATUS_RANGE, PROBE_FAMILIES, PROBE_KINDS, familyApplies, isHTTPSTarget, targetRule, targetWithAddress, taskTypeLabel } from "../lib/probes";
 import { EmptyState } from "../components/EmptyState";
 
 type Draft = NodeSelection & {
   kind: ProbeKind; target: string; dnsServer: string; ipFamily: ProbeIpFamily; dnsRecordType: DnsRecordType;
+  httpStatusPolicy: HttpStatusPolicy; httpExpectedStatus: string;
   intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array;
 };
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
@@ -31,11 +32,16 @@ type DrawerState = { kind: "create"; opener: HTMLElement } | { kind: "edit"; ent
 const taskError = (error: unknown) => error instanceof ConnectError && error.code === Code.FailedPrecondition
   ? `配置已变化，请刷新后再试。${errorText(error)}` : errorText(error);
 
-const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", ipFamily: ProbeIpFamily.UNSPECIFIED, dnsRecordType: DnsRecordType.UNSPECIFIED, intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false, pin: "", clearPin: false });
+// 新建默认严格 2xx：协议缺省的 < 400 只为存量任务保持升级前的行为，新任务不该把反代跳去登录页的 3xx 当成正常。
+const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", ipFamily: ProbeIpFamily.UNSPECIFIED, dnsRecordType: DnsRecordType.UNSPECIFIED,
+  httpStatusPolicy: HttpStatusPolicy.SUCCESS, httpExpectedStatus: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false, pin: "", clearPin: false });
 const taskEntries = (tasks: readonly ProbeTaskDetail[]): TaskEntry[] => tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
 // all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑切换为指定节点时以它们作为显式分配的起点。
+// HTTP 任务原样回显判据；别的种类本没有判据，编辑中改成 HTTP 等于新配一个，取新建的默认。
 const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
-  kind: task.kind, target: task.target, dnsServer: task.dnsServer, ipFamily: task.ipFamily, dnsRecordType: task.dnsRecordType, intervalS: String(task.intervalS),
+  kind: task.kind, target: task.target, dnsServer: task.dnsServer, ipFamily: task.ipFamily, dnsRecordType: task.dnsRecordType,
+  httpStatusPolicy: task.kind === ProbeKind.HTTP ? task.httpStatusPolicy : HttpStatusPolicy.SUCCESS,
+  httpExpectedStatus: task.kind === ProbeKind.HTTP && task.httpStatusPolicy === HttpStatusPolicy.EXACT ? String(task.httpExpectedStatus) : "", intervalS: String(task.intervalS),
   timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds), selectorTags, dynamic: selectorTags.length > 0,
   pin: formatPin(task.certSpkiSha256), clearPin: false, configId: task.configId,
 });
@@ -76,11 +82,14 @@ export function ProbeTasks() {
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) => {
     const pin = !d.clearPin && d.pin.trim() ? parsePin(d.pin) : undefined;
     const req = newMessage(SaveProbeTaskRequestSchema, {
-      // 地址族与记录类型各自只对适用的种类提交：切换种类后草稿里残留的另一项若随请求发出，hub 会拒绝整个保存。
+      // 地址族、记录类型与状态码判据各自只对适用的种类提交，精确码只随精确判据提交：切换种类或判据后草稿里残留的值
+      // 若随请求发出，hub 会拒绝整个保存。
       task: newMessage(ProbeTaskSchema, {
         id, kind: d.kind, target: d.target.trim(), dnsServer: d.kind === ProbeKind.DNS ? d.dnsServer.trim() : "", intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs),
         ipFamily: familyApplies(d.kind) ? d.ipFamily : ProbeIpFamily.UNSPECIFIED,
         dnsRecordType: d.kind === ProbeKind.DNS ? d.dnsRecordType : DnsRecordType.UNSPECIFIED,
+        httpStatusPolicy: d.kind === ProbeKind.HTTP ? d.httpStatusPolicy : HttpStatusPolicy.UNSPECIFIED,
+        httpExpectedStatus: d.kind === ProbeKind.HTTP && d.httpStatusPolicy === HttpStatusPolicy.EXACT ? Number(d.httpExpectedStatus) : 0,
       }),
       allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((nodeId) => availableNodeIds.has(nodeId))),
       selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [],
@@ -209,6 +218,15 @@ function ProbeTaskDrawer({ title, submitLabel, nodes, initial, pending, error, o
               <div className="segmented" role="radiogroup" aria-label="记录类型">
                 {DNS_RECORD_TYPES.map(({ type, label }) => <label key={type}><input type="radio" name="probe-record" aria-label={label} checked={draft.dnsRecordType === type} onChange={() => setDraft({ ...draft, dnsRecordType: type })} /><span>{label}</span></label>)}
               </div>
+            )}
+            {draft.kind === ProbeKind.HTTP && (
+              <div className="segmented" role="radiogroup" aria-label="期望状态码">
+                {HTTP_STATUS_POLICIES.map(({ policy, label }) => <label key={policy}><input type="radio" name="probe-status" aria-label={label} checked={draft.httpStatusPolicy === policy} onChange={() => setDraft({ ...draft, httpStatusPolicy: policy })} /><span>{label}</span></label>)}
+              </div>
+            )}
+            {draft.kind === ProbeKind.HTTP && draft.httpStatusPolicy === HttpStatusPolicy.EXACT && (
+              <label>状态码<input type="number" required min={HTTP_STATUS_RANGE.min} max={HTTP_STATUS_RANGE.max} step={1} placeholder="如 204" value={draft.httpExpectedStatus}
+                onChange={(e) => setDraft({ ...draft, httpExpectedStatus: e.target.value })} /></label>
             )}
             {draft.kind === ProbeKind.DNS && (
               <label>解析器<input required maxLength={47} placeholder="ip:port，如 1.1.1.1:53" value={draft.dnsServer}
