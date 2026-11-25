@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
 import type { ProbeSample, ProbeSeries, QueryProbesResponse } from "../gen/heron/v1/query_pb";
-import { ProbeKind } from "../gen/heron/v1/types_pb";
+import { DnsRecordType, ProbeIpFamily, ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;
@@ -13,6 +13,54 @@ export const PROBE_KINDS: readonly { kind: ProbeKind; label: string }[] = [
   { kind: ProbeKind.DNS, label: "DNS" },
 ];
 export const kindLabel = (kind: ProbeKind): string => PROBE_KINDS.find((entry) => entry.kind === kind)!.label;
+
+// 探测地址族只对 ICMP、TCP、HTTP 适用，DNS 用记录类型；与 probelimit.CheckTask 的适用范围同源，页面只提交适用的那一项。
+export const PROBE_FAMILIES: readonly { family: ProbeIpFamily; label: string }[] = [
+  { family: ProbeIpFamily.UNSPECIFIED, label: "自动" },
+  { family: ProbeIpFamily.IPV4, label: "IPv4" },
+  { family: ProbeIpFamily.IPV6, label: "IPv6" },
+];
+export const DNS_RECORD_TYPES: readonly { type: DnsRecordType; label: string }[] = [
+  { type: DnsRecordType.UNSPECIFIED, label: "A" },
+  { type: DnsRecordType.AAAA, label: "AAAA" },
+];
+export const familyApplies = (kind: ProbeKind): boolean => kind !== ProbeKind.DNS;
+
+// 列表里的类型：缺省（自动地址族、A 记录）只写种类，非缺省值跟在后面。
+export const taskTypeLabel = (task: ProbeTask): string => {
+  const extra = task.kind === ProbeKind.DNS
+    ? (task.dnsRecordType !== DnsRecordType.UNSPECIFIED ? DNS_RECORD_TYPES.find((entry) => entry.type === task.dnsRecordType)?.label : undefined)
+    : (task.ipFamily !== ProbeIpFamily.UNSPECIFIED ? PROBE_FAMILIES.find((entry) => entry.family === task.ipFamily)?.label : undefined);
+  return extra ? `${kindLabel(task.kind)} · ${extra}` : kindLabel(task.kind);
+};
+
+// 用一个地址替换目标里的主机，生成该种类的目标写法（DNS 的目标是名字，不经这里）。TCP 保留原目标的端口，没有端口时
+// 留出冒号由人补上；IPv6 按 probelimit 的规范形式加方括号（net.JoinHostPort）。HTTP 只换主机，协议、端口、路径照旧，
+// 原目标不是 http(s) URL 时给出 http://地址/。
+export function targetWithAddress(kind: ProbeKind, current: string, address: string, v6: boolean): string {
+  const host = v6 ? `[${address}]` : address;
+  switch (kind) {
+    case ProbeKind.TCP: {
+      const text = current.trim();
+      const port = (text.startsWith("[") ? /^\[[^\]]*\]:(\d*)$/.exec(text) : /^[^:]*:(\d*)$/.exec(text))?.[1] ?? "";
+      return `${host}:${port}`;
+    }
+    case ProbeKind.HTTP: {
+      try {
+        const url = new URL(current.trim());
+        if (url.protocol === "http:" || url.protocol === "https:") {
+          url.hostname = host;
+          return url.toString();
+        }
+      } catch {
+        // 不是绝对 URL：按新目标生成。
+      }
+      return `http://${host}/`;
+    }
+    default:
+      return address;
+  }
+}
 
 // 按种类的目标约束与 probelimit.CheckTask 同源：页面只用原生表单属性做提示，最终裁决在 hub。
 export const targetRule = (kind: ProbeKind): { placeholder: string; maxLength: number } => {
