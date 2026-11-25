@@ -40,7 +40,7 @@ it("资源指标下拉含六项，速率以 Mbps 输入并换算成 bytes/s 提�
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "出口带宽" } });
   fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.RESOURCE) } });
   const select = within(form).getByLabelText("资源指标");
-  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["内存使用率", "磁盘使用率", "CPU 使用率", "每核负载", "下行速率", "上行速率"]);
+  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["内存使用率", "磁盘使用率（最满盘）", "CPU 使用率", "每核负载", "下行速率", "上行速率"]);
   fireEvent.change(select, { target: { value: String(ResourceMetric.NET_TX_BPS) } });
   expect(within(form).getByLabelText("触发阈值（Mbps）")).toHaveAttribute("max", String((2 ** 40) / 125000));
   expect(form).toHaveTextContent(`触发阈值大于 0 且不超过 ${(2 ** 40) / 125000} Mbps，恢复阈值必须低于触发阈值`);

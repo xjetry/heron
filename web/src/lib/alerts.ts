@@ -54,7 +54,8 @@ export type ResourceUnit = "percent" | "per-core" | "mbps";
 export const MBPS_TO_BYTES_PER_S = 125000;
 export const RESOURCE_METRICS: readonly (Entry<ResourceMetric> & { unit: ResourceUnit })[] = [
   { value: ResourceMetric.MEMORY_USED_PCT, label: "内存使用率", unit: "percent" },
-  { value: ResourceMetric.DISK_USED_PCT, label: "磁盘使用率", unit: "percent" },
+  // 评估的是最满盘（纳入监测的本地盘里最满的一块，含根盘），不只是根盘；标签写明，免得以为数据盘写满不报。
+  { value: ResourceMetric.DISK_USED_PCT, label: "磁盘使用率（最满盘）", unit: "percent" },
   { value: ResourceMetric.CPU_PCT, label: "CPU 使用率", unit: "percent" },
   { value: ResourceMetric.LOAD1_PER_CORE, label: "每核负载", unit: "per-core" },
   { value: ResourceMetric.NET_RX_BPS, label: "下行速率", unit: "mbps" },

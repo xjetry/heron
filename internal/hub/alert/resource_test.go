@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"strings"
 	"testing"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
@@ -8,15 +9,23 @@ import (
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
+// 磁盘规则读的是最满盘那一列，不是根盘的 disk_used_pct：写进别的列的读数不会让它触发。
 func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
-	for _, resource := range []store.ResourceMetric{store.MetricMemoryUsedPct, store.MetricDiskUsedPct} {
+	for _, tc := range []struct {
+		resource store.ResourceMetric
+		column   string
+	}{
+		{store.MetricMemoryUsedPct, "memory_used_pct"},
+		{store.MetricDiskUsedPct, "disk_max_used_pct"},
+	} {
+		resource := tc.resource
 		t.Run(string(resource), func(t *testing.T) {
 			f := newFixture(t)
 			r := f.rule(t, store.AlertRule{Name: "容量", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: resource, Threshold: 90, RecoveryThreshold: 80, ForMinutes: 2})
 			base := f.clk.Now().Unix()
 			write := func(offset int64, value float64) {
 				b := metric.NewBucket()
-				i := metric.Index(string(resource))
+				i := metric.Index(tc.column)
 				b.Sum[i], b.N[i] = value, 1
 				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
 				must(t, err)
@@ -156,4 +165,64 @@ func TestResourceLoad1PerCoreReadsTheColumn(t *testing.T) {
 	write(6, 0.5, true)
 	write(7, 0.5, true)
 	eval(7, store.StateOK)
+}
+
+// 根盘空、数据盘满：磁盘规则按最满盘触发，根盘那一列再高也不参与。触发摘要点名 hub 实时状态里当前最满的挂载路径；
+// 实时状态没有逐盘读数（旧版 agent、hub 刚重启）时回退为不带路径的原文案。恢复文案不带路径。
+func TestResourceDiskFiresOnFullestMountAndNamesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mounts []*heronv1.DiskMountUsage
+		firing string
+	}{
+		{"live mounts", []*heronv1.DiskMountUsage{{Path: "/data", Total: 100, Used: 95}, {Path: "/", Total: 100, Used: 30}}, "节点 node1 磁盘（/data）持续 2 分钟达到 90.0%（规则 磁盘）"},
+		{"no live mounts", nil, "节点 node1 磁盘持续 2 分钟达到 90.0%（规则 磁盘）"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			r := f.rule(t, store.AlertRule{Name: "磁盘", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: store.MetricDiskUsedPct, Threshold: 90, RecoveryThreshold: 80, ForMinutes: 2})
+			if tc.mounts != nil {
+				f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
+				f.l.ObserveDisks(f.ids[0], tc.mounts, uint32(len(tc.mounts)))
+			}
+			base := f.clk.Now().Unix()
+			write := func(offset int64, root, fullest float64) {
+				b := metric.NewBucket()
+				ri, fi := metric.Index("disk_used_pct"), metric.Index("disk_max_used_pct")
+				b.Sum[ri], b.N[ri] = root, 1
+				b.Sum[fi], b.N[fi] = fullest, 1
+				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
+				must(t, err)
+			}
+			eval := func(offset int64, want store.AlertState) {
+				t.Helper()
+				must(t, f.e.EvaluateResources(t.Context(), base+offset*60))
+				wantState(t, f.e, r.ID, f.ids[0], want)
+			}
+			// 根盘写满而最满盘列低于阈值：不触发（没有状态记录或 ok）。
+			write(0, 99, 50)
+			write(1, 99, 50)
+			must(t, f.e.EvaluateResources(t.Context(), base+60))
+			if got := stateOf(f.e, r.ID, f.ids[0]); got != "" && got != store.StateOK {
+				t.Fatalf("root-only full disk moved the rule to %q", got)
+			}
+			write(2, 30, 95)
+			write(3, 30, 95)
+			eval(3, store.StateFiring)
+			write(4, 30, 70)
+			write(5, 30, 70)
+			eval(5, store.StateOK)
+			events := f.events(t)
+			if len(events) != 2 || events[1].Transition != store.TransitionFiring || events[0].Transition != store.TransitionRecovered {
+				t.Fatalf("events=%+v", events)
+			}
+			if events[1].Summary != tc.firing {
+				t.Fatalf("firing summary = %q, want %q", events[1].Summary, tc.firing)
+			}
+			// 恢复文案之后引擎会追加告警持续时长，这里只钉前段。
+			if want := "节点 node1 磁盘持续 2 分钟不高于 80.0%，已恢复（规则 磁盘）"; !strings.HasPrefix(events[0].Summary, want) {
+				t.Fatalf("recovered summary = %q, want prefix %q", events[0].Summary, want)
+			}
+		})
+	}
 }

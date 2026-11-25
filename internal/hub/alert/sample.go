@@ -100,7 +100,7 @@ func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Nod
 		}
 		ev.Summary, ev.Value = probeSummary(n, r, band, value), value
 	case store.KindResource:
-		ev.Summary, ev.Value = resourceSummary(n, r, tr), r.Threshold
+		ev.Summary, ev.Value = resourceSummary(n, r, tr, e.fullestMount(r, n.ID)), r.Threshold
 		if phase == store.TransitionRecovered {
 			ev.Value = r.RecoveryThreshold
 		}
