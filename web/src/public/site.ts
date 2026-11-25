@@ -1,5 +1,18 @@
-import type { PublicSite } from "../gen/heron/v1/public_pb";
+import { useQuery } from "@connectrpc/connect-query";
+import { PublicService, type PublicSite } from "../gen/heron/v1/public_pb";
 import { forcedTheme, type SchemeChoice } from "../lib/scheme";
+
+// 公开页的站点设置：PublicLayout 与需要站点时区的页面共用这一个查询（同一查询键、同一选项），一次页面加载只取一次。
+// 只在页面加载时取，之后不再重取：已打开的页面刷新后才看到改动，刷新时浏览器还可能再用最多 5 分钟的缓存
+// （hub 对 GetSite 下发 max-age=300）。断网重连与重新挂载默认只重取已过期查询，staleTime: Infinity 阻止这两类重取。
+export function useSite() {
+  return useQuery(PublicService.method.getSite, {}, { staleTime: Infinity });
+}
+
+// hub 实际生效的时区（GetSite.timezone）。公开页按它切日历时段，不按访客浏览器的时区；没取到时为 undefined。
+export function useSiteTimeZone(): string | undefined {
+  return useSite().data?.timezone || undefined;
+}
 
 // 站点设置里标题为空时用的标题；面板的外观页拿它作占位提示。
 export const DEFAULT_TITLE = "服务器状态";

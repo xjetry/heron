@@ -11,6 +11,7 @@ import { ago } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
 import { nodeStatus } from "../lib/status";
 import { hasHostFacts } from "./facts";
+import { useSiteTimeZone } from "./site";
 
 const PUBLIC_HISTORY: HistoryMethods = { queryMetrics: PublicService.method.queryMetrics, queryProbes: PublicService.method.queryProbes };
 
@@ -32,7 +33,7 @@ export function NodePage() {
 }
 
 function NodeContent({ node, now, error }: { node: PublicNode; now: number; error: unknown }) {
-  const history = useHistory(PUBLIC_HISTORY, node.id, now);
+  const history = useHistory(PUBLIC_HISTORY, node.id, now, useSiteTimeZone());
   const m = node.metrics;
   const f = node.facts;
   const daysLeft = node.billing?.daysLeft;

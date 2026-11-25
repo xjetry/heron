@@ -83,7 +83,8 @@ type Config struct {
 	// HubVersion 原样经 GetSnapshotResponse.hub_version 下发。空串（装配时没传）与 dev 一样
 	// 被面板当作非正式版本：给出 latest 安装命令、不标落后节点。
 	HubVersion string
-	// Location 是 hub 的 --timezone，days_left 按它的日历日算；New 要求非 nil。
+	// Location 是 hub 的 --timezone，days_left 按它的日历日算，GetSettings.timezone 下发它的名字；New 要求非 nil，
+	// 且与 Deps.Traffic 的时区是同一个对象。
 	Location *time.Location
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
@@ -215,6 +216,11 @@ func New(cfg Config, deps Deps) *Service {
 	}
 	if deps.Log == nil {
 		panic("api.Deps.Log must be set")
+	}
+	// days_left、静默窗口与 GetSettings.timezone 读 cfg.Location，GetTraffic.timezone 与周期边界读账本的时区；面板把
+	// 这几个值放在同一张日历上，两者必须是 serve 装配的同一个 *time.Location，否则周期与日界按不同的区各算各的。
+	if deps.Traffic.Zone() != cfg.Location {
+		panic("api.Config.Location must be the traffic book's zone")
 	}
 	return &Service{
 		cfg: cfg, store: deps.Store, auth: deps.Auth, live: deps.Live, nodes: deps.Nodes, traffic: deps.Traffic, probes: deps.Probes,

@@ -6,9 +6,11 @@ import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { coverageView } from "../lib/coverage";
-import { rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, toProbeTaskAligned } from "../lib/probes";
+import { formatUnit, percent } from "../lib/format";
+import { rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, summarizeProbes, toProbeTaskAligned, type ProbeSummary } from "../lib/probes";
 import { toAligned, unitOf, type SeriesSelection } from "../lib/series";
 import { Chart } from "./Chart";
+import { PeakNotice, SliceButtons, peakCoverage, slicedSamples, usePeakSlice } from "./EveningPeak";
 import { InfoTip } from "./InfoTip";
 
 // 对比图与历史图用同一组窗口、同一个 maxPoints：同一段时间才会落到同一级。
@@ -121,7 +123,9 @@ export type HistoryMethods = {
 
 // now 是 hub 时钟（秒）；undefined 表示还没取到。窗口右端只取 hub 时钟，没有它就没有合法窗口，此时两族查询都不发——
 // 不变式由本 hook 承担，调用方不必为了"拿到 hub 时间再查"另拆一层组件，也就能把 hook 留在不随 tab 等局部 UI 卸载的位置。
-export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number | undefined) {
+// timeZone 是 hub 下发的时区（管理端 GetSettings.timezone、公开端 GetSite.timezone），探测的晚高峰切片按它判定；
+// undefined 表示还没取到或取不到，此时只提供全时段。
+export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number | undefined, timeZone: string | undefined) {
   const { range, setRange, from, to } = useTimeWindow(now ?? 0);
   const request = now === undefined ? skipToken : { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: HISTORY_MAX_POINTS };
   // 窗口右端每分钟前进一次、切换 range 都会换查询键；换键期间或失败时图表与“级别…”标签不能都消失，也不能
@@ -145,12 +149,15 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number 
       unit: p.unit ?? unitOf(data, p.selections[0].name),
     })) : [];
   }, [metrics.data, from, to]);
-  // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。
+  const peak = usePeakSlice(timeZone);
+  // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。图与汇总都取同一份切片后的样本：
+  // 晚高峰下不在其中的桶在图上是空洞，也不进汇总；切换只重算已取到的数据，不另发请求。
   const probeTaskCharts = useMemo(() => {
     const data = probes.data;
     if (!data) return [];
     const titles = seriesLabels(data.series);
-    return data.series.map((s, i) => ({
+    const shown = { ...data, series: data.series.map((s) => ({ ...s, samples: [...slicedSamples(peak, s.samples, data.stepS)] })) };
+    return shown.series.map((s, i) => ({
       taskId: s.taskId,
       kind: s.kind,
       title: titles[i],
@@ -158,9 +165,11 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number 
       soft: [false, true, true],
       bands: [{ lower: 1, upper: 2 }],
       unit: "ms" as const,
-      data: toProbeTaskAligned(data, s.taskId, from, to, [rttMeanMs, rttMinMs, rttMaxMs]),
+      data: toProbeTaskAligned(shown, s.taskId, from, to, [rttMeanMs, rttMinMs, rttMaxMs]),
+      summary: summarizeProbes(s.samples),
     }));
-  }, [probes.data, from, to]);
+  }, [probes.data, from, to, peak]);
+  const probeCoverage = probes.data ? peakCoverage(peak, from, to, probes.data.stepS) : null;
   // stale 只说“这份数据不是当前查询键自己的”：窗口右端每分钟前进一次也会换键，请求还没回来的这一小段
   // 时间同样是 stale，但沿用的还是同一个 range，只晚了不到一分钟，不该报成“看错窗口”。这里另记一下
   // “当前沿用值最后一次确认属于哪个 range”：只有 metrics/probes 沿用中、且沿用值所属的 range 与当前
@@ -170,7 +179,7 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number 
   const [probesRange, setProbesRange] = useState(range);
   if (!probes.stale && probes.data !== undefined && probesRange !== range) setProbesRange(range);
   const rangeStale = (metrics.stale && metricsRange !== range) || (probes.stale && probesRange !== range);
-  return { range, setRange, metrics, probes, charts, probeTaskCharts, rangeStale };
+  return { range, setRange, metrics, probes, charts, probeTaskCharts, rangeStale, peak, probeCoverage };
 }
 
 export type HistoryState = ReturnType<typeof useHistory>;
@@ -214,19 +223,41 @@ export function MetricCharts({ history }: { history: HistoryState }) {
   );
 }
 
+const ms = (v: number | null) => (v === null ? "–" : formatUnit(v, "ms"));
+
+// 与跨节点对比表同一组列、同一口径（summarizeProbes）：按窗口内（或切出的晚高峰内）全部样本汇总。
+function ProbeSummaryLine({ summary }: { summary: ProbeSummary }) {
+  return (
+    <ul className="probe-summary muted" aria-label="窗口汇总">
+      <li>均值 <span className="num">{ms(summary.mean)}</span></li>
+      <li>最小 <span className="num">{ms(summary.min)}</span></li>
+      <li>最大 <span className="num">{ms(summary.max)}</span></li>
+      <li>丢包率 <span className="num">{summary.lossPercent === null ? "–" : percent(summary.lossPercent)}</span></li>
+    </ul>
+  );
+}
+
 // 未标注任务没有可用的公开对比页，仅显示编号标题；其余任务的链接由调用方提供。
+// 晚高峰下窗口切不出整桶命中的点时只给提示：此时每张图都是空的、每个汇总都是"–"，画出来只会被当成"没有读数"。
 export function ProbeTaskCharts({ history, noProbes, titleLink }: { history: HistoryState; noProbes: ReactNode; titleLink: (taskId: bigint, title: string) => ReactNode }) {
-  const { probeTaskCharts, probes } = history;
+  const { probeTaskCharts, probes, peak, probeCoverage } = history;
   if (!probes.data) return null;
   if (probes.data.series.length === 0) return <>{noProbes}</>;
   return (
-    <div className="chart-grid">
-      {probeTaskCharts.map((c) => (
-        <div className="card chart-card" key={String(c.taskId)}>
-          <h2>{c.kind === ProbeKind.UNSPECIFIED ? c.title : titleLink(c.taskId, c.title)}</h2>
-          <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} bands={c.bands} />
+    <>
+      <header className="row probe-slice"><SliceButtons peak={peak} /></header>
+      <PeakNotice coverage={probeCoverage} stepS={probes.data.stepS} />
+      {(probeCoverage === null || probeCoverage === "covered") && (
+        <div className="chart-grid">
+          {probeTaskCharts.map((c) => (
+            <div className="card chart-card" key={String(c.taskId)}>
+              <h2>{c.kind === ProbeKind.UNSPECIFIED ? c.title : titleLink(c.taskId, c.title)}</h2>
+              <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} bands={c.bands} />
+              <ProbeSummaryLine summary={c.summary} />
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      )}
+    </>
   );
 }
