@@ -788,10 +788,12 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 				var value float64
 				switch r.Metric {
 				case store.MetricLossPct:
-					if b.Sent == 0 {
+					// 全是探测错误的分钟没有丢包率：缺读数既不触发也不恢复（NextProbe）。
+					loss, ok := b.LossPct()
+					if !ok {
 						continue
 					}
-					value = float64(b.Lost) / float64(b.Sent) * 100
+					value = loss
 				case store.MetricRttMs:
 					if b.RttN == 0 {
 						continue
