@@ -34,12 +34,25 @@ func relativeBand(r store.AlertRule, b store.Baselines, nodeID int64) (rttBand, 
 	default:
 		return rttBand{}, false
 	}
-	return rttBand{baselineMs: base, lo: base * (1 - r.LowerDeviationPct/100), hi: base * (1 + r.UpperDeviationPct/100)}, true
+	return bandAround(r, base), true
+}
+
+// bandAround 是以 base（毫秒）为基线、按规则的上下偏差张开的正常带。
+func bandAround(r store.AlertRule, base float64) rttBand {
+	return rttBand{baselineMs: base, lo: base * (1 - r.LowerDeviationPct/100), hi: base * (1 + r.UpperDeviationPct/100)}
 }
 
 // exceeds 报告分钟均值是否越出正常带。两端都含等号，沿用固定阈值"触发含阈值等号"的惯例。下偏差取 100%
 // 时 lo 为 0：均值是 RttSumUs/RttN 且 RttN > 0，对公网目标恒为正，带下的那一侧因此不可达，规则只按上偏差判定。
 func (b rttBand) exceeds(ms float64) bool { return ms >= b.hi || ms <= b.lo }
+
+// probeSummary 是探测规则的文案：固定阈值写指标名与这一分钟的读数；相对判定写 band.summary。band 只在相对判定时读。
+func probeSummary(n store.Node, r store.AlertRule, band rttBand, value float64) string {
+	if r.RttMode == store.RttRelative {
+		return band.summary(n.Name, r.Name, value)
+	}
+	return fmt.Sprintf("节点 %s 规则 %s：%s %.1f", n.Name, r.Name, r.Metric, value)
+}
 
 // summary 是相对判定的事件文案：实测均值、基线与偏差百分比，以及正常带。触发与恢复共用：恢复时同一组数说明它回到了带内。
 func (b rttBand) summary(node, rule string, ms float64) string {

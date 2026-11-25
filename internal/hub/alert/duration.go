@@ -26,3 +26,8 @@ func formatAlertDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
 }
+
+// withFiringDuration 是恢复文案的尾巴：从进入 firing 到恢复的告警持续时长（Engine.apply 追加）。
+func withFiringDuration(summary string, d time.Duration) string {
+	return summary + "，告警持续 " + formatAlertDuration(d)
+}
