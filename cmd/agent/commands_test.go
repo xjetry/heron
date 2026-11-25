@@ -236,6 +236,79 @@ func TestConfigureRejectsResultRunWouldRefuse(t *testing.T) {
 	}
 }
 
+// 换绑 hub 地址只改地址：运行 token、节点名与本地探测策略原样保留，run 能直接加载结果。
+func TestConfigureSwitchesHubKeepingCredentialsAndPolicy(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	old := agentconfig.Config{Hub: "https://old.example", Token: "t", Name: "n", ProbeAllow: []string{"127.0.0.0/8"}, ProbeDeny: []string{"10.0.0.0/8"}}
+	if err := agentconfig.Save(cfgPath, old); err != nil {
+		t.Fatal(err)
+	}
+	out, err := configure(t, cfgPath, "--hub", "https://new.example:8443/")
+	if err != nil || !strings.Contains(out, "hub=https://new.example:8443 ") || !strings.Contains(out, "restart the heron-agent service") {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	cfg, err := client.LoadConfig(cfgPath)
+	if err != nil || cfg.Hub != "https://new.example:8443" || cfg.Token != "t" || cfg.Name != "n" || cfg.InsecureHTTP ||
+		!slices.Equal(cfg.ProbeAllow, old.ProbeAllow) || !slices.Equal(cfg.ProbeDeny, old.ProbeDeny) {
+		t.Fatalf("cfg=%+v err=%v", cfg, err)
+	}
+	// 不给 --hub 时地址不动。
+	if _, err := configure(t, cfgPath, "--probe-deny", ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := client.LoadConfig(cfgPath); err != nil || cfg.Hub != "https://new.example:8443" {
+		t.Fatalf("cfg=%+v err=%v", cfg, err)
+	}
+}
+
+// 新地址与最终的明文放行（命令行给出的优先，否则沿用文件里的）按 run 的传输规则一起判定；被拒时文件一个字节都不变。
+func TestConfigureHubTransportRule(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		insecure bool // 文件里原有的明文放行
+		args     []string
+		wantErr  string // 空表示应当接受
+		wantHub  string
+	}{
+		{name: "empty", args: []string{"--hub", ""}, wantErr: "must be an absolute https:// URL"},
+		{name: "only slash", args: []string{"--hub", "/"}, wantErr: "must be an absolute https:// URL"},
+		{name: "relative", args: []string{"--hub", "heron.example"}, wantErr: "must be an absolute https:// URL"},
+		{name: "other scheme", args: []string{"--hub", "ftp://heron.example"}, wantErr: "must be an https:// URL"},
+		{name: "plain http", args: []string{"--hub", "http://10.0.0.2:8080"}, wantErr: "uses plain http"},
+		{name: "localhost is not loopback literal", args: []string{"--hub", "http://localhost:8080"}, wantErr: "uses plain http"},
+		{name: "insecure turned off in the same command", insecure: true, args: []string{"--hub", "http://10.0.0.2:8080", "--insecure-http=false"}, wantErr: "uses plain http"},
+		{name: "loopback literal", args: []string{"--hub", "http://127.0.0.1:8080"}, wantHub: "http://127.0.0.1:8080"},
+		{name: "insecure kept from the file", insecure: true, args: []string{"--hub", "http://10.0.0.2:8080"}, wantHub: "http://10.0.0.2:8080"},
+		{name: "insecure in the same command", args: []string{"--hub", "http://10.0.0.2:8080/", "--insecure-http"}, wantHub: "http://10.0.0.2:8080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "config.json")
+			old := agentconfig.Config{Hub: "https://old.example", Token: "t", Name: "n", InsecureHTTP: tc.insecure, ProbeDeny: []string{"10.9.0.0/16"}}
+			if err := agentconfig.Save(cfgPath, old); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(cfgPath)
+			_, err := configure(t, cfgPath, tc.args...)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				if after, _ := os.ReadFile(cfgPath); !bytes.Equal(before, after) {
+					t.Fatalf("a rejected configure changed the file:\n%s\n%s", before, after)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := client.LoadConfig(cfgPath)
+			if err != nil || cfg.Hub != tc.wantHub || cfg.Token != "t" || cfg.Name != "n" || !slices.Equal(cfg.ProbeDeny, old.ProbeDeny) {
+				t.Fatalf("cfg=%+v err=%v", cfg, err)
+			}
+		})
+	}
+}
+
 // 命令的最终错误行有上限，按写出的整行计（前缀、标记、换行都在内）：register 的错误可能带着 hub 应答里的文本。
 func TestErrorLineIsBounded(t *testing.T) {
 	short := errors.New("load config: boom")

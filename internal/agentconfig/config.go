@@ -14,13 +14,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
 // Config 的更新只覆盖命令行明确提供的字段；空列表表示显式清空，不能被解释为沿用旧配置。
 // Decode 拒绝未知字段与首个 JSON 对象之后的内容；拼错的拒绝策略不能静默失效。
-// Config 是 agent 的配置文件。Hub、Token、Name 由 register 写入；其余字段是宿主机的本地策略，
-// 只由 configure 或手工修改，hub 改不了：agent 运行期不写配置，下行消息里也没有对应字段。
+// Config 是 agent 的配置文件。Token、Name 只由 register 写入；Hub 由 register 写入，也可由 configure 在本机换绑——
+// 换绑沿用原 token，只对同一个 hub 换了地址有效，换到另一个 hub 要重新注册。其余字段是宿主机的本地策略，
+// 只由 configure 或手工修改。这些字段 hub 都改不了：agent 运行期不写配置，下行消息里也没有对应字段。
 // run 加载时由 client.Validate 调 CheckHub；明文地址是否准入取决于本地 InsecureHTTP，不由 hub 下发。
 type Config struct {
 	Hub          string   `json:"hub"`
@@ -56,6 +58,12 @@ func Read(path string) (Config, error) {
 		return Config{}, err
 	}
 	return Decode(bytes.NewReader(b), path)
+}
+
+// NormalizeHub 给出写进配置的 hub 地址形式：去掉末尾的 /。register 与 configure 都经它写 Hub，
+// 同一个地址不因写入路径不同而落成两种形式；之后再由 CheckHub 判定传输规则。
+func NormalizeHub(raw string) string {
+	return strings.TrimRight(raw, "/")
 }
 
 // CheckHub 是 hub 地址的传输规则，register 在发请求之前、run 在加载配置时、hub 来源的更新器在发

@@ -1,4 +1,4 @@
-// heron-agent：register 用注册窗口 key 换 token 并写入配置；configure 修改宿主机本地策略；run 进入上报循环。
+// heron-agent：register 用注册窗口 key 换 token 并写入配置；configure 修改宿主机本地策略与 hub 地址；run 进入上报循环。
 package main
 
 import (
@@ -107,7 +107,7 @@ func runRegister(args []string) error {
 	if *name == "" {
 		*name, _ = os.Hostname()
 	}
-	base := strings.TrimRight(*hub, "/")
+	base := agentconfig.NormalizeHub(*hub)
 	// 校验在发请求之前：明文地址被拒时 key 不能已经出过线，窗口名额也不能已经消耗。
 	if err := agentconfig.CheckHub(base, *insecure); err != nil {
 		return err
@@ -251,11 +251,14 @@ func splitList(s string) []string {
 	return out
 }
 
-// runConfigure 修改配置里的宿主机本地策略，字段更新规则见 agentconfig.Config。只改命令行上显式给出的项，列表给空串即清空；
-// 读取时不校验，才能修正一份当前被 run 拒绝的配置；写入前按 run 的同一套规则校验整份配置。
+// runConfigure 修改配置里的宿主机本地策略与 hub 地址，字段更新规则见 agentconfig.Config。只改命令行上显式给出的项，
+// 列表给空串即清空；--hub 给空串不是清空而是非法地址，由校验拒绝。读取时不校验，才能修正一份当前被 run 拒绝的配置；
+// 写入前对合并后的整份配置调 client.Validate——run 加载时的同一个准入，所以新地址与最终的 insecure_http
+// （命令行给出的优先，否则沿用文件里的）按同一条传输规则一起判定，被拒时不写文件。
 func runConfigure(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("configure", flag.ContinueOnError)
 	cfgPath := fs.String("config", defaultConfig, "agent config path")
+	hub := fs.String("hub", "", "move this node to a new hub base URL, keeping its token and local policy; only for the same hub reached at a new address (another hub needs register)")
 	insecure := fs.Bool("insecure-http", false, "accept a plain http hub address (the node token and metrics travel unencrypted)")
 	allow := fs.String("probe-allow", "", "comma-separated CIDR prefixes the agent may probe despite the defaults; empty clears")
 	deny := fs.String("probe-deny", "", "comma-separated CIDR prefixes the agent refuses to probe in addition to the defaults; empty clears")
@@ -272,6 +275,8 @@ func runConfigure(args []string, out io.Writer) error {
 	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "hub":
+			cfg.Hub = agentconfig.NormalizeHub(*hub)
 		case "insecure-http":
 			cfg.InsecureHTTP = *insecure
 		case "probe-allow":
@@ -289,6 +294,6 @@ func runConfigure(args []string, out io.Writer) error {
 		return err
 	}
 	policy, _ := client.Policy(cfg)
-	fmt.Fprintf(out, "insecure_http=%v %s disk_exclude=%v\nrestart the heron-agent service to apply\n", cfg.InsecureHTTP, policy, cfg.DiskExclude)
+	fmt.Fprintf(out, "hub=%s insecure_http=%v %s disk_exclude=%v\nrestart the heron-agent service to apply\n", cfg.Hub, cfg.InsecureHTTP, policy, cfg.DiskExclude)
 	return nil
 }
