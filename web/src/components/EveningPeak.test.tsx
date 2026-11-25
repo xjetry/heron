@@ -52,7 +52,7 @@ function renderNode(surface: "管理" | "公开", { stepS = 60, timeZone = "UTC"
   const fail = async (): Promise<never> => { throw new ConnectError("down", Code.Unavailable); };
   if (surface === "管理") {
     renderWithAdmin({
-      queryMetrics: metrics, queryProbes, getSnapshot: async () => ({ nodes: [] }), listTags: async () => ({ tags: [] }),
+      queryMetrics: metrics, queryProbes, getSnapshot: async () => ({ nodes: [] }), getNodeDisks: async () => ({}), listTags: async () => ({ tags: [] }),
       listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [], now: BigInt(HUB_NOW), timezone: timeZone }),
       getSettings: siteFails ? fail : async () => ({ settings: {}, timezone: timeZone }),
     }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
