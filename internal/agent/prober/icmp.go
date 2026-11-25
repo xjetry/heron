@@ -172,10 +172,21 @@ func (e *ICMP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 		// 没有任何 socket 时，主机名无可选地址族，返回两族初始化诊断，不擅自归因到某一族。
 		return Outcome{Err: "icmp unavailable: " + strings.Join(e.InitErrors(), "; ")}
 	}
+	// 任务显式要求的族没有套接字时报该族的初始化诊断：说清是权限还是协议限制，比"本机没有可用的族"更有用。
+	switch t.GetIpFamily() {
+	case heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4:
+		if e.v4 == nil {
+			return e.unavailable(false)
+		}
+	case heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6:
+		if e.v6 == nil {
+			return e.unavailable(true)
+		}
+	}
 	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ip, err := e.Targets.Resolve(ctx, t.GetTarget(), e.v4 != nil, e.v6 != nil)
+	ip, err := e.Targets.Resolve(ctx, t.GetTarget(), t.GetIpFamily(), stack{v4: e.v4 != nil, v6: e.v6 != nil})
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}
