@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/agentwire"
 )
 
 // darwinNetExclude 与 Linux 的默认列表同一原则：回环，以及流量同时计在物理网口上或不出本机的接口。
@@ -51,6 +52,8 @@ type darwinSource interface {
 	sysctlUint64(name string) (uint64, error)
 	sysctlRaw(name string, args ...int) ([]byte, error)
 	statfs(path string) (total, used uint64, err error)
+	// mounts 是 getfsstat(MNT_NOWAIT) 的挂载表：不等任何文件系统应答，远端挂载失联也不阻塞。
+	mounts() ([]fsstatRecord, error)
 	// monotonicSeconds 是自启动起的秒数，含睡眠（CLOCK_MONOTONIC），与 Linux /proc/uptime 同口径。
 	monotonicSeconds() (uint64, error)
 	// processorTicks 是 host_processor_info 的逐 CPU 计数，每 CPU cpuStateMax 个。
@@ -131,6 +134,24 @@ func (d *darwinHost) swap() (usage, error) {
 
 func (d *darwinHost) disk() (usage, error) {
 	total, used, err := d.src.statfs("/")
+	return usage{total: total, used: used}, err
+}
+
+func (d *darwinHost) diskMounts(*execSnapshot) ([]mountEntry, error) {
+	recs, err := d.src.mounts()
+	if err != nil {
+		return nil, err
+	}
+	return darwinMountEntries(recs), nil
+}
+
+// mountUsage 只对 darwinMountEntries 判为合格的本地卷调用；darwin 的挂载点必是目录（mount(2) 对非目录报 ENOTDIR），
+// 不另查。
+func (d *darwinHost) mountUsage(p string) (usage, error) {
+	total, used, err := d.src.statfs(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return usage{}, errMountGone
+	}
 	return usage{total: total, used: used}, err
 }
 
@@ -344,4 +365,77 @@ func parseIfmibData(b []byte) (ifaceCounters, error) {
 	}
 	d := b[ifmibDataOffset:]
 	return ifaceCounters{name: name, rx: binary.LittleEndian.Uint64(d[64:]), tx: binary.LittleEndian.Uint64(d[72:])}, nil
+}
+
+// fsstatRecord 是 getfsstat 一项里选盘要用的字段，取自 <sys/mount.h> 的 struct statfs。
+type fsstatRecord struct {
+	mntOn, mntFrom, fsType string
+	flags                  uint32
+	fsid                   [2]int32
+}
+
+// <sys/mount.h> 的挂载标志（MacOSX SDK 26.5）。
+const (
+	darwinMntRdonly     = 0x00000001 // MNT_RDONLY
+	darwinMntLocal      = 0x00001000 // MNT_LOCAL
+	darwinMntDontBrowse = 0x00100000 // MNT_DONTBROWSE
+)
+
+// darwinLocalFS 是 darwin 上本地持久化文件系统的白名单；darwinRemoteFS 是路径穿过它就可能等远端应答的类型
+// （另加 "fuse" 前缀，见 remoteFS）。
+var (
+	darwinLocalFS  = map[string]bool{"apfs": true, "hfs": true}
+	darwinRemoteFS = map[string]bool{"nfs": true, "smbfs": true, "afpfs": true, "webdav": true, "ftp": true, "autofs": true, "macfuse": true, "osxfuse": true}
+)
+
+// darwinMountEntries 把 getfsstat 的挂载表变成候选挂载点。除根之外，要求白名单类型、MNT_LOCAL、可写、
+// 不带 MNT_DONTBROWSE、路径可上报，且不在远端挂载之下。
+//
+// MNT_DONTBROWSE 是系统给不该出现在 Finder 里的卷打的标记：/System/Volumes 下的 VM、Preboot、Update、xarts、
+// Hardware 等系统卷都带它。数据卷 /System/Volumes/Data 也带，但它与根在同一个 APFS 容器里，容器的用量已经由根报出。
+//
+// APFS 的卷共享所在容器的空间：statfs 对容器内每个卷给出同一组块数与空闲块（statfsUsage），所以按容器归并，
+// 容器取自来源设备名（/dev/disk3s5、快照 /dev/disk3s1s1 都属于容器 disk3）。
+func darwinMountEntries(recs []fsstatRecord) []mountEntry {
+	var out []mountEntry
+	var remote []string
+	for _, r := range recs {
+		e := mountEntry{path: r.mntOn, devKey: fmt.Sprintf("fsid:%d:%d", r.fsid[0], r.fsid[1])}
+		switch {
+		case r.fsType == "apfs":
+			if c := apfsContainer(r.mntFrom); c != "" {
+				e.poolKey = "apfs:" + c
+			}
+		case strings.HasPrefix(r.mntFrom, "/dev/"):
+			e.poolKey = "src:" + r.mntFrom
+		}
+		e.eligible = r.mntOn == "/" || darwinLocalFS[r.fsType] && r.flags&darwinMntLocal != 0 &&
+			r.flags&darwinMntRdonly == 0 && r.flags&darwinMntDontBrowse == 0
+		if remoteFS(darwinRemoteFS, r.fsType) {
+			remote = append(remote, r.mntOn)
+		}
+		out = append(out, e)
+	}
+	for i := range out {
+		if out[i].path != "/" && (underAny(out[i].path, remote) || agentwire.ValidateDiskMountPath(out[i].path) != nil) {
+			out[i].eligible = false
+		}
+	}
+	return out
+}
+
+// apfsContainer 从 APFS 卷的来源设备名取容器的整盘名："/dev/disk3s1s1" 得 "/dev/disk3"；认不出时返回空串。
+func apfsContainer(from string) string {
+	rest, ok := strings.CutPrefix(from, "/dev/disk")
+	if !ok {
+		return ""
+	}
+	n := 0
+	for n < len(rest) && rest[n] >= '0' && rest[n] <= '9' {
+		n++
+	}
+	if n == 0 || n == len(rest) || rest[n] != 's' {
+		return ""
+	}
+	return "/dev/disk" + rest[:n]
 }

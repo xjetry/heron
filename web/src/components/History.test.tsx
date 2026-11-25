@@ -67,7 +67,7 @@ it.each([
     queryProbes: async () => ({ level: "1m", stepS: 60, series: [] }),
   };
   if (surface === "管理") {
-    renderWithAdmin({ ...queries, getSnapshot: async () => ({ nodes: [] }), listTags: async () => ({ tags: [] }), listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
+    renderWithAdmin({ ...queries, getSnapshot: async () => ({ nodes: [] }), getNodeDisks: async () => ({}), listTags: async () => ({ tags: [] }), listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   } else {
     renderWithService(PublicService, { ...queries, getSnapshot: async () => ({ nodes: [{ id: 7n, name: "node" }] }) },
@@ -153,7 +153,7 @@ function renderHistory(surface: "管理" | "公开", summary?: MessageInitShape<
     queryProbes: async () => ({ level: "1m", stepS: 60, series: [] }),
   };
   if (surface === "管理") {
-    renderWithAdmin({ ...queries, getSnapshot: async () => ({ nodes: [] }), listTags: async () => ({ tags: [] }), listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
+    renderWithAdmin({ ...queries, getSnapshot: async () => ({ nodes: [] }), getNodeDisks: async () => ({}), listTags: async () => ({ tags: [] }), listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
       [{ path: "/nodes/:id", Component: omitCoverage ? GuardedNodeDetail : NodeDetail }], "/nodes/7");
   } else {
     renderWithService(PublicService, { ...queries, getSnapshot: async () => ({ nodes: [{ id: 7n, name: "node" }] }) },

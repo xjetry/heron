@@ -19,6 +19,9 @@ type Root interface {
 	FSType(name string) (uint64, error)
 	// Usage 取根目录所在文件系统的总量与已用量（字节），口径见 statfsUsage。
 	Usage() (total, used uint64, err error)
+	// MountUsage 取目录 name 所在文件系统的总量与已用量，口径同 Usage；name 不是目录时报 syscall.ENOTDIR，
+	// 不存在时报 fs.ErrNotExist。
+	MountUsage(name string) (total, used uint64, err error)
 	Close() error
 }
 

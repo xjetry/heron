@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,6 +166,59 @@ func TestConfigureListsAndValidation(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(cfgPath); !bytes.Equal(before, after) {
 		t.Fatalf("a rejected configure changed the file:\n%s\n%s", before, after)
+	}
+}
+
+// --disk-exclude 写进配置、空串清空、只改它；不以 / 开头的规则按 run 的同一准入拒绝，文件不变。
+func TestConfigureDiskExclude(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := agentconfig.Save(cfgPath, agentconfig.Config{Hub: "https://h", Token: "t", ProbeDeny: []string{"10.9.0.0/16"}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := configure(t, cfgPath, "--disk-exclude", "/mnt/*, /srv/backup")
+	if err != nil || !strings.Contains(out, "disk_exclude=[/mnt/* /srv/backup]") {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	cfg, err := client.LoadConfig(cfgPath)
+	if err != nil || !slices.Equal(cfg.DiskExclude, []string{"/mnt/*", "/srv/backup"}) || !slices.Equal(cfg.ProbeDeny, []string{"10.9.0.0/16"}) || cfg.Token != "t" {
+		t.Fatalf("cfg=%+v err=%v", cfg, err)
+	}
+	before, _ := os.ReadFile(cfgPath)
+	for _, bad := range []string{"mnt/*", "/mnt/["} {
+		if _, err := configure(t, cfgPath, "--disk-exclude", bad); err == nil || !strings.Contains(err.Error(), "disk_exclude") {
+			t.Errorf("%q: err = %v", bad, err)
+		}
+	}
+	if after, _ := os.ReadFile(cfgPath); !bytes.Equal(before, after) {
+		t.Fatalf("a rejected configure changed the file:\n%s\n%s", before, after)
+	}
+	if _, err := configure(t, cfgPath, "--disk-exclude", ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := client.LoadConfig(cfgPath); cfg.DiskExclude != nil {
+		t.Fatalf("empty --disk-exclude must clear: %+v", cfg)
+	}
+}
+
+// run 的 --disk-exclude 显式给出（含空串）即替换配置里的规则，没给出时用配置里的。
+func TestRunDiskExcludePrecedence(t *testing.T) {
+	cfg := agentconfig.Config{DiskExclude: []string{"/from-config"}}
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{nil, []string{"/from-config"}},
+		{[]string{"--disk-exclude", "/a,/b"}, []string{"/a", "/b"}},
+		{[]string{"--disk-exclude", ""}, nil},
+	} {
+		fs := flag.NewFlagSet("run", flag.ContinueOnError)
+		v := fs.String("disk-exclude", "", "")
+		if err := fs.Parse(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		if got := diskExcludeFor(cfg, fs, *v); !slices.Equal(got, tc.want) {
+			t.Errorf("%v: got %v, want %v", tc.args, got, tc.want)
+		}
 	}
 }
 

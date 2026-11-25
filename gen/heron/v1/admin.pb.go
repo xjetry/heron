@@ -12683,6 +12683,122 @@ func (x *ListNotifyChannelRefsResponse) GetChannels() []*NotifyChannelRef {
 	return nil
 }
 
+type GetNodeDisksRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeDisksRequest) Reset() {
+	*x = GetNodeDisksRequest{}
+	mi := &file_heron_v1_admin_proto_msgTypes[192]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeDisksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeDisksRequest) ProtoMessage() {}
+
+func (x *GetNodeDisksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[192]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeDisksRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeDisksRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{192}
+}
+
+func (x *GetNodeDisksRequest) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+type GetNodeDisksResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 与 ReportRequest.disk_mounts 相同的排序与截断：使用率降序、同使用率按路径升序，至多 16 项。
+	Mounts []*DiskMountUsage `protobuf:"bytes,1,rep,name=mounts,proto3" json:"mounts,omitempty"`
+	// 截断前的总数；0 表示最近一次上报没有逐盘读数（采集失败或 agent 版本不提供）。
+	Total uint32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	// 携带这份读数的上报到达 hub 的墙钟 Unix 秒；hub 启动后还没收到该节点的上报时缺失。
+	SampledAt *int64 `protobuf:"varint,3,opt,name=sampled_at,json=sampledAt,proto3,oneof" json:"sampled_at,omitempty"`
+	// 与 GetSnapshot 同一在线判定：离线节点仍返回最后一次读数，由调用方按 online 标注。
+	Online        bool `protobuf:"varint,4,opt,name=online,proto3" json:"online,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeDisksResponse) Reset() {
+	*x = GetNodeDisksResponse{}
+	mi := &file_heron_v1_admin_proto_msgTypes[193]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeDisksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeDisksResponse) ProtoMessage() {}
+
+func (x *GetNodeDisksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[193]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeDisksResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeDisksResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{193}
+}
+
+func (x *GetNodeDisksResponse) GetMounts() []*DiskMountUsage {
+	if x != nil {
+		return x.Mounts
+	}
+	return nil
+}
+
+func (x *GetNodeDisksResponse) GetTotal() uint32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *GetNodeDisksResponse) GetSampledAt() int64 {
+	if x != nil && x.SampledAt != nil {
+		return *x.SampledAt
+	}
+	return 0
+}
+
+func (x *GetNodeDisksResponse) GetOnline() bool {
+	if x != nil {
+		return x.Online
+	}
+	return false
+}
+
 var File_heron_v1_admin_proto protoreflect.FileDescriptor
 
 const file_heron_v1_admin_proto_rawDesc = "" +
@@ -13546,7 +13662,16 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12)\n" +
 	"\x04kind\x18\x03 \x01(\x0e2\x15.heron.v1.ChannelKindR\x04kind\"W\n" +
 	"\x1dListNotifyChannelRefsResponse\x126\n" +
-	"\bchannels\x18\x01 \x03(\v2\x1a.heron.v1.NotifyChannelRefR\bchannels*\xd4\x03\n" +
+	"\bchannels\x18\x01 \x03(\v2\x1a.heron.v1.NotifyChannelRefR\bchannels\".\n" +
+	"\x13GetNodeDisksRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\"\xa9\x01\n" +
+	"\x14GetNodeDisksResponse\x120\n" +
+	"\x06mounts\x18\x01 \x03(\v2\x18.heron.v1.DiskMountUsageR\x06mounts\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\rR\x05total\x12\"\n" +
+	"\n" +
+	"sampled_at\x18\x03 \x01(\x03H\x00R\tsampledAt\x88\x01\x01\x12\x16\n" +
+	"\x06online\x18\x04 \x01(\bR\x06onlineB\r\n" +
+	"\v_sampled_at*\xd4\x03\n" +
 	"\x12SecurityActionKind\x12$\n" +
 	" SECURITY_ACTION_KIND_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fSECURITY_ACTION_KIND_TOTP_BEGIN\x10\x01\x12$\n" +
@@ -13631,7 +13756,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x19TOKEN_PERMISSION_REGISTER\x10\x03\x12\x1b\n" +
 	"\x17TOKEN_PERMISSION_ROTATE\x10\x04\x12\x1b\n" +
 	"\x17TOKEN_PERMISSION_DELETE\x10\x05\x12\x1b\n" +
-	"\x17TOKEN_PERMISSION_UPDATE\x10\x062\xbc6\n" +
+	"\x17TOKEN_PERMISSION_UPDATE\x10\x062\x917\n" +
 	"\fAdminService\x12V\n" +
 	"\rExecuteChange\x12\x1e.heron.v1.ExecuteChangeRequest\x1a\x1f.heron.v1.ExecuteChangeResponse\"\x04\x88\xb5\x18\x04\x12Y\n" +
 	"\x0eListOperations\x12\x1f.heron.v1.ListOperationsRequest\x1a .heron.v1.ListOperationsResponse\"\x04\x88\xb5\x18\x02\x12n\n" +
@@ -13714,7 +13839,8 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x0eUpdateApiToken\x12\x1f.heron.v1.UpdateApiTokenRequest\x1a .heron.v1.UpdateApiTokenResponse\"\x04\x88\xb5\x18\x03\x12Y\n" +
 	"\x0eDeleteApiToken\x12\x1f.heron.v1.DeleteApiTokenRequest\x1a .heron.v1.DeleteApiTokenResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
 	"\x0fGetApiReference\x12 .heron.v1.GetApiReferenceRequest\x1a!.heron.v1.GetApiReferenceResponse\"\x04\x88\xb5\x18\x02\x12J\n" +
-	"\tGetCaller\x12\x1a.heron.v1.GetCallerRequest\x1a\x1b.heron.v1.GetCallerResponse\"\x04\x88\xb5\x18\x02B.Z,github.com/xjetry/heron/gen/heron/v1;heronv1b\x06proto3"
+	"\tGetCaller\x12\x1a.heron.v1.GetCallerRequest\x1a\x1b.heron.v1.GetCallerResponse\"\x04\x88\xb5\x18\x02\x12S\n" +
+	"\fGetNodeDisks\x12\x1d.heron.v1.GetNodeDisksRequest\x1a\x1e.heron.v1.GetNodeDisksResponse\"\x04\x88\xb5\x18\x02B.Z,github.com/xjetry/heron/gen/heron/v1;heronv1b\x06proto3"
 
 var (
 	file_heron_v1_admin_proto_rawDescOnce sync.Once
@@ -13729,7 +13855,7 @@ func file_heron_v1_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_heron_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 14)
-var file_heron_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 193)
+var file_heron_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 195)
 var file_heron_v1_admin_proto_goTypes = []any{
 	(SecurityActionKind)(0),                  // 0: heron.v1.SecurityActionKind
 	(AddressSource)(0),                       // 1: heron.v1.AddressSource
@@ -13937,68 +14063,71 @@ var file_heron_v1_admin_proto_goTypes = []any{
 	(*ListNotifyChannelRefsRequest)(nil),     // 203: heron.v1.ListNotifyChannelRefsRequest
 	(*NotifyChannelRef)(nil),                 // 204: heron.v1.NotifyChannelRef
 	(*ListNotifyChannelRefsResponse)(nil),    // 205: heron.v1.ListNotifyChannelRefsResponse
-	nil,                                      // 206: heron.v1.WebhookConfig.HeadersEntry
-	(*UpdateTarget)(nil),                     // 207: heron.v1.UpdateTarget
-	(*UpdateTask)(nil),                       // 208: heron.v1.UpdateTask
-	(*Facts)(nil),                            // 209: heron.v1.Facts
-	(*Billing)(nil),                          // 210: heron.v1.Billing
-	(TrafficQuotaMode)(0),                    // 211: heron.v1.TrafficQuotaMode
-	(AddressDetectionState)(0),               // 212: heron.v1.AddressDetectionState
-	(*Metrics)(nil),                          // 213: heron.v1.Metrics
-	(*Traffic)(nil),                          // 214: heron.v1.Traffic
-	(*ProbeTask)(nil),                        // 215: heron.v1.ProbeTask
-	(*emptypb.Empty)(nil),                    // 216: google.protobuf.Empty
-	(PresentedReason)(0),                     // 217: heron.v1.PresentedReason
-	(*fieldmaskpb.FieldMask)(nil),            // 218: google.protobuf.FieldMask
-	(*anypb.Any)(nil),                        // 219: google.protobuf.Any
-	(*QueryMetricsRequest)(nil),              // 220: heron.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),               // 221: heron.v1.QueryProbesRequest
-	(*ListProbeComparisonNodesRequest)(nil),  // 222: heron.v1.ListProbeComparisonNodesRequest
-	(*QueryProbeComparisonRequest)(nil),      // 223: heron.v1.QueryProbeComparisonRequest
-	(*QueryMetricsResponse)(nil),             // 224: heron.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),              // 225: heron.v1.QueryProbesResponse
-	(*ListProbeComparisonNodesResponse)(nil), // 226: heron.v1.ListProbeComparisonNodesResponse
-	(*QueryProbeComparisonResponse)(nil),     // 227: heron.v1.QueryProbeComparisonResponse
+	(*GetNodeDisksRequest)(nil),              // 206: heron.v1.GetNodeDisksRequest
+	(*GetNodeDisksResponse)(nil),             // 207: heron.v1.GetNodeDisksResponse
+	nil,                                      // 208: heron.v1.WebhookConfig.HeadersEntry
+	(*UpdateTarget)(nil),                     // 209: heron.v1.UpdateTarget
+	(*UpdateTask)(nil),                       // 210: heron.v1.UpdateTask
+	(*Facts)(nil),                            // 211: heron.v1.Facts
+	(*Billing)(nil),                          // 212: heron.v1.Billing
+	(TrafficQuotaMode)(0),                    // 213: heron.v1.TrafficQuotaMode
+	(AddressDetectionState)(0),               // 214: heron.v1.AddressDetectionState
+	(*Metrics)(nil),                          // 215: heron.v1.Metrics
+	(*Traffic)(nil),                          // 216: heron.v1.Traffic
+	(*ProbeTask)(nil),                        // 217: heron.v1.ProbeTask
+	(*emptypb.Empty)(nil),                    // 218: google.protobuf.Empty
+	(PresentedReason)(0),                     // 219: heron.v1.PresentedReason
+	(*fieldmaskpb.FieldMask)(nil),            // 220: google.protobuf.FieldMask
+	(*anypb.Any)(nil),                        // 221: google.protobuf.Any
+	(*DiskMountUsage)(nil),                   // 222: heron.v1.DiskMountUsage
+	(*QueryMetricsRequest)(nil),              // 223: heron.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),               // 224: heron.v1.QueryProbesRequest
+	(*ListProbeComparisonNodesRequest)(nil),  // 225: heron.v1.ListProbeComparisonNodesRequest
+	(*QueryProbeComparisonRequest)(nil),      // 226: heron.v1.QueryProbeComparisonRequest
+	(*QueryMetricsResponse)(nil),             // 227: heron.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),              // 228: heron.v1.QueryProbesResponse
+	(*ListProbeComparisonNodesResponse)(nil), // 229: heron.v1.ListProbeComparisonNodesResponse
+	(*QueryProbeComparisonResponse)(nil),     // 230: heron.v1.QueryProbeComparisonResponse
 }
 var file_heron_v1_admin_proto_depIdxs = []int32{
-	207, // 0: heron.v1.GetUpdatesResponse.targets:type_name -> heron.v1.UpdateTarget
-	208, // 1: heron.v1.StartUpdateResponse.task:type_name -> heron.v1.UpdateTask
+	209, // 0: heron.v1.GetUpdatesResponse.targets:type_name -> heron.v1.UpdateTarget
+	210, // 1: heron.v1.StartUpdateResponse.task:type_name -> heron.v1.UpdateTask
 	27,  // 2: heron.v1.GetSecurityResponse.passkeys:type_name -> heron.v1.SecurityCredential
 	0,   // 3: heron.v1.SecurityActionRequest.action:type_name -> heron.v1.SecurityActionKind
 	33,  // 4: heron.v1.ListSessionsResponse.sessions:type_name -> heron.v1.Session
-	209, // 5: heron.v1.Node.facts:type_name -> heron.v1.Facts
-	210, // 6: heron.v1.Node.billing:type_name -> heron.v1.Billing
+	211, // 5: heron.v1.Node.facts:type_name -> heron.v1.Facts
+	212, // 6: heron.v1.Node.billing:type_name -> heron.v1.Billing
 	2,   // 7: heron.v1.Node.country_source:type_name -> heron.v1.CountrySource
-	211, // 8: heron.v1.Node.traffic_quota_mode:type_name -> heron.v1.TrafficQuotaMode
+	213, // 8: heron.v1.Node.traffic_quota_mode:type_name -> heron.v1.TrafficQuotaMode
 	39,  // 9: heron.v1.Node.network:type_name -> heron.v1.NodeNetwork
 	40,  // 10: heron.v1.NodeNetwork.ipv4:type_name -> heron.v1.NodeAddress
 	40,  // 11: heron.v1.NodeNetwork.ipv6:type_name -> heron.v1.NodeAddress
 	1,   // 12: heron.v1.NodeAddress.source:type_name -> heron.v1.AddressSource
-	212, // 13: heron.v1.NodeAddress.state:type_name -> heron.v1.AddressDetectionState
+	214, // 13: heron.v1.NodeAddress.state:type_name -> heron.v1.AddressDetectionState
 	38,  // 14: heron.v1.ListNodesResponse.nodes:type_name -> heron.v1.Node
-	210, // 15: heron.v1.CreateNodeRequest.billing:type_name -> heron.v1.Billing
+	212, // 15: heron.v1.CreateNodeRequest.billing:type_name -> heron.v1.Billing
 	38,  // 16: heron.v1.CreateNodeResponse.node:type_name -> heron.v1.Node
-	210, // 17: heron.v1.UpdateNodeRequest.billing:type_name -> heron.v1.Billing
-	211, // 18: heron.v1.UpdateNodeRequest.traffic_quota_mode:type_name -> heron.v1.TrafficQuotaMode
+	212, // 17: heron.v1.UpdateNodeRequest.billing:type_name -> heron.v1.Billing
+	213, // 18: heron.v1.UpdateNodeRequest.traffic_quota_mode:type_name -> heron.v1.TrafficQuotaMode
 	38,  // 19: heron.v1.UpdateNodeResponse.node:type_name -> heron.v1.Node
 	38,  // 20: heron.v1.RenewNodeBillingResponse.node:type_name -> heron.v1.Node
 	59,  // 21: heron.v1.ListTagsResponse.tags:type_name -> heron.v1.Tag
 	72,  // 22: heron.v1.GetSnapshotResponse.nodes:type_name -> heron.v1.NodeStatus
-	213, // 23: heron.v1.NodeStatus.metrics:type_name -> heron.v1.Metrics
-	214, // 24: heron.v1.NodeStatus.traffic:type_name -> heron.v1.Traffic
+	215, // 23: heron.v1.NodeStatus.metrics:type_name -> heron.v1.Metrics
+	216, // 24: heron.v1.NodeStatus.traffic:type_name -> heron.v1.Traffic
 	75,  // 25: heron.v1.GetTrafficResponse.nodes:type_name -> heron.v1.NodeTraffic
-	214, // 26: heron.v1.NodeTraffic.traffic:type_name -> heron.v1.Traffic
-	214, // 27: heron.v1.AdjustTrafficResponse.traffic:type_name -> heron.v1.Traffic
-	215, // 28: heron.v1.ProbeTaskDetail.task:type_name -> heron.v1.ProbeTask
+	216, // 26: heron.v1.NodeTraffic.traffic:type_name -> heron.v1.Traffic
+	216, // 27: heron.v1.AdjustTrafficResponse.traffic:type_name -> heron.v1.Traffic
+	217, // 28: heron.v1.ProbeTaskDetail.task:type_name -> heron.v1.ProbeTask
 	78,  // 29: heron.v1.ListProbeTasksResponse.tasks:type_name -> heron.v1.ProbeTaskDetail
-	215, // 30: heron.v1.SaveProbeTaskRequest.task:type_name -> heron.v1.ProbeTask
+	217, // 30: heron.v1.SaveProbeTaskRequest.task:type_name -> heron.v1.ProbeTask
 	82,  // 31: heron.v1.SaveProbeTaskRequest.cert_pin:type_name -> heron.v1.CertPinChange
-	216, // 32: heron.v1.CertPinChange.clear:type_name -> google.protobuf.Empty
+	218, // 32: heron.v1.CertPinChange.clear:type_name -> google.protobuf.Empty
 	78,  // 33: heron.v1.SaveProbeTaskResponse.task:type_name -> heron.v1.ProbeTaskDetail
 	86,  // 34: heron.v1.ListProbeCertificatesResponse.nodes:type_name -> heron.v1.NodeProbeCertificate
 	87,  // 35: heron.v1.NodeProbeCertificate.current:type_name -> heron.v1.ProbeCertificateObservation
 	88,  // 36: heron.v1.NodeProbeCertificate.candidate:type_name -> heron.v1.ProbeCertificateCandidate
-	217, // 37: heron.v1.ProbeCertificateCandidate.reason:type_name -> heron.v1.PresentedReason
+	219, // 37: heron.v1.ProbeCertificateCandidate.reason:type_name -> heron.v1.PresentedReason
 	3,   // 38: heron.v1.AlertRule.kind:type_name -> heron.v1.AlertKind
 	5,   // 39: heron.v1.AlertRule.metric:type_name -> heron.v1.ProbeMetric
 	4,   // 40: heron.v1.AlertRule.resource_metric:type_name -> heron.v1.ResourceMetric
@@ -14016,7 +14145,7 @@ var file_heron_v1_admin_proto_depIdxs = []int32{
 	9,   // 52: heron.v1.NotifyChannel.kind:type_name -> heron.v1.ChannelKind
 	110, // 53: heron.v1.NotifyChannel.telegram:type_name -> heron.v1.TelegramConfig
 	111, // 54: heron.v1.NotifyChannel.webhook:type_name -> heron.v1.WebhookConfig
-	206, // 55: heron.v1.WebhookConfig.headers:type_name -> heron.v1.WebhookConfig.HeadersEntry
+	208, // 55: heron.v1.WebhookConfig.headers:type_name -> heron.v1.WebhookConfig.HeadersEntry
 	109, // 56: heron.v1.ListNotifyChannelsResponse.channels:type_name -> heron.v1.NotifyChannel
 	109, // 57: heron.v1.SaveNotifyChannelRequest.channel:type_name -> heron.v1.NotifyChannel
 	109, // 58: heron.v1.SaveNotifyChannelResponse.channel:type_name -> heron.v1.NotifyChannel
@@ -14063,7 +14192,7 @@ var file_heron_v1_admin_proto_depIdxs = []int32{
 	182, // 99: heron.v1.GetCallerResponse.api_token:type_name -> heron.v1.ApiToken
 	196, // 100: heron.v1.GetApiReferenceResponse.files:type_name -> heron.v1.ProtoFile
 	13,  // 101: heron.v1.TokenGrant.permissions:type_name -> heron.v1.TokenPermission
-	218, // 102: heron.v1.ExecuteChangeRequest.update_mask:type_name -> google.protobuf.FieldMask
+	220, // 102: heron.v1.ExecuteChangeRequest.update_mask:type_name -> google.protobuf.FieldMask
 	43,  // 103: heron.v1.ExecuteChangeRequest.create_node:type_name -> heron.v1.CreateNodeRequest
 	45,  // 104: heron.v1.ExecuteChangeRequest.update_node:type_name -> heron.v1.UpdateNodeRequest
 	51,  // 105: heron.v1.ExecuteChangeRequest.delete_node:type_name -> heron.v1.DeleteNodeRequest
@@ -14079,167 +14208,170 @@ var file_heron_v1_admin_proto_depIdxs = []int32{
 	62,  // 115: heron.v1.ExecuteChangeRequest.delete_tag:type_name -> heron.v1.DeleteTagRequest
 	47,  // 116: heron.v1.ExecuteChangeRequest.renew_node_billing:type_name -> heron.v1.RenewNodeBillingRequest
 	199, // 117: heron.v1.ExecuteChangeResponse.operation:type_name -> heron.v1.Operation
-	219, // 118: heron.v1.ExecuteChangeResponse.result:type_name -> google.protobuf.Any
+	221, // 118: heron.v1.ExecuteChangeResponse.result:type_name -> google.protobuf.Any
 	199, // 119: heron.v1.ListOperationsResponse.operations:type_name -> heron.v1.Operation
 	9,   // 120: heron.v1.NotifyChannelRef.kind:type_name -> heron.v1.ChannelKind
 	204, // 121: heron.v1.ListNotifyChannelRefsResponse.channels:type_name -> heron.v1.NotifyChannelRef
-	198, // 122: heron.v1.AdminService.ExecuteChange:input_type -> heron.v1.ExecuteChangeRequest
-	201, // 123: heron.v1.AdminService.ListOperations:input_type -> heron.v1.ListOperationsRequest
-	203, // 124: heron.v1.AdminService.ListNotifyChannelRefs:input_type -> heron.v1.ListNotifyChannelRefsRequest
-	14,  // 125: heron.v1.AdminService.GetUpdates:input_type -> heron.v1.GetUpdatesRequest
-	16,  // 126: heron.v1.AdminService.StartUpdate:input_type -> heron.v1.StartUpdateRequest
-	18,  // 127: heron.v1.AdminService.CancelUpdate:input_type -> heron.v1.CancelUpdateRequest
-	20,  // 128: heron.v1.AdminService.Login:input_type -> heron.v1.LoginRequest
-	22,  // 129: heron.v1.AdminService.BeginPasskeyLogin:input_type -> heron.v1.BeginPasskeyLoginRequest
-	24,  // 130: heron.v1.AdminService.FinishPasskeyLogin:input_type -> heron.v1.FinishPasskeyLoginRequest
-	26,  // 131: heron.v1.AdminService.GetSecurity:input_type -> heron.v1.GetSecurityRequest
-	29,  // 132: heron.v1.AdminService.SecurityAction:input_type -> heron.v1.SecurityActionRequest
-	31,  // 133: heron.v1.AdminService.Logout:input_type -> heron.v1.LogoutRequest
-	34,  // 134: heron.v1.AdminService.ListSessions:input_type -> heron.v1.ListSessionsRequest
-	36,  // 135: heron.v1.AdminService.RevokeSession:input_type -> heron.v1.RevokeSessionRequest
-	41,  // 136: heron.v1.AdminService.ListNodes:input_type -> heron.v1.ListNodesRequest
-	43,  // 137: heron.v1.AdminService.CreateNode:input_type -> heron.v1.CreateNodeRequest
-	45,  // 138: heron.v1.AdminService.UpdateNode:input_type -> heron.v1.UpdateNodeRequest
-	47,  // 139: heron.v1.AdminService.RenewNodeBilling:input_type -> heron.v1.RenewNodeBillingRequest
-	49,  // 140: heron.v1.AdminService.BatchUpdateNodeTags:input_type -> heron.v1.BatchUpdateNodeTagsRequest
-	51,  // 141: heron.v1.AdminService.DeleteNode:input_type -> heron.v1.DeleteNodeRequest
-	53,  // 142: heron.v1.AdminService.RotateNodeToken:input_type -> heron.v1.RotateNodeTokenRequest
-	55,  // 143: heron.v1.AdminService.ReorderNodes:input_type -> heron.v1.ReorderNodesRequest
-	57,  // 144: heron.v1.AdminService.MoveNodes:input_type -> heron.v1.MoveNodesRequest
-	60,  // 145: heron.v1.AdminService.ListTags:input_type -> heron.v1.ListTagsRequest
-	62,  // 146: heron.v1.AdminService.DeleteTag:input_type -> heron.v1.DeleteTagRequest
-	64,  // 147: heron.v1.AdminService.OpenRegisterWindow:input_type -> heron.v1.OpenRegisterWindowRequest
-	66,  // 148: heron.v1.AdminService.CloseRegisterWindow:input_type -> heron.v1.CloseRegisterWindowRequest
-	68,  // 149: heron.v1.AdminService.GetRegisterWindow:input_type -> heron.v1.GetRegisterWindowRequest
-	70,  // 150: heron.v1.AdminService.GetSnapshot:input_type -> heron.v1.GetSnapshotRequest
-	220, // 151: heron.v1.AdminService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
-	73,  // 152: heron.v1.AdminService.GetTraffic:input_type -> heron.v1.GetTrafficRequest
-	76,  // 153: heron.v1.AdminService.AdjustTraffic:input_type -> heron.v1.AdjustTrafficRequest
-	79,  // 154: heron.v1.AdminService.ListProbeTasks:input_type -> heron.v1.ListProbeTasksRequest
-	81,  // 155: heron.v1.AdminService.SaveProbeTask:input_type -> heron.v1.SaveProbeTaskRequest
-	89,  // 156: heron.v1.AdminService.DeleteProbeTask:input_type -> heron.v1.DeleteProbeTaskRequest
-	91,  // 157: heron.v1.AdminService.ReorderProbeTasks:input_type -> heron.v1.ReorderProbeTasksRequest
-	221, // 158: heron.v1.AdminService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
-	222, // 159: heron.v1.AdminService.ListProbeComparisonNodes:input_type -> heron.v1.ListProbeComparisonNodesRequest
-	223, // 160: heron.v1.AdminService.QueryProbeComparison:input_type -> heron.v1.QueryProbeComparisonRequest
-	84,  // 161: heron.v1.AdminService.ListProbeCertificates:input_type -> heron.v1.ListProbeCertificatesRequest
-	94,  // 162: heron.v1.AdminService.ListAlertRules:input_type -> heron.v1.ListAlertRulesRequest
-	97,  // 163: heron.v1.AdminService.SaveAlertRule:input_type -> heron.v1.SaveAlertRuleRequest
-	99,  // 164: heron.v1.AdminService.DeleteAlertRule:input_type -> heron.v1.DeleteAlertRuleRequest
-	102, // 165: heron.v1.AdminService.ListSilences:input_type -> heron.v1.ListSilencesRequest
-	105, // 166: heron.v1.AdminService.SaveSilence:input_type -> heron.v1.SaveSilenceRequest
-	107, // 167: heron.v1.AdminService.DeleteSilence:input_type -> heron.v1.DeleteSilenceRequest
-	176, // 168: heron.v1.AdminService.ListAlertEvents:input_type -> heron.v1.ListAlertEventsRequest
-	178, // 169: heron.v1.AdminService.GetAlertDeliveryError:input_type -> heron.v1.GetAlertDeliveryErrorRequest
-	112, // 170: heron.v1.AdminService.ListNotifyChannels:input_type -> heron.v1.ListNotifyChannelsRequest
-	114, // 171: heron.v1.AdminService.SaveNotifyChannel:input_type -> heron.v1.SaveNotifyChannelRequest
-	116, // 172: heron.v1.AdminService.DeleteNotifyChannel:input_type -> heron.v1.DeleteNotifyChannelRequest
-	118, // 173: heron.v1.AdminService.TestNotifyChannel:input_type -> heron.v1.TestNotifyChannelRequest
-	120, // 174: heron.v1.AdminService.PreviewAlertNotification:input_type -> heron.v1.PreviewAlertNotificationRequest
-	123, // 175: heron.v1.AdminService.TestAlertNotification:input_type -> heron.v1.TestAlertNotificationRequest
-	134, // 176: heron.v1.AdminService.GetSettings:input_type -> heron.v1.GetSettingsRequest
-	136, // 177: heron.v1.AdminService.GetBackupStatus:input_type -> heron.v1.GetBackupStatusRequest
-	140, // 178: heron.v1.AdminService.ListRestoreRecords:input_type -> heron.v1.ListRestoreRecordsRequest
-	129, // 179: heron.v1.AdminService.GetHeartbeatStatus:input_type -> heron.v1.GetHeartbeatStatusRequest
-	145, // 180: heron.v1.AdminService.UpdateSettings:input_type -> heron.v1.UpdateSettingsRequest
-	148, // 181: heron.v1.AdminService.UploadTheme:input_type -> heron.v1.UploadThemeRequest
-	150, // 182: heron.v1.AdminService.ListThemes:input_type -> heron.v1.ListThemesRequest
-	152, // 183: heron.v1.AdminService.EnableTheme:input_type -> heron.v1.EnableThemeRequest
-	154, // 184: heron.v1.AdminService.DeleteTheme:input_type -> heron.v1.DeleteThemeRequest
-	156, // 185: heron.v1.AdminService.GetThemePreview:input_type -> heron.v1.GetThemePreviewRequest
-	158, // 186: heron.v1.AdminService.DeleteThemeVersion:input_type -> heron.v1.DeleteThemeVersionRequest
-	160, // 187: heron.v1.AdminService.ListThemeReleases:input_type -> heron.v1.ListThemeReleasesRequest
-	164, // 188: heron.v1.AdminService.InstallThemeRelease:input_type -> heron.v1.InstallThemeReleaseRequest
-	166, // 189: heron.v1.AdminService.PreviewTheme:input_type -> heron.v1.PreviewThemeRequest
-	168, // 190: heron.v1.AdminService.GetThemePackage:input_type -> heron.v1.GetThemePackageRequest
-	170, // 191: heron.v1.AdminService.GetStorageStats:input_type -> heron.v1.GetStorageStatsRequest
-	183, // 192: heron.v1.AdminService.ListApiTokens:input_type -> heron.v1.ListApiTokensRequest
-	185, // 193: heron.v1.AdminService.CreateApiToken:input_type -> heron.v1.CreateApiTokenRequest
-	186, // 194: heron.v1.AdminService.UpdateApiToken:input_type -> heron.v1.UpdateApiTokenRequest
-	189, // 195: heron.v1.AdminService.DeleteApiToken:input_type -> heron.v1.DeleteApiTokenRequest
-	194, // 196: heron.v1.AdminService.GetApiReference:input_type -> heron.v1.GetApiReferenceRequest
-	191, // 197: heron.v1.AdminService.GetCaller:input_type -> heron.v1.GetCallerRequest
-	200, // 198: heron.v1.AdminService.ExecuteChange:output_type -> heron.v1.ExecuteChangeResponse
-	202, // 199: heron.v1.AdminService.ListOperations:output_type -> heron.v1.ListOperationsResponse
-	205, // 200: heron.v1.AdminService.ListNotifyChannelRefs:output_type -> heron.v1.ListNotifyChannelRefsResponse
-	15,  // 201: heron.v1.AdminService.GetUpdates:output_type -> heron.v1.GetUpdatesResponse
-	17,  // 202: heron.v1.AdminService.StartUpdate:output_type -> heron.v1.StartUpdateResponse
-	19,  // 203: heron.v1.AdminService.CancelUpdate:output_type -> heron.v1.CancelUpdateResponse
-	21,  // 204: heron.v1.AdminService.Login:output_type -> heron.v1.LoginResponse
-	23,  // 205: heron.v1.AdminService.BeginPasskeyLogin:output_type -> heron.v1.BeginPasskeyLoginResponse
-	25,  // 206: heron.v1.AdminService.FinishPasskeyLogin:output_type -> heron.v1.FinishPasskeyLoginResponse
-	28,  // 207: heron.v1.AdminService.GetSecurity:output_type -> heron.v1.GetSecurityResponse
-	30,  // 208: heron.v1.AdminService.SecurityAction:output_type -> heron.v1.SecurityActionResponse
-	32,  // 209: heron.v1.AdminService.Logout:output_type -> heron.v1.LogoutResponse
-	35,  // 210: heron.v1.AdminService.ListSessions:output_type -> heron.v1.ListSessionsResponse
-	37,  // 211: heron.v1.AdminService.RevokeSession:output_type -> heron.v1.RevokeSessionResponse
-	42,  // 212: heron.v1.AdminService.ListNodes:output_type -> heron.v1.ListNodesResponse
-	44,  // 213: heron.v1.AdminService.CreateNode:output_type -> heron.v1.CreateNodeResponse
-	46,  // 214: heron.v1.AdminService.UpdateNode:output_type -> heron.v1.UpdateNodeResponse
-	48,  // 215: heron.v1.AdminService.RenewNodeBilling:output_type -> heron.v1.RenewNodeBillingResponse
-	50,  // 216: heron.v1.AdminService.BatchUpdateNodeTags:output_type -> heron.v1.BatchUpdateNodeTagsResponse
-	52,  // 217: heron.v1.AdminService.DeleteNode:output_type -> heron.v1.DeleteNodeResponse
-	54,  // 218: heron.v1.AdminService.RotateNodeToken:output_type -> heron.v1.RotateNodeTokenResponse
-	56,  // 219: heron.v1.AdminService.ReorderNodes:output_type -> heron.v1.ReorderNodesResponse
-	58,  // 220: heron.v1.AdminService.MoveNodes:output_type -> heron.v1.MoveNodesResponse
-	61,  // 221: heron.v1.AdminService.ListTags:output_type -> heron.v1.ListTagsResponse
-	63,  // 222: heron.v1.AdminService.DeleteTag:output_type -> heron.v1.DeleteTagResponse
-	65,  // 223: heron.v1.AdminService.OpenRegisterWindow:output_type -> heron.v1.OpenRegisterWindowResponse
-	67,  // 224: heron.v1.AdminService.CloseRegisterWindow:output_type -> heron.v1.CloseRegisterWindowResponse
-	69,  // 225: heron.v1.AdminService.GetRegisterWindow:output_type -> heron.v1.GetRegisterWindowResponse
-	71,  // 226: heron.v1.AdminService.GetSnapshot:output_type -> heron.v1.GetSnapshotResponse
-	224, // 227: heron.v1.AdminService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
-	74,  // 228: heron.v1.AdminService.GetTraffic:output_type -> heron.v1.GetTrafficResponse
-	77,  // 229: heron.v1.AdminService.AdjustTraffic:output_type -> heron.v1.AdjustTrafficResponse
-	80,  // 230: heron.v1.AdminService.ListProbeTasks:output_type -> heron.v1.ListProbeTasksResponse
-	83,  // 231: heron.v1.AdminService.SaveProbeTask:output_type -> heron.v1.SaveProbeTaskResponse
-	90,  // 232: heron.v1.AdminService.DeleteProbeTask:output_type -> heron.v1.DeleteProbeTaskResponse
-	92,  // 233: heron.v1.AdminService.ReorderProbeTasks:output_type -> heron.v1.ReorderProbeTasksResponse
-	225, // 234: heron.v1.AdminService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
-	226, // 235: heron.v1.AdminService.ListProbeComparisonNodes:output_type -> heron.v1.ListProbeComparisonNodesResponse
-	227, // 236: heron.v1.AdminService.QueryProbeComparison:output_type -> heron.v1.QueryProbeComparisonResponse
-	85,  // 237: heron.v1.AdminService.ListProbeCertificates:output_type -> heron.v1.ListProbeCertificatesResponse
-	95,  // 238: heron.v1.AdminService.ListAlertRules:output_type -> heron.v1.ListAlertRulesResponse
-	98,  // 239: heron.v1.AdminService.SaveAlertRule:output_type -> heron.v1.SaveAlertRuleResponse
-	100, // 240: heron.v1.AdminService.DeleteAlertRule:output_type -> heron.v1.DeleteAlertRuleResponse
-	103, // 241: heron.v1.AdminService.ListSilences:output_type -> heron.v1.ListSilencesResponse
-	106, // 242: heron.v1.AdminService.SaveSilence:output_type -> heron.v1.SaveSilenceResponse
-	108, // 243: heron.v1.AdminService.DeleteSilence:output_type -> heron.v1.DeleteSilenceResponse
-	177, // 244: heron.v1.AdminService.ListAlertEvents:output_type -> heron.v1.ListAlertEventsResponse
-	179, // 245: heron.v1.AdminService.GetAlertDeliveryError:output_type -> heron.v1.GetAlertDeliveryErrorResponse
-	113, // 246: heron.v1.AdminService.ListNotifyChannels:output_type -> heron.v1.ListNotifyChannelsResponse
-	115, // 247: heron.v1.AdminService.SaveNotifyChannel:output_type -> heron.v1.SaveNotifyChannelResponse
-	117, // 248: heron.v1.AdminService.DeleteNotifyChannel:output_type -> heron.v1.DeleteNotifyChannelResponse
-	119, // 249: heron.v1.AdminService.TestNotifyChannel:output_type -> heron.v1.TestNotifyChannelResponse
-	122, // 250: heron.v1.AdminService.PreviewAlertNotification:output_type -> heron.v1.PreviewAlertNotificationResponse
-	125, // 251: heron.v1.AdminService.TestAlertNotification:output_type -> heron.v1.TestAlertNotificationResponse
-	135, // 252: heron.v1.AdminService.GetSettings:output_type -> heron.v1.GetSettingsResponse
-	137, // 253: heron.v1.AdminService.GetBackupStatus:output_type -> heron.v1.GetBackupStatusResponse
-	141, // 254: heron.v1.AdminService.ListRestoreRecords:output_type -> heron.v1.ListRestoreRecordsResponse
-	130, // 255: heron.v1.AdminService.GetHeartbeatStatus:output_type -> heron.v1.GetHeartbeatStatusResponse
-	146, // 256: heron.v1.AdminService.UpdateSettings:output_type -> heron.v1.UpdateSettingsResponse
-	149, // 257: heron.v1.AdminService.UploadTheme:output_type -> heron.v1.UploadThemeResponse
-	151, // 258: heron.v1.AdminService.ListThemes:output_type -> heron.v1.ListThemesResponse
-	153, // 259: heron.v1.AdminService.EnableTheme:output_type -> heron.v1.EnableThemeResponse
-	155, // 260: heron.v1.AdminService.DeleteTheme:output_type -> heron.v1.DeleteThemeResponse
-	157, // 261: heron.v1.AdminService.GetThemePreview:output_type -> heron.v1.GetThemePreviewResponse
-	159, // 262: heron.v1.AdminService.DeleteThemeVersion:output_type -> heron.v1.DeleteThemeVersionResponse
-	163, // 263: heron.v1.AdminService.ListThemeReleases:output_type -> heron.v1.ListThemeReleasesResponse
-	165, // 264: heron.v1.AdminService.InstallThemeRelease:output_type -> heron.v1.InstallThemeReleaseResponse
-	167, // 265: heron.v1.AdminService.PreviewTheme:output_type -> heron.v1.PreviewThemeResponse
-	169, // 266: heron.v1.AdminService.GetThemePackage:output_type -> heron.v1.GetThemePackageResponse
-	171, // 267: heron.v1.AdminService.GetStorageStats:output_type -> heron.v1.GetStorageStatsResponse
-	184, // 268: heron.v1.AdminService.ListApiTokens:output_type -> heron.v1.ListApiTokensResponse
-	188, // 269: heron.v1.AdminService.CreateApiToken:output_type -> heron.v1.CreateApiTokenResponse
-	187, // 270: heron.v1.AdminService.UpdateApiToken:output_type -> heron.v1.UpdateApiTokenResponse
-	190, // 271: heron.v1.AdminService.DeleteApiToken:output_type -> heron.v1.DeleteApiTokenResponse
-	195, // 272: heron.v1.AdminService.GetApiReference:output_type -> heron.v1.GetApiReferenceResponse
-	192, // 273: heron.v1.AdminService.GetCaller:output_type -> heron.v1.GetCallerResponse
-	198, // [198:274] is the sub-list for method output_type
-	122, // [122:198] is the sub-list for method input_type
-	122, // [122:122] is the sub-list for extension type_name
-	122, // [122:122] is the sub-list for extension extendee
-	0,   // [0:122] is the sub-list for field type_name
+	222, // 122: heron.v1.GetNodeDisksResponse.mounts:type_name -> heron.v1.DiskMountUsage
+	198, // 123: heron.v1.AdminService.ExecuteChange:input_type -> heron.v1.ExecuteChangeRequest
+	201, // 124: heron.v1.AdminService.ListOperations:input_type -> heron.v1.ListOperationsRequest
+	203, // 125: heron.v1.AdminService.ListNotifyChannelRefs:input_type -> heron.v1.ListNotifyChannelRefsRequest
+	14,  // 126: heron.v1.AdminService.GetUpdates:input_type -> heron.v1.GetUpdatesRequest
+	16,  // 127: heron.v1.AdminService.StartUpdate:input_type -> heron.v1.StartUpdateRequest
+	18,  // 128: heron.v1.AdminService.CancelUpdate:input_type -> heron.v1.CancelUpdateRequest
+	20,  // 129: heron.v1.AdminService.Login:input_type -> heron.v1.LoginRequest
+	22,  // 130: heron.v1.AdminService.BeginPasskeyLogin:input_type -> heron.v1.BeginPasskeyLoginRequest
+	24,  // 131: heron.v1.AdminService.FinishPasskeyLogin:input_type -> heron.v1.FinishPasskeyLoginRequest
+	26,  // 132: heron.v1.AdminService.GetSecurity:input_type -> heron.v1.GetSecurityRequest
+	29,  // 133: heron.v1.AdminService.SecurityAction:input_type -> heron.v1.SecurityActionRequest
+	31,  // 134: heron.v1.AdminService.Logout:input_type -> heron.v1.LogoutRequest
+	34,  // 135: heron.v1.AdminService.ListSessions:input_type -> heron.v1.ListSessionsRequest
+	36,  // 136: heron.v1.AdminService.RevokeSession:input_type -> heron.v1.RevokeSessionRequest
+	41,  // 137: heron.v1.AdminService.ListNodes:input_type -> heron.v1.ListNodesRequest
+	43,  // 138: heron.v1.AdminService.CreateNode:input_type -> heron.v1.CreateNodeRequest
+	45,  // 139: heron.v1.AdminService.UpdateNode:input_type -> heron.v1.UpdateNodeRequest
+	47,  // 140: heron.v1.AdminService.RenewNodeBilling:input_type -> heron.v1.RenewNodeBillingRequest
+	49,  // 141: heron.v1.AdminService.BatchUpdateNodeTags:input_type -> heron.v1.BatchUpdateNodeTagsRequest
+	51,  // 142: heron.v1.AdminService.DeleteNode:input_type -> heron.v1.DeleteNodeRequest
+	53,  // 143: heron.v1.AdminService.RotateNodeToken:input_type -> heron.v1.RotateNodeTokenRequest
+	55,  // 144: heron.v1.AdminService.ReorderNodes:input_type -> heron.v1.ReorderNodesRequest
+	57,  // 145: heron.v1.AdminService.MoveNodes:input_type -> heron.v1.MoveNodesRequest
+	60,  // 146: heron.v1.AdminService.ListTags:input_type -> heron.v1.ListTagsRequest
+	62,  // 147: heron.v1.AdminService.DeleteTag:input_type -> heron.v1.DeleteTagRequest
+	64,  // 148: heron.v1.AdminService.OpenRegisterWindow:input_type -> heron.v1.OpenRegisterWindowRequest
+	66,  // 149: heron.v1.AdminService.CloseRegisterWindow:input_type -> heron.v1.CloseRegisterWindowRequest
+	68,  // 150: heron.v1.AdminService.GetRegisterWindow:input_type -> heron.v1.GetRegisterWindowRequest
+	70,  // 151: heron.v1.AdminService.GetSnapshot:input_type -> heron.v1.GetSnapshotRequest
+	223, // 152: heron.v1.AdminService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
+	73,  // 153: heron.v1.AdminService.GetTraffic:input_type -> heron.v1.GetTrafficRequest
+	76,  // 154: heron.v1.AdminService.AdjustTraffic:input_type -> heron.v1.AdjustTrafficRequest
+	79,  // 155: heron.v1.AdminService.ListProbeTasks:input_type -> heron.v1.ListProbeTasksRequest
+	81,  // 156: heron.v1.AdminService.SaveProbeTask:input_type -> heron.v1.SaveProbeTaskRequest
+	89,  // 157: heron.v1.AdminService.DeleteProbeTask:input_type -> heron.v1.DeleteProbeTaskRequest
+	91,  // 158: heron.v1.AdminService.ReorderProbeTasks:input_type -> heron.v1.ReorderProbeTasksRequest
+	224, // 159: heron.v1.AdminService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
+	225, // 160: heron.v1.AdminService.ListProbeComparisonNodes:input_type -> heron.v1.ListProbeComparisonNodesRequest
+	226, // 161: heron.v1.AdminService.QueryProbeComparison:input_type -> heron.v1.QueryProbeComparisonRequest
+	84,  // 162: heron.v1.AdminService.ListProbeCertificates:input_type -> heron.v1.ListProbeCertificatesRequest
+	94,  // 163: heron.v1.AdminService.ListAlertRules:input_type -> heron.v1.ListAlertRulesRequest
+	97,  // 164: heron.v1.AdminService.SaveAlertRule:input_type -> heron.v1.SaveAlertRuleRequest
+	99,  // 165: heron.v1.AdminService.DeleteAlertRule:input_type -> heron.v1.DeleteAlertRuleRequest
+	102, // 166: heron.v1.AdminService.ListSilences:input_type -> heron.v1.ListSilencesRequest
+	105, // 167: heron.v1.AdminService.SaveSilence:input_type -> heron.v1.SaveSilenceRequest
+	107, // 168: heron.v1.AdminService.DeleteSilence:input_type -> heron.v1.DeleteSilenceRequest
+	176, // 169: heron.v1.AdminService.ListAlertEvents:input_type -> heron.v1.ListAlertEventsRequest
+	178, // 170: heron.v1.AdminService.GetAlertDeliveryError:input_type -> heron.v1.GetAlertDeliveryErrorRequest
+	112, // 171: heron.v1.AdminService.ListNotifyChannels:input_type -> heron.v1.ListNotifyChannelsRequest
+	114, // 172: heron.v1.AdminService.SaveNotifyChannel:input_type -> heron.v1.SaveNotifyChannelRequest
+	116, // 173: heron.v1.AdminService.DeleteNotifyChannel:input_type -> heron.v1.DeleteNotifyChannelRequest
+	118, // 174: heron.v1.AdminService.TestNotifyChannel:input_type -> heron.v1.TestNotifyChannelRequest
+	120, // 175: heron.v1.AdminService.PreviewAlertNotification:input_type -> heron.v1.PreviewAlertNotificationRequest
+	123, // 176: heron.v1.AdminService.TestAlertNotification:input_type -> heron.v1.TestAlertNotificationRequest
+	134, // 177: heron.v1.AdminService.GetSettings:input_type -> heron.v1.GetSettingsRequest
+	136, // 178: heron.v1.AdminService.GetBackupStatus:input_type -> heron.v1.GetBackupStatusRequest
+	140, // 179: heron.v1.AdminService.ListRestoreRecords:input_type -> heron.v1.ListRestoreRecordsRequest
+	129, // 180: heron.v1.AdminService.GetHeartbeatStatus:input_type -> heron.v1.GetHeartbeatStatusRequest
+	145, // 181: heron.v1.AdminService.UpdateSettings:input_type -> heron.v1.UpdateSettingsRequest
+	148, // 182: heron.v1.AdminService.UploadTheme:input_type -> heron.v1.UploadThemeRequest
+	150, // 183: heron.v1.AdminService.ListThemes:input_type -> heron.v1.ListThemesRequest
+	152, // 184: heron.v1.AdminService.EnableTheme:input_type -> heron.v1.EnableThemeRequest
+	154, // 185: heron.v1.AdminService.DeleteTheme:input_type -> heron.v1.DeleteThemeRequest
+	156, // 186: heron.v1.AdminService.GetThemePreview:input_type -> heron.v1.GetThemePreviewRequest
+	158, // 187: heron.v1.AdminService.DeleteThemeVersion:input_type -> heron.v1.DeleteThemeVersionRequest
+	160, // 188: heron.v1.AdminService.ListThemeReleases:input_type -> heron.v1.ListThemeReleasesRequest
+	164, // 189: heron.v1.AdminService.InstallThemeRelease:input_type -> heron.v1.InstallThemeReleaseRequest
+	166, // 190: heron.v1.AdminService.PreviewTheme:input_type -> heron.v1.PreviewThemeRequest
+	168, // 191: heron.v1.AdminService.GetThemePackage:input_type -> heron.v1.GetThemePackageRequest
+	170, // 192: heron.v1.AdminService.GetStorageStats:input_type -> heron.v1.GetStorageStatsRequest
+	183, // 193: heron.v1.AdminService.ListApiTokens:input_type -> heron.v1.ListApiTokensRequest
+	185, // 194: heron.v1.AdminService.CreateApiToken:input_type -> heron.v1.CreateApiTokenRequest
+	186, // 195: heron.v1.AdminService.UpdateApiToken:input_type -> heron.v1.UpdateApiTokenRequest
+	189, // 196: heron.v1.AdminService.DeleteApiToken:input_type -> heron.v1.DeleteApiTokenRequest
+	194, // 197: heron.v1.AdminService.GetApiReference:input_type -> heron.v1.GetApiReferenceRequest
+	191, // 198: heron.v1.AdminService.GetCaller:input_type -> heron.v1.GetCallerRequest
+	206, // 199: heron.v1.AdminService.GetNodeDisks:input_type -> heron.v1.GetNodeDisksRequest
+	200, // 200: heron.v1.AdminService.ExecuteChange:output_type -> heron.v1.ExecuteChangeResponse
+	202, // 201: heron.v1.AdminService.ListOperations:output_type -> heron.v1.ListOperationsResponse
+	205, // 202: heron.v1.AdminService.ListNotifyChannelRefs:output_type -> heron.v1.ListNotifyChannelRefsResponse
+	15,  // 203: heron.v1.AdminService.GetUpdates:output_type -> heron.v1.GetUpdatesResponse
+	17,  // 204: heron.v1.AdminService.StartUpdate:output_type -> heron.v1.StartUpdateResponse
+	19,  // 205: heron.v1.AdminService.CancelUpdate:output_type -> heron.v1.CancelUpdateResponse
+	21,  // 206: heron.v1.AdminService.Login:output_type -> heron.v1.LoginResponse
+	23,  // 207: heron.v1.AdminService.BeginPasskeyLogin:output_type -> heron.v1.BeginPasskeyLoginResponse
+	25,  // 208: heron.v1.AdminService.FinishPasskeyLogin:output_type -> heron.v1.FinishPasskeyLoginResponse
+	28,  // 209: heron.v1.AdminService.GetSecurity:output_type -> heron.v1.GetSecurityResponse
+	30,  // 210: heron.v1.AdminService.SecurityAction:output_type -> heron.v1.SecurityActionResponse
+	32,  // 211: heron.v1.AdminService.Logout:output_type -> heron.v1.LogoutResponse
+	35,  // 212: heron.v1.AdminService.ListSessions:output_type -> heron.v1.ListSessionsResponse
+	37,  // 213: heron.v1.AdminService.RevokeSession:output_type -> heron.v1.RevokeSessionResponse
+	42,  // 214: heron.v1.AdminService.ListNodes:output_type -> heron.v1.ListNodesResponse
+	44,  // 215: heron.v1.AdminService.CreateNode:output_type -> heron.v1.CreateNodeResponse
+	46,  // 216: heron.v1.AdminService.UpdateNode:output_type -> heron.v1.UpdateNodeResponse
+	48,  // 217: heron.v1.AdminService.RenewNodeBilling:output_type -> heron.v1.RenewNodeBillingResponse
+	50,  // 218: heron.v1.AdminService.BatchUpdateNodeTags:output_type -> heron.v1.BatchUpdateNodeTagsResponse
+	52,  // 219: heron.v1.AdminService.DeleteNode:output_type -> heron.v1.DeleteNodeResponse
+	54,  // 220: heron.v1.AdminService.RotateNodeToken:output_type -> heron.v1.RotateNodeTokenResponse
+	56,  // 221: heron.v1.AdminService.ReorderNodes:output_type -> heron.v1.ReorderNodesResponse
+	58,  // 222: heron.v1.AdminService.MoveNodes:output_type -> heron.v1.MoveNodesResponse
+	61,  // 223: heron.v1.AdminService.ListTags:output_type -> heron.v1.ListTagsResponse
+	63,  // 224: heron.v1.AdminService.DeleteTag:output_type -> heron.v1.DeleteTagResponse
+	65,  // 225: heron.v1.AdminService.OpenRegisterWindow:output_type -> heron.v1.OpenRegisterWindowResponse
+	67,  // 226: heron.v1.AdminService.CloseRegisterWindow:output_type -> heron.v1.CloseRegisterWindowResponse
+	69,  // 227: heron.v1.AdminService.GetRegisterWindow:output_type -> heron.v1.GetRegisterWindowResponse
+	71,  // 228: heron.v1.AdminService.GetSnapshot:output_type -> heron.v1.GetSnapshotResponse
+	227, // 229: heron.v1.AdminService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
+	74,  // 230: heron.v1.AdminService.GetTraffic:output_type -> heron.v1.GetTrafficResponse
+	77,  // 231: heron.v1.AdminService.AdjustTraffic:output_type -> heron.v1.AdjustTrafficResponse
+	80,  // 232: heron.v1.AdminService.ListProbeTasks:output_type -> heron.v1.ListProbeTasksResponse
+	83,  // 233: heron.v1.AdminService.SaveProbeTask:output_type -> heron.v1.SaveProbeTaskResponse
+	90,  // 234: heron.v1.AdminService.DeleteProbeTask:output_type -> heron.v1.DeleteProbeTaskResponse
+	92,  // 235: heron.v1.AdminService.ReorderProbeTasks:output_type -> heron.v1.ReorderProbeTasksResponse
+	228, // 236: heron.v1.AdminService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
+	229, // 237: heron.v1.AdminService.ListProbeComparisonNodes:output_type -> heron.v1.ListProbeComparisonNodesResponse
+	230, // 238: heron.v1.AdminService.QueryProbeComparison:output_type -> heron.v1.QueryProbeComparisonResponse
+	85,  // 239: heron.v1.AdminService.ListProbeCertificates:output_type -> heron.v1.ListProbeCertificatesResponse
+	95,  // 240: heron.v1.AdminService.ListAlertRules:output_type -> heron.v1.ListAlertRulesResponse
+	98,  // 241: heron.v1.AdminService.SaveAlertRule:output_type -> heron.v1.SaveAlertRuleResponse
+	100, // 242: heron.v1.AdminService.DeleteAlertRule:output_type -> heron.v1.DeleteAlertRuleResponse
+	103, // 243: heron.v1.AdminService.ListSilences:output_type -> heron.v1.ListSilencesResponse
+	106, // 244: heron.v1.AdminService.SaveSilence:output_type -> heron.v1.SaveSilenceResponse
+	108, // 245: heron.v1.AdminService.DeleteSilence:output_type -> heron.v1.DeleteSilenceResponse
+	177, // 246: heron.v1.AdminService.ListAlertEvents:output_type -> heron.v1.ListAlertEventsResponse
+	179, // 247: heron.v1.AdminService.GetAlertDeliveryError:output_type -> heron.v1.GetAlertDeliveryErrorResponse
+	113, // 248: heron.v1.AdminService.ListNotifyChannels:output_type -> heron.v1.ListNotifyChannelsResponse
+	115, // 249: heron.v1.AdminService.SaveNotifyChannel:output_type -> heron.v1.SaveNotifyChannelResponse
+	117, // 250: heron.v1.AdminService.DeleteNotifyChannel:output_type -> heron.v1.DeleteNotifyChannelResponse
+	119, // 251: heron.v1.AdminService.TestNotifyChannel:output_type -> heron.v1.TestNotifyChannelResponse
+	122, // 252: heron.v1.AdminService.PreviewAlertNotification:output_type -> heron.v1.PreviewAlertNotificationResponse
+	125, // 253: heron.v1.AdminService.TestAlertNotification:output_type -> heron.v1.TestAlertNotificationResponse
+	135, // 254: heron.v1.AdminService.GetSettings:output_type -> heron.v1.GetSettingsResponse
+	137, // 255: heron.v1.AdminService.GetBackupStatus:output_type -> heron.v1.GetBackupStatusResponse
+	141, // 256: heron.v1.AdminService.ListRestoreRecords:output_type -> heron.v1.ListRestoreRecordsResponse
+	130, // 257: heron.v1.AdminService.GetHeartbeatStatus:output_type -> heron.v1.GetHeartbeatStatusResponse
+	146, // 258: heron.v1.AdminService.UpdateSettings:output_type -> heron.v1.UpdateSettingsResponse
+	149, // 259: heron.v1.AdminService.UploadTheme:output_type -> heron.v1.UploadThemeResponse
+	151, // 260: heron.v1.AdminService.ListThemes:output_type -> heron.v1.ListThemesResponse
+	153, // 261: heron.v1.AdminService.EnableTheme:output_type -> heron.v1.EnableThemeResponse
+	155, // 262: heron.v1.AdminService.DeleteTheme:output_type -> heron.v1.DeleteThemeResponse
+	157, // 263: heron.v1.AdminService.GetThemePreview:output_type -> heron.v1.GetThemePreviewResponse
+	159, // 264: heron.v1.AdminService.DeleteThemeVersion:output_type -> heron.v1.DeleteThemeVersionResponse
+	163, // 265: heron.v1.AdminService.ListThemeReleases:output_type -> heron.v1.ListThemeReleasesResponse
+	165, // 266: heron.v1.AdminService.InstallThemeRelease:output_type -> heron.v1.InstallThemeReleaseResponse
+	167, // 267: heron.v1.AdminService.PreviewTheme:output_type -> heron.v1.PreviewThemeResponse
+	169, // 268: heron.v1.AdminService.GetThemePackage:output_type -> heron.v1.GetThemePackageResponse
+	171, // 269: heron.v1.AdminService.GetStorageStats:output_type -> heron.v1.GetStorageStatsResponse
+	184, // 270: heron.v1.AdminService.ListApiTokens:output_type -> heron.v1.ListApiTokensResponse
+	188, // 271: heron.v1.AdminService.CreateApiToken:output_type -> heron.v1.CreateApiTokenResponse
+	187, // 272: heron.v1.AdminService.UpdateApiToken:output_type -> heron.v1.UpdateApiTokenResponse
+	190, // 273: heron.v1.AdminService.DeleteApiToken:output_type -> heron.v1.DeleteApiTokenResponse
+	195, // 274: heron.v1.AdminService.GetApiReference:output_type -> heron.v1.GetApiReferenceResponse
+	192, // 275: heron.v1.AdminService.GetCaller:output_type -> heron.v1.GetCallerResponse
+	207, // 276: heron.v1.AdminService.GetNodeDisks:output_type -> heron.v1.GetNodeDisksResponse
+	200, // [200:277] is the sub-list for method output_type
+	123, // [123:200] is the sub-list for method input_type
+	123, // [123:123] is the sub-list for extension type_name
+	123, // [123:123] is the sub-list for extension extendee
+	0,   // [0:123] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_admin_proto_init() }
@@ -14295,13 +14427,14 @@ func file_heron_v1_admin_proto_init() {
 		(*ExecuteChangeRequest_DeleteTag)(nil),
 		(*ExecuteChangeRequest_RenewNodeBilling)(nil),
 	}
+	file_heron_v1_admin_proto_msgTypes[193].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_admin_proto_rawDesc), len(file_heron_v1_admin_proto_rawDesc)),
 			NumEnums:      14,
-			NumMessages:   193,
+			NumMessages:   195,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

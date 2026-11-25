@@ -303,6 +303,8 @@ const (
 	CollectionComponent_COLLECTION_COMPONENT_DISK_IO CollectionComponent = 11
 	// /proc/net/snmp 的 TCP 计数；平台不提供时（darwin）不记失败。
 	CollectionComponent_COLLECTION_COMPONENT_TCP_STATS CollectionComponent = 12
+	// 本地数据盘的逐盘容量（挂载表与各挂载点的 statfs）；根盘用量仍记在 DISK。
+	CollectionComponent_COLLECTION_COMPONENT_DISK_MOUNTS CollectionComponent = 13
 )
 
 // Enum value maps for CollectionComponent.
@@ -321,6 +323,7 @@ var (
 		10: "COLLECTION_COMPONENT_NET",
 		11: "COLLECTION_COMPONENT_DISK_IO",
 		12: "COLLECTION_COMPONENT_TCP_STATS",
+		13: "COLLECTION_COMPONENT_DISK_MOUNTS",
 	}
 	CollectionComponent_value = map[string]int32{
 		"COLLECTION_COMPONENT_UNSPECIFIED": 0,
@@ -336,6 +339,7 @@ var (
 		"COLLECTION_COMPONENT_NET":         10,
 		"COLLECTION_COMPONENT_DISK_IO":     11,
 		"COLLECTION_COMPONENT_TCP_STATS":   12,
+		"COLLECTION_COMPONENT_DISK_MOUNTS": 13,
 	}
 )
 
@@ -1122,6 +1126,72 @@ func (x *NetInterfaceCounter) GetTxBytes() uint64 {
 	return 0
 }
 
+// 一个本地数据盘挂载点的容量，与同一请求的 Metrics 同一次采样。字节口径与 Metrics.disk_total / disk_used 相同：
+// total 是文件系统的全部块，used 是全部块减空闲块（含 root 保留）。共享同一块设备或同一存储池的多个挂载点只出现一项，
+// 代表路径取根 "/"，其次取最短路径（同长按字节序）。
+type DiskMountUsage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 被观测主机上的挂载路径：以 "/" 开头的规范绝对路径（path.Clean 不变），非空 UTF-8、无控制字符、至多 256 字节
+	// （agentwire.ValidateDiskMountPath）。容器里以 --host-root 采集时是宿主机上的路径，不带宿主根前缀。
+	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// 大于 0；used 不超过它。
+	Total         uint64 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Used          uint64 `protobuf:"varint,3,opt,name=used,proto3" json:"used,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiskMountUsage) Reset() {
+	*x = DiskMountUsage{}
+	mi := &file_heron_v1_types_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiskMountUsage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiskMountUsage) ProtoMessage() {}
+
+func (x *DiskMountUsage) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_types_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiskMountUsage.ProtoReflect.Descriptor instead.
+func (*DiskMountUsage) Descriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *DiskMountUsage) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *DiskMountUsage) GetTotal() uint64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *DiskMountUsage) GetUsed() uint64 {
+	if x != nil {
+		return x.Used
+	}
+	return 0
+}
+
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
 type Facts struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -1154,7 +1224,7 @@ type Facts struct {
 
 func (x *Facts) Reset() {
 	*x = Facts{}
-	mi := &file_heron_v1_types_proto_msgTypes[2]
+	mi := &file_heron_v1_types_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1166,7 +1236,7 @@ func (x *Facts) String() string {
 func (*Facts) ProtoMessage() {}
 
 func (x *Facts) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[2]
+	mi := &file_heron_v1_types_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1179,7 +1249,7 @@ func (x *Facts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Facts.ProtoReflect.Descriptor instead.
 func (*Facts) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Facts) GetHostname() string {
@@ -1293,7 +1363,7 @@ type ExecutionScope struct {
 
 func (x *ExecutionScope) Reset() {
 	*x = ExecutionScope{}
-	mi := &file_heron_v1_types_proto_msgTypes[3]
+	mi := &file_heron_v1_types_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1305,7 +1375,7 @@ func (x *ExecutionScope) String() string {
 func (*ExecutionScope) ProtoMessage() {}
 
 func (x *ExecutionScope) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[3]
+	mi := &file_heron_v1_types_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1318,7 +1388,7 @@ func (x *ExecutionScope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionScope.ProtoReflect.Descriptor instead.
 func (*ExecutionScope) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ExecutionScope) GetKind() ScopeKind {
@@ -1415,13 +1485,20 @@ type AgentDiagnostics struct {
 	NetStructureExcludedTotal uint32 `protobuf:"varint,9,opt,name=net_structure_excluded_total,json=netStructureExcludedTotal,proto3" json:"net_structure_excluded_total,omitempty"`
 	// 结构规则把名字规则放行的网卡全部排除，本次退回只按名字规则计入；此时排除列表为空。
 	NetStructureFallback bool `protobuf:"varint,10,opt,name=net_structure_fallback,json=netStructureFallback,proto3" json:"net_structure_fallback,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// 生效的本地数据盘排除规则（heron-agent 的 --disk-exclude 或配置的 disk_exclude），按挂载路径做 glob 匹配；
+	// 至多 64 个，每个以 "/" 开头、至多 128 字节。根 "/" 不受排除规则影响。
+	DiskExclude []string `protobuf:"bytes,11,rep,name=disk_exclude,json=diskExclude,proto3" json:"disk_exclude,omitempty"`
+	// 本次纳入监测的本地数据盘总数（含根盘，已去重、已排除），即 ReportRequest.disk_mounts_total 的同一次取值；
+	// 逐盘容量不进诊断，它们随每次上报走 ReportRequest.disk_mounts。本次逐盘采集失败（failed_collectors 含
+	// DISK_MOUNTS）或 agent 不提供时为 0。只在集合大小变化时改变，不随容量读数变化。
+	DiskMountsTotal uint32 `protobuf:"varint,12,opt,name=disk_mounts_total,json=diskMountsTotal,proto3" json:"disk_mounts_total,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AgentDiagnostics) Reset() {
 	*x = AgentDiagnostics{}
-	mi := &file_heron_v1_types_proto_msgTypes[4]
+	mi := &file_heron_v1_types_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1433,7 +1510,7 @@ func (x *AgentDiagnostics) String() string {
 func (*AgentDiagnostics) ProtoMessage() {}
 
 func (x *AgentDiagnostics) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[4]
+	mi := &file_heron_v1_types_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1446,7 +1523,7 @@ func (x *AgentDiagnostics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentDiagnostics.ProtoReflect.Descriptor instead.
 func (*AgentDiagnostics) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AgentDiagnostics) GetNetInclude() []string {
@@ -1519,6 +1596,20 @@ func (x *AgentDiagnostics) GetNetStructureFallback() bool {
 	return false
 }
 
+func (x *AgentDiagnostics) GetDiskExclude() []string {
+	if x != nil {
+		return x.DiskExclude
+	}
+	return nil
+}
+
+func (x *AgentDiagnostics) GetDiskMountsTotal() uint32 {
+	if x != nil {
+		return x.DiskMountsTotal
+	}
+	return 0
+}
+
 type NetStructureExclusion struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1529,7 +1620,7 @@ type NetStructureExclusion struct {
 
 func (x *NetStructureExclusion) Reset() {
 	*x = NetStructureExclusion{}
-	mi := &file_heron_v1_types_proto_msgTypes[5]
+	mi := &file_heron_v1_types_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1541,7 +1632,7 @@ func (x *NetStructureExclusion) String() string {
 func (*NetStructureExclusion) ProtoMessage() {}
 
 func (x *NetStructureExclusion) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[5]
+	mi := &file_heron_v1_types_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1554,7 +1645,7 @@ func (x *NetStructureExclusion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetStructureExclusion.ProtoReflect.Descriptor instead.
 func (*NetStructureExclusion) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NetStructureExclusion) GetName() string {
@@ -1584,7 +1675,7 @@ type NetworkInfo struct {
 
 func (x *NetworkInfo) Reset() {
 	*x = NetworkInfo{}
-	mi := &file_heron_v1_types_proto_msgTypes[6]
+	mi := &file_heron_v1_types_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1596,7 +1687,7 @@ func (x *NetworkInfo) String() string {
 func (*NetworkInfo) ProtoMessage() {}
 
 func (x *NetworkInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[6]
+	mi := &file_heron_v1_types_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1609,7 +1700,7 @@ func (x *NetworkInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkInfo.ProtoReflect.Descriptor instead.
 func (*NetworkInfo) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *NetworkInfo) GetIpv4() *AddressDetection {
@@ -1641,7 +1732,7 @@ type AddressDetection struct {
 
 func (x *AddressDetection) Reset() {
 	*x = AddressDetection{}
-	mi := &file_heron_v1_types_proto_msgTypes[7]
+	mi := &file_heron_v1_types_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1653,7 +1744,7 @@ func (x *AddressDetection) String() string {
 func (*AddressDetection) ProtoMessage() {}
 
 func (x *AddressDetection) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[7]
+	mi := &file_heron_v1_types_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1666,7 +1757,7 @@ func (x *AddressDetection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddressDetection.ProtoReflect.Descriptor instead.
 func (*AddressDetection) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *AddressDetection) GetState() AddressDetectionState {
@@ -1717,7 +1808,7 @@ type ProbeResult struct {
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_heron_v1_types_proto_msgTypes[8]
+	mi := &file_heron_v1_types_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1729,7 +1820,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[8]
+	mi := &file_heron_v1_types_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1742,7 +1833,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProbeResult) GetTaskId() uint64 {
@@ -1852,7 +1943,7 @@ type PresentedCertificate struct {
 
 func (x *PresentedCertificate) Reset() {
 	*x = PresentedCertificate{}
-	mi := &file_heron_v1_types_proto_msgTypes[9]
+	mi := &file_heron_v1_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1864,7 +1955,7 @@ func (x *PresentedCertificate) String() string {
 func (*PresentedCertificate) ProtoMessage() {}
 
 func (x *PresentedCertificate) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[9]
+	mi := &file_heron_v1_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1877,7 +1968,7 @@ func (x *PresentedCertificate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PresentedCertificate.ProtoReflect.Descriptor instead.
 func (*PresentedCertificate) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PresentedCertificate) GetSpkiSha256() []byte {
@@ -1909,7 +2000,7 @@ type Timeout struct {
 
 func (x *Timeout) Reset() {
 	*x = Timeout{}
-	mi := &file_heron_v1_types_proto_msgTypes[10]
+	mi := &file_heron_v1_types_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1921,7 +2012,7 @@ func (x *Timeout) String() string {
 func (*Timeout) ProtoMessage() {}
 
 func (x *Timeout) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[10]
+	mi := &file_heron_v1_types_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1934,7 +2025,7 @@ func (x *Timeout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Timeout.ProtoReflect.Descriptor instead.
 func (*Timeout) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{10}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{11}
 }
 
 type ProbeError struct {
@@ -1946,7 +2037,7 @@ type ProbeError struct {
 
 func (x *ProbeError) Reset() {
 	*x = ProbeError{}
-	mi := &file_heron_v1_types_proto_msgTypes[11]
+	mi := &file_heron_v1_types_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1958,7 +2049,7 @@ func (x *ProbeError) String() string {
 func (*ProbeError) ProtoMessage() {}
 
 func (x *ProbeError) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[11]
+	mi := &file_heron_v1_types_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1971,7 +2062,7 @@ func (x *ProbeError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeError.ProtoReflect.Descriptor instead.
 func (*ProbeError) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{11}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ProbeError) GetMessage() string {
@@ -2012,7 +2103,7 @@ type ProbeTask struct {
 
 func (x *ProbeTask) Reset() {
 	*x = ProbeTask{}
-	mi := &file_heron_v1_types_proto_msgTypes[12]
+	mi := &file_heron_v1_types_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2024,7 +2115,7 @@ func (x *ProbeTask) String() string {
 func (*ProbeTask) ProtoMessage() {}
 
 func (x *ProbeTask) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[12]
+	mi := &file_heron_v1_types_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2037,7 +2128,7 @@ func (x *ProbeTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeTask.ProtoReflect.Descriptor instead.
 func (*ProbeTask) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{12}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ProbeTask) GetId() uint64 {
@@ -2120,7 +2211,7 @@ type ProbeTasks struct {
 
 func (x *ProbeTasks) Reset() {
 	*x = ProbeTasks{}
-	mi := &file_heron_v1_types_proto_msgTypes[13]
+	mi := &file_heron_v1_types_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2132,7 +2223,7 @@ func (x *ProbeTasks) String() string {
 func (*ProbeTasks) ProtoMessage() {}
 
 func (x *ProbeTasks) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[13]
+	mi := &file_heron_v1_types_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2145,7 +2236,7 @@ func (x *ProbeTasks) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeTasks.ProtoReflect.Descriptor instead.
 func (*ProbeTasks) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{13}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ProbeTasks) GetVersion() uint64 {
@@ -2190,7 +2281,7 @@ type Traffic struct {
 
 func (x *Traffic) Reset() {
 	*x = Traffic{}
-	mi := &file_heron_v1_types_proto_msgTypes[14]
+	mi := &file_heron_v1_types_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2202,7 +2293,7 @@ func (x *Traffic) String() string {
 func (*Traffic) ProtoMessage() {}
 
 func (x *Traffic) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[14]
+	mi := &file_heron_v1_types_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2215,7 +2306,7 @@ func (x *Traffic) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Traffic.ProtoReflect.Descriptor instead.
 func (*Traffic) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{14}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Traffic) GetTotalRx() uint64 {
@@ -2319,7 +2410,7 @@ type Billing struct {
 
 func (x *Billing) Reset() {
 	*x = Billing{}
-	mi := &file_heron_v1_types_proto_msgTypes[15]
+	mi := &file_heron_v1_types_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2331,7 +2422,7 @@ func (x *Billing) String() string {
 func (*Billing) ProtoMessage() {}
 
 func (x *Billing) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[15]
+	mi := &file_heron_v1_types_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2344,7 +2435,7 @@ func (x *Billing) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Billing.ProtoReflect.Descriptor instead.
 func (*Billing) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{15}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Billing) GetPrice() string {
@@ -2468,7 +2559,11 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x13NetInterfaceCounter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\brx_bytes\x18\x02 \x01(\x04R\arxBytes\x12\x19\n" +
-	"\btx_bytes\x18\x03 \x01(\x04R\atxBytes\"\xb4\x03\n" +
+	"\btx_bytes\x18\x03 \x01(\x04R\atxBytes\"N\n" +
+	"\x0eDiskMountUsage\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x04R\x05total\x12\x12\n" +
+	"\x04used\x18\x03 \x01(\x04R\x04used\"\xb4\x03\n" +
 	"\x05Facts\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x16\n" +
@@ -2499,7 +2594,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x14_cpu_effective_coresB\x15\n" +
 	"\x13_memory_limit_bytesB\x13\n" +
 	"\x11_swap_limit_bytesB\r\n" +
-	"\v_load_cores\"\xa5\x04\n" +
+	"\v_load_cores\"\xf4\x04\n" +
 	"\x10AgentDiagnostics\x12\x1f\n" +
 	"\vnet_include\x18\x01 \x03(\tR\n" +
 	"netInclude\x12\x1f\n" +
@@ -2513,7 +2608,9 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x16net_structure_excluded\x18\b \x03(\v2\x1f.heron.v1.NetStructureExclusionR\x14netStructureExcluded\x12?\n" +
 	"\x1cnet_structure_excluded_total\x18\t \x01(\rR\x19netStructureExcludedTotal\x124\n" +
 	"\x16net_structure_fallback\x18\n" +
-	" \x01(\bR\x14netStructureFallback\"a\n" +
+	" \x01(\bR\x14netStructureFallback\x12!\n" +
+	"\fdisk_exclude\x18\v \x03(\tR\vdiskExclude\x12*\n" +
+	"\x11disk_mounts_total\x18\f \x01(\rR\x0fdiskMountsTotal\"a\n" +
 	"\x15NetStructureExclusion\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x124\n" +
 	"\x06reason\x18\x02 \x01(\x0e2\x1c.heron.v1.NetStructureReasonR\x06reason\"m\n" +
@@ -2619,7 +2716,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x1cNET_STRUCTURE_REASON_STACKED\x10\x01\x12$\n" +
 	" NET_STRUCTURE_REASON_BRIDGE_PORT\x10\x02\x12 \n" +
 	"\x1cNET_STRUCTURE_REASON_OVERLAY\x10\x03\x12\x1f\n" +
-	"\x1bNET_STRUCTURE_REASON_TUNNEL\x10\x04*\xbe\x03\n" +
+	"\x1bNET_STRUCTURE_REASON_TUNNEL\x10\x04*\xe4\x03\n" +
 	"\x13CollectionComponent\x12$\n" +
 	" COLLECTION_COMPONENT_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cCOLLECTION_COMPONENT_BOOT_ID\x10\x01\x12\x1c\n" +
@@ -2634,7 +2731,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x18COLLECTION_COMPONENT_NET\x10\n" +
 	"\x12 \n" +
 	"\x1cCOLLECTION_COMPONENT_DISK_IO\x10\v\x12\"\n" +
-	"\x1eCOLLECTION_COMPONENT_TCP_STATS\x10\f*\xda\x01\n" +
+	"\x1eCOLLECTION_COMPONENT_TCP_STATS\x10\f\x12$\n" +
+	" COLLECTION_COMPONENT_DISK_MOUNTS\x10\r*\xda\x01\n" +
 	"\x15AddressDetectionState\x12'\n" +
 	"#ADDRESS_DETECTION_STATE_UNSPECIFIED\x10\x00\x12%\n" +
 	"!ADDRESS_DETECTION_STATE_AVAILABLE\x10\x01\x12'\n" +
@@ -2688,7 +2786,7 @@ func file_heron_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
-var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_heron_v1_types_proto_goTypes = []any{
 	(ScopeKind)(0),                // 0: heron.v1.ScopeKind
 	(ResourceScope)(0),            // 1: heron.v1.ResourceScope
@@ -2704,25 +2802,26 @@ var file_heron_v1_types_proto_goTypes = []any{
 	(BillingCycle)(0),             // 11: heron.v1.BillingCycle
 	(*Metrics)(nil),               // 12: heron.v1.Metrics
 	(*NetInterfaceCounter)(nil),   // 13: heron.v1.NetInterfaceCounter
-	(*Facts)(nil),                 // 14: heron.v1.Facts
-	(*ExecutionScope)(nil),        // 15: heron.v1.ExecutionScope
-	(*AgentDiagnostics)(nil),      // 16: heron.v1.AgentDiagnostics
-	(*NetStructureExclusion)(nil), // 17: heron.v1.NetStructureExclusion
-	(*NetworkInfo)(nil),           // 18: heron.v1.NetworkInfo
-	(*AddressDetection)(nil),      // 19: heron.v1.AddressDetection
-	(*ProbeResult)(nil),           // 20: heron.v1.ProbeResult
-	(*PresentedCertificate)(nil),  // 21: heron.v1.PresentedCertificate
-	(*Timeout)(nil),               // 22: heron.v1.Timeout
-	(*ProbeError)(nil),            // 23: heron.v1.ProbeError
-	(*ProbeTask)(nil),             // 24: heron.v1.ProbeTask
-	(*ProbeTasks)(nil),            // 25: heron.v1.ProbeTasks
-	(*Traffic)(nil),               // 26: heron.v1.Traffic
-	(*Billing)(nil),               // 27: heron.v1.Billing
+	(*DiskMountUsage)(nil),        // 14: heron.v1.DiskMountUsage
+	(*Facts)(nil),                 // 15: heron.v1.Facts
+	(*ExecutionScope)(nil),        // 16: heron.v1.ExecutionScope
+	(*AgentDiagnostics)(nil),      // 17: heron.v1.AgentDiagnostics
+	(*NetStructureExclusion)(nil), // 18: heron.v1.NetStructureExclusion
+	(*NetworkInfo)(nil),           // 19: heron.v1.NetworkInfo
+	(*AddressDetection)(nil),      // 20: heron.v1.AddressDetection
+	(*ProbeResult)(nil),           // 21: heron.v1.ProbeResult
+	(*PresentedCertificate)(nil),  // 22: heron.v1.PresentedCertificate
+	(*Timeout)(nil),               // 23: heron.v1.Timeout
+	(*ProbeError)(nil),            // 24: heron.v1.ProbeError
+	(*ProbeTask)(nil),             // 25: heron.v1.ProbeTask
+	(*ProbeTasks)(nil),            // 26: heron.v1.ProbeTasks
+	(*Traffic)(nil),               // 27: heron.v1.Traffic
+	(*Billing)(nil),               // 28: heron.v1.Billing
 }
 var file_heron_v1_types_proto_depIdxs = []int32{
-	18, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
-	16, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
-	15, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
+	19, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
+	17, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
+	16, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
 	0,  // 3: heron.v1.ExecutionScope.kind:type_name -> heron.v1.ScopeKind
 	1,  // 4: heron.v1.ExecutionScope.cpu:type_name -> heron.v1.ResourceScope
 	1,  // 5: heron.v1.ExecutionScope.memory:type_name -> heron.v1.ResourceScope
@@ -2730,19 +2829,19 @@ var file_heron_v1_types_proto_depIdxs = []int32{
 	1,  // 7: heron.v1.ExecutionScope.load:type_name -> heron.v1.ResourceScope
 	2,  // 8: heron.v1.ExecutionScope.notes:type_name -> heron.v1.ScopeNote
 	4,  // 9: heron.v1.AgentDiagnostics.failed_collectors:type_name -> heron.v1.CollectionComponent
-	17, // 10: heron.v1.AgentDiagnostics.net_structure_excluded:type_name -> heron.v1.NetStructureExclusion
+	18, // 10: heron.v1.AgentDiagnostics.net_structure_excluded:type_name -> heron.v1.NetStructureExclusion
 	3,  // 11: heron.v1.NetStructureExclusion.reason:type_name -> heron.v1.NetStructureReason
-	19, // 12: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
-	19, // 13: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
+	20, // 12: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
+	20, // 13: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
 	5,  // 14: heron.v1.AddressDetection.state:type_name -> heron.v1.AddressDetectionState
-	22, // 15: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
-	23, // 16: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
-	21, // 17: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
+	23, // 15: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
+	24, // 16: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
+	22, // 17: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
 	6,  // 18: heron.v1.PresentedCertificate.reason:type_name -> heron.v1.PresentedReason
 	7,  // 19: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
 	8,  // 20: heron.v1.ProbeTask.ip_family:type_name -> heron.v1.ProbeIpFamily
 	9,  // 21: heron.v1.ProbeTask.dns_record_type:type_name -> heron.v1.DnsRecordType
-	24, // 22: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
+	25, // 22: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
 	10, // 23: heron.v1.Traffic.quota_mode:type_name -> heron.v1.TrafficQuotaMode
 	11, // 24: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
 	25, // [25:25] is the sub-list for method output_type
@@ -2758,21 +2857,21 @@ func file_heron_v1_types_proto_init() {
 		return
 	}
 	file_heron_v1_types_proto_msgTypes[0].OneofWrappers = []any{}
-	file_heron_v1_types_proto_msgTypes[3].OneofWrappers = []any{}
-	file_heron_v1_types_proto_msgTypes[8].OneofWrappers = []any{
+	file_heron_v1_types_proto_msgTypes[4].OneofWrappers = []any{}
+	file_heron_v1_types_proto_msgTypes[9].OneofWrappers = []any{
 		(*ProbeResult_RttUs)(nil),
 		(*ProbeResult_Timeout)(nil),
 		(*ProbeResult_Error)(nil),
 	}
-	file_heron_v1_types_proto_msgTypes[14].OneofWrappers = []any{}
 	file_heron_v1_types_proto_msgTypes[15].OneofWrappers = []any{}
+	file_heron_v1_types_proto_msgTypes[16].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_types_proto_rawDesc), len(file_heron_v1_types_proto_rawDesc)),
 			NumEnums:      12,
-			NumMessages:   16,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
