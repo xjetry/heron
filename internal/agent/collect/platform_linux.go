@@ -41,7 +41,7 @@ func newProcFS(hostRoot string, openat2 openat2Func) (*ProcFS, error) {
 			return nil, err
 		}
 	}
-	return &ProcFS{Root: root, Reader: reader}, nil
+	return &ProcFS{Root: root, Reader: reader, HostRoot: hostRoot}, nil
 }
 
 // DefaultNetExclude 是本平台未给 --net-exclude 时不计入流量的网卡。

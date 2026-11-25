@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"strings"
 	"syscall"
@@ -26,6 +27,9 @@ type fakeDarwin struct {
 	pids  uint32
 	disk  usage
 	up    uint64
+	// fsstat 是 getfsstat 的挂载表，volumes 是根以外各挂载路径的 statfs；不在表里的路径报不存在。
+	fsstat  []fsstatRecord
+	volumes map[string]usage
 }
 
 func (f *fakeDarwin) err(name string) error {
@@ -83,8 +87,17 @@ func (f *fakeDarwin) sysctlRaw(n string, args ...int) ([]byte, error) {
 	return v, nil
 }
 
-func (f *fakeDarwin) statfs(string) (uint64, uint64, error) { return f.disk.total, f.disk.used, nil }
-func (f *fakeDarwin) monotonicSeconds() (uint64, error)     { return f.up, nil }
+func (f *fakeDarwin) statfs(p string) (uint64, uint64, error) {
+	if u, ok := f.volumes[p]; ok {
+		return u.total, u.used, nil
+	}
+	if p != "/" {
+		return 0, 0, fs.ErrNotExist
+	}
+	return f.disk.total, f.disk.used, nil
+}
+func (f *fakeDarwin) mounts() ([]fsstatRecord, error)   { return f.fsstat, nil }
+func (f *fakeDarwin) monotonicSeconds() (uint64, error) { return f.up, nil }
 func (f *fakeDarwin) processorTicks() ([]uint32, error) {
 	if len(f.ticks) == 0 {
 		return nil, errors.New("no ticks")

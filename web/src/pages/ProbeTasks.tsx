@@ -14,13 +14,16 @@ import { PageHeader } from "../components/PageHeader";
 import { assignmentValid, NodeAssignment, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { useNodeList } from "../api/useNodeList";
-import { ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
+import { AddressDetectionState, DnsRecordType, ProbeIpFamily, ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { formatPin, parsePin } from "../lib/certpin";
 import { ascending, withId } from "../lib/ids";
-import { PROBE_KINDS, isHTTPSTarget, kindLabel, targetRule } from "../lib/probes";
+import { DNS_RECORD_TYPES, PROBE_FAMILIES, PROBE_KINDS, familyApplies, isHTTPSTarget, targetRule, targetWithAddress, taskTypeLabel } from "../lib/probes";
 import { EmptyState } from "../components/EmptyState";
 
-type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array };
+type Draft = NodeSelection & {
+  kind: ProbeKind; target: string; dnsServer: string; ipFamily: ProbeIpFamily; dnsRecordType: DnsRecordType;
+  intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array;
+};
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
 
 type DrawerState = { kind: "create"; opener: HTMLElement } | { kind: "edit"; entry: TaskEntry; opener: HTMLElement } | null;
@@ -28,11 +31,11 @@ type DrawerState = { kind: "create"; opener: HTMLElement } | { kind: "edit"; ent
 const taskError = (error: unknown) => error instanceof ConnectError && error.code === Code.FailedPrecondition
   ? `配置已变化，请刷新后再试。${errorText(error)}` : errorText(error);
 
-const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false, pin: "", clearPin: false });
+const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", ipFamily: ProbeIpFamily.UNSPECIFIED, dnsRecordType: DnsRecordType.UNSPECIFIED, intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false, pin: "", clearPin: false });
 const taskEntries = (tasks: readonly ProbeTaskDetail[]): TaskEntry[] => tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
 // all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑切换为指定节点时以它们作为显式分配的起点。
 const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
-  kind: task.kind, target: task.target, dnsServer: task.dnsServer, intervalS: String(task.intervalS),
+  kind: task.kind, target: task.target, dnsServer: task.dnsServer, ipFamily: task.ipFamily, dnsRecordType: task.dnsRecordType, intervalS: String(task.intervalS),
   timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds), selectorTags, dynamic: selectorTags.length > 0,
   pin: formatPin(task.certSpkiSha256), clearPin: false, configId: task.configId,
 });
@@ -73,7 +76,12 @@ export function ProbeTasks() {
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) => {
     const pin = !d.clearPin && d.pin.trim() ? parsePin(d.pin) : undefined;
     const req = newMessage(SaveProbeTaskRequestSchema, {
-      task: newMessage(ProbeTaskSchema, { id, kind: d.kind, target: d.target.trim(), dnsServer: d.kind === ProbeKind.DNS ? d.dnsServer.trim() : "", intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) }),
+      // 地址族与记录类型各自只对适用的种类提交：切换种类后草稿里残留的另一项若随请求发出，hub 会拒绝整个保存。
+      task: newMessage(ProbeTaskSchema, {
+        id, kind: d.kind, target: d.target.trim(), dnsServer: d.kind === ProbeKind.DNS ? d.dnsServer.trim() : "", intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs),
+        ipFamily: familyApplies(d.kind) ? d.ipFamily : ProbeIpFamily.UNSPECIFIED,
+        dnsRecordType: d.kind === ProbeKind.DNS ? d.dnsRecordType : DnsRecordType.UNSPECIFIED,
+      }),
       allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((nodeId) => availableNodeIds.has(nodeId))),
       selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [],
       // 编辑带上读到的配置身份，避免并发保存把别人的修改盖掉。新建没有身份可对。
@@ -110,7 +118,7 @@ export function ProbeTasks() {
             const movable = !(order.blocked || list.isError);
             return <tr key={String(t.id)} aria-label={t.target}>
               <td data-label="排序"><button type="button" className="link" aria-label={`上移 ${label}`} disabled={!movable} onClick={() => order.move(t.id, -1)}>↑</button><button type="button" className="link" aria-label={`下移 ${label}`} disabled={!movable} onClick={() => order.move(t.id, 1)}>↓</button></td>
-              <td data-label="类型">{kindLabel(t.kind)}</td>
+              <td data-label="类型">{taskTypeLabel(t)}</td>
               <td data-label="目标" className="num"><span className="clip-text clip-wide" title={t.target}>{t.target}</span></td>
               <td data-label="间隔" className="num">{t.intervalS} s</td>
               <td data-label="超时" className="num">{t.timeoutMs} ms</td>
@@ -134,6 +142,17 @@ export function ProbeTasks() {
   );
 }
 
+type NodeAddressOption = { key: string; label: string; address: string; v6: boolean };
+
+// 快选只列节点已就绪（AVAILABLE）的出口地址，也就是节点页显示的那个值（Node.network：手填、agent 探测、hub 看到的来源
+// 依次取先有的）；双栈节点的两族各成一项，因为同一个节点按 IPv4 与按 IPv6 是两条不同的线路。
+function nodeAddresses(nodes: readonly Node[]): NodeAddressOption[] {
+  return nodes.flatMap((node) => ([["IPv4", node.network?.ipv4, false], ["IPv6", node.network?.ipv6, true]] as const).flatMap(([family, entry, v6]) =>
+    entry?.state === AddressDetectionState.AVAILABLE && entry.address
+      ? [{ key: `${node.id}:${family}`, label: `${node.name} · ${family} ${entry.address}`, address: entry.address, v6 }]
+      : []));
+}
+
 // 创建与编辑共用；字段约束用原生属性表达，hub 的 probelimit 是最终裁决，错误原文回到页面上。
 function ProbeTaskDrawer({ title, submitLabel, nodes, initial, pending, error, opener, onClose, onSubmit }: {
   title: string; submitLabel: "创建" | "保存"; nodes: Node[]; initial: Draft; pending: boolean; error: unknown; opener: HTMLElement; onClose: () => void; onSubmit: (d: Draft) => void;
@@ -142,6 +161,7 @@ function ProbeTaskDrawer({ title, submitLabel, nodes, initial, pending, error, o
   const [draft, setDraft] = useState(initial);
   const [pinError, setPinError] = useState("");
   const showPin = draft.kind === ProbeKind.HTTP || draft.pin.trim() !== "" || draft.clearPin;
+  const addresses = nodeAddresses(nodes);
   const pinFits = isHTTPSTarget(draft.kind, draft.target);
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -169,6 +189,27 @@ function ProbeTaskDrawer({ title, submitLabel, nodes, initial, pending, error, o
             </div>
             <label>目标<input data-autofocus required maxLength={targetRule(draft.kind).maxLength} placeholder={targetRule(draft.kind).placeholder} value={draft.target}
               onChange={(e) => setDraft({ ...draft, target: e.target.value })} /></label>
+            {familyApplies(draft.kind) && addresses.length > 0 && (
+              <select aria-label="从节点地址填入" value="" onChange={(e) => {
+                const picked = addresses.find((entry) => entry.key === e.target.value);
+                if (!picked) return;
+                // 显式地址族与地址不同族时换成地址的族：字面量目标与显式地址族冲突的任务 hub 必然拒绝。
+                const family = picked.v6 ? ProbeIpFamily.IPV6 : ProbeIpFamily.IPV4;
+                setDraft({ ...draft, target: targetWithAddress(draft.kind, draft.target, picked.address, picked.v6), ipFamily: draft.ipFamily === ProbeIpFamily.UNSPECIFIED ? draft.ipFamily : family });
+              }}>
+                <option value="">选择节点地址…</option>
+                {addresses.map((entry) => <option key={entry.key} value={entry.key}>{entry.label}</option>)}
+              </select>
+            )}
+            {familyApplies(draft.kind) ? (
+              <div className="segmented" role="radiogroup" aria-label="地址族">
+                {PROBE_FAMILIES.map(({ family, label }) => <label key={family}><input type="radio" name="probe-family" aria-label={label} checked={draft.ipFamily === family} onChange={() => setDraft({ ...draft, ipFamily: family })} /><span>{label}</span></label>)}
+              </div>
+            ) : (
+              <div className="segmented" role="radiogroup" aria-label="记录类型">
+                {DNS_RECORD_TYPES.map(({ type, label }) => <label key={type}><input type="radio" name="probe-record" aria-label={label} checked={draft.dnsRecordType === type} onChange={() => setDraft({ ...draft, dnsRecordType: type })} /><span>{label}</span></label>)}
+              </div>
+            )}
             {draft.kind === ProbeKind.DNS && (
               <label>解析器<input required maxLength={47} placeholder="ip:port，如 1.1.1.1:53" value={draft.dnsServer}
                 onChange={(e) => setDraft({ ...draft, dnsServer: e.target.value })} /></label>

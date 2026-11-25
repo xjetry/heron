@@ -78,6 +78,28 @@ func CheckTask(t *heronv1.ProbeTask) error {
 	if cid := t.GetConfigId(); len(cid) > 0 && len(cid) != ConfigIDLen {
 		return fmt.Errorf("config_id must be exactly %d bytes when set; got %d", ConfigIDLen, len(cid))
 	}
+	// 地址族与记录类型的取值与适用种类同样放在分支之前，理由同上。未定义的枚举值不能按缺省执行：
+	// 较新的 hub 发来的新取值若被当成自动或 A，任务就在调用方不知情时测了另一件事。
+	switch t.GetIpFamily() {
+	case heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED, heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4, heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6:
+	default:
+		return fmt.Errorf("ip_family must be PROBE_IP_FAMILY_UNSPECIFIED, PROBE_IP_FAMILY_IPV4 or PROBE_IP_FAMILY_IPV6; got %s", t.GetIpFamily())
+	}
+	switch t.GetDnsRecordType() {
+	case heronv1.DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED, heronv1.DnsRecordType_DNS_RECORD_TYPE_AAAA:
+	default:
+		return fmt.Errorf("dns_record_type must be DNS_RECORD_TYPE_UNSPECIFIED or DNS_RECORD_TYPE_AAAA; got %s", t.GetDnsRecordType())
+	}
+	// DNS 任务连向解析器的地址族由 dns_server 字面量唯一决定，查询的记录类型另由 dns_record_type 表达；
+	// 两种语义混进同一字段就分不清"经 IPv6 连解析器"与"查 AAAA"。其余种类没有记录类型可查。
+	// 静默忽略都会让调用方以为它生效了。
+	if t.GetKind() == heronv1.ProbeKind_PROBE_KIND_DNS {
+		if t.GetIpFamily() != heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED {
+			return fmt.Errorf("ip_family does not apply to a DNS task; dns_server decides the resolver's family and dns_record_type the queried record; got %s", t.GetIpFamily())
+		}
+	} else if t.GetDnsRecordType() != heronv1.DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED {
+		return fmt.Errorf("dns_record_type only applies to a DNS task; got %s", t.GetDnsRecordType())
+	}
 	switch t.GetKind() {
 	case heronv1.ProbeKind_PROBE_KIND_ICMP:
 		if err := checkTargetLen(t.GetTarget(), MaxTargetLen); err != nil {
@@ -85,6 +107,9 @@ func CheckTask(t *heronv1.ProbeTask) error {
 		}
 		if !validHost(t.GetTarget()) {
 			return fmt.Errorf("target for an ICMP task must be an IP address or a host name; got %q", t.GetTarget())
+		}
+		if err := checkLiteralFamily(t.GetTarget(), t.GetIpFamily()); err != nil {
+			return err
 		}
 	case heronv1.ProbeKind_PROBE_KIND_TCP:
 		if err := checkTargetLen(t.GetTarget(), MaxTargetLen); err != nil {
@@ -104,11 +129,19 @@ func CheckTask(t *heronv1.ProbeTask) error {
 		if canonical := net.JoinHostPort(host, strconv.Itoa(p)); canonical != t.GetTarget() {
 			return fmt.Errorf("target for a TCP task must use canonical host:port form; got %q; want %q", t.GetTarget(), canonical)
 		}
+		if err := checkLiteralFamily(host, t.GetIpFamily()); err != nil {
+			return err
+		}
 	case heronv1.ProbeKind_PROBE_KIND_HTTP:
 		if err := checkTargetLen(t.GetTarget(), MaxHTTPTargetLen); err != nil {
 			return err
 		}
 		if err := checkHTTPURL(t.GetTarget()); err != nil {
+			return err
+		}
+		// checkHTTPURL 已确认可解析且有主机；Hostname 去掉 IPv6 字面量的方括号，与 agent 取连接地址的写法相同。
+		u, _ := url.Parse(t.GetTarget())
+		if err := checkLiteralFamily(u.Hostname(), t.GetIpFamily()); err != nil {
 			return err
 		}
 	case heronv1.ProbeKind_PROBE_KIND_DNS:
@@ -201,6 +234,21 @@ func checkDNSServer(s string) error {
 	}
 	if canonical := net.JoinHostPort(addr.String(), strconv.Itoa(p)); canonical != s {
 		return fmt.Errorf("dns_server must use canonical ip:port form; got %q; want %q", s, canonical)
+	}
+	return nil
+}
+
+// checkLiteralFamily 拒绝与目标 IP 字面量不同族的显式地址族：这样的任务在任何节点上都只能报错，保存时就该指出。
+// 判族前先还原 IPv4 映射地址，与 agent 发包前的还原（prober 的 resolve）一致，否则映射地址在两侧被判成不同的族。
+// 名字与自动地址族不受此约束：名字解析成什么由节点所在网络决定。
+func checkLiteralFamily(host string, family heronv1.ProbeIpFamily) error {
+	addr, err := netip.ParseAddr(host)
+	if err != nil || family == heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED {
+		return nil
+	}
+	is4 := addr.Unmap().Is4()
+	if is4 != (family == heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4) {
+		return fmt.Errorf("ip_family %s conflicts with target address %s", family, host)
 	}
 	return nil
 }

@@ -99,3 +99,15 @@ it("结构规则退回、未启用、启用但没有排除与网络失败各自�
   expect(value("结构规则")).toHaveTextContent(/^本次网络采集失败，结构判定不可用$/);
   expect(value("采集失败项")).toHaveTextContent(/^网络、TCP 计数$/);
 });
+
+it("磁盘排除规则与纳入盘数：失败、未提供与正常三种情形分开说明", () => {
+  const { rerender } = render(<AgentDiagnostics diagnostics={create(AgentDiagnosticsSchema, { diskExclude: ["/mnt/*", "/srv/backup"], diskMountsTotal: 3 })} />);
+  expect(value("磁盘排除规则")).toHaveTextContent(/^\/mnt\/\* \/srv\/backup$/);
+  expect(value("纳入监测的磁盘")).toHaveTextContent(/^3 块（含根盘）$/);
+  rerender(<AgentDiagnostics diagnostics={create(AgentDiagnosticsSchema, { failedCollectors: [CollectionComponent.DISK_MOUNTS] })} />);
+  expect(value("磁盘排除规则")).toHaveTextContent(/^无$/);
+  expect(value("纳入监测的磁盘")).toHaveTextContent("本次逐盘采集失败");
+  expect(value("采集失败项")).toHaveTextContent("逐盘容量");
+  rerender(<AgentDiagnostics diagnostics={create(AgentDiagnosticsSchema, {})} />);
+  expect(value("纳入监测的磁盘")).toHaveTextContent("未上报（Agent 版本不提供）");
+});

@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"text/template"
 
@@ -15,8 +16,43 @@ import (
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
+// Channel 的 Send 就是 request 构造出的那一个请求经出站客户端发出：投递与预览（Queue.Preview）共用 request，
+// 预览看到的方法、目标与请求体与投递发出的逐字节相同，两者之间没有第二份渲染。
 type Channel interface {
 	Send(context.Context, Message) error
+	request(Message) (request, error)
+}
+
+// request 是渠道的一次出站请求。endpoint 与 headers 可含凭据（Telegram 路径里的 bot token、Webhook 的头值与 URL），
+// 只交给 sendHTTP；对外的预览只取 Preview 里的部分。
+type request struct {
+	method, endpoint string
+	headers          map[string]string
+	body             []byte
+}
+
+// Preview 是一次出站请求里可以回显给会话的部分：方法、目标（只到 scheme://host，与 ListNotifyChannels 的 url_host
+// 同一口径，见 URLHost）与请求体。请求体模板本身已对会话回显，渲染结果不扩大可见范围；路径、查询串与头值是只写配置，
+// 不在这里。
+type Preview struct {
+	Method, Target, Body string
+}
+
+// URLHost 是地址回显给会话时的形状：scheme://host，不含路径、查询串与用户信息（其中可能有凭据）。
+func URLHost(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+func (r request) preview() (Preview, error) {
+	target, err := URLHost(r.endpoint)
+	if err != nil {
+		return Preview{}, outboundError(store.FailureRequest, err)
+	}
+	return Preview{Method: r.method, Target: target, Body: string(r.body)}, nil
 }
 
 // sendFailure 是渠道每条可达失败路径的唯一错误形状：类别在产生失败的地方确定，Classify 据此给出
@@ -63,13 +99,13 @@ func outboundError(kind store.DeliveryFailure, err error) error {
 }
 
 // 两种渠道共用出站边界：不信任响应体长度，错误诊断也只保留有限前缀。
-func sendHTTP(ctx context.Context, client *http.Client, method, endpoint string, headers map[string]string, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+func sendHTTP(ctx context.Context, client *http.Client, r request) error {
+	req, err := http.NewRequestWithContext(ctx, r.method, r.endpoint, bytes.NewReader(r.body))
 	if err != nil {
 		return outboundError(store.FailureRequest, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	for key, value := range headers {
+	for key, value := range r.headers {
 		req.Header.Set(key, value)
 	}
 	resp, err := client.Do(req)
@@ -112,13 +148,14 @@ func NewTelegram(cfg TelegramConfig, client *http.Client, base string) Channel {
 	}
 	return &telegram{cfg, client, strings.TrimRight(base, "/")}
 }
-func (t *telegram) Send(ctx context.Context, m Message) error {
+func (t *telegram) request(m Message) (request, error) {
 	body, err := json.Marshal(map[string]string{"chat_id": t.cfg.ChatID, "text": m.Summary})
 	if err != nil {
-		return failure(store.FailureRequest, err)
+		return request{}, failure(store.FailureRequest, err)
 	}
-	return sendHTTP(ctx, t.client, "POST", t.base+"/bot"+t.cfg.BotToken+"/sendMessage", nil, body)
+	return request{method: "POST", endpoint: t.base + "/bot" + t.cfg.BotToken + "/sendMessage", body: body}, nil
 }
+func (t *telegram) Send(ctx context.Context, m Message) error { return send(ctx, t, t.client, m) }
 
 type webhook struct {
 	cfg      WebhookConfig
@@ -141,12 +178,22 @@ func webhookFrom(cfg WebhookConfig, client *http.Client, tmpl *template.Template
 	cfg.Headers = maps.Clone(cfg.Headers)
 	return &webhook{cfg, client, tmpl}, nil
 }
-func (w *webhook) Send(ctx context.Context, m Message) error {
+func (w *webhook) request(m Message) (request, error) {
 	var body bytes.Buffer
 	if err := w.template.Execute(&body, m); err != nil {
-		return failure(store.FailureRequest, err)
+		return request{}, failure(store.FailureRequest, err)
 	}
-	return sendHTTP(ctx, w.client, w.cfg.Method, w.cfg.URL, w.cfg.Headers, body.Bytes())
+	return request{method: w.cfg.Method, endpoint: w.cfg.URL, headers: w.cfg.Headers, body: body.Bytes()}, nil
+}
+func (w *webhook) Send(ctx context.Context, m Message) error { return send(ctx, w, w.client, m) }
+
+// send 是两种渠道 Send 的共同实现：先由 request 构造请求，再经出站客户端发出。
+func send(ctx context.Context, c Channel, client *http.Client, m Message) error {
+	r, err := c.request(m)
+	if err != nil {
+		return err
+	}
+	return sendHTTP(ctx, client, r)
 }
 
 func ParseChannel(c store.NotifyChannel, client *http.Client, telegramBase string) (Channel, error) {

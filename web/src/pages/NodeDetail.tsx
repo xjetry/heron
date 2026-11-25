@@ -7,6 +7,7 @@ import { errorText } from "../api/auth";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
 import { CountryBadge } from "../components/CountryBadge";
 import { DailyTraffic, useDailyTraffic } from "../components/DailyTraffic";
+import { DiskMounts } from "../components/DiskMounts";
 import { EventFeed, useAlertEvents } from "../components/EventFeed";
 import { ExecutionScope } from "../components/ExecutionScope";
 import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
@@ -42,6 +43,8 @@ export function NodeDetail() {
   const nodes = useNodeList({}, { enabled: validId, refetchInterval: TRAFFIC_MS });
   const snap = useQuery(AdminService.method.getSnapshot, {}, { enabled: validId, refetchInterval: POLL_MS });
   const tags = useQuery(AdminService.method.listTags, {}, { enabled: validId });
+  // 逐盘容量只在概览 tab 显示，只在那里轮询；与快照同一节奏，hub 也不会比上报间隔更新得更快。
+  const disks = useQuery(AdminService.method.getNodeDisks, { nodeId }, { enabled: validId && tab === "overview", refetchInterval: POLL_MS });
   const rules = useQuery(AdminService.method.listAlertRules, {}, { enabled: validId && tab === "events" });
   const channels = useQuery(AdminService.method.listNotifyChannels, {}, { enabled: validId && tab === "events" });
   // 流量响应同时携带历史窗口要用的 hub now；校正操作在卡片内保留自己的错误槽位。
@@ -72,11 +75,14 @@ export function NodeDetail() {
   const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); const state: unknown = location.state; setParams(p, { state: typeof state === "object" ? state : null }); };
   const panel = (
     <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
-      {tab === "overview" && (time.ready ? <>
-        <header className="row detail-header"><RangePicker history={history} showCoverage /></header>
-        <MetricCharts history={history} />
-        <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}/compare`}>{title}</Link>} />
-      </> : time.loading)}
+      {tab === "overview" && <>
+        <DiskMounts data={disks.data} />
+        {time.ready ? <>
+          <header className="row detail-header"><RangePicker history={history} showCoverage /></header>
+          <MetricCharts history={history} />
+          <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}/compare`}>{title}</Link>} />
+        </> : time.loading}
+      </>}
       {tab === "traffic" && <>
         {nodeTraffic && traffic.data && <DailyTraffic response={daily.data} traffic={nodeTraffic} timeZone={traffic.data.timezone} now={Number(traffic.data.now)} />}
         <TrafficCard nodeId={nodeId} data={traffic.data} />
@@ -99,7 +105,7 @@ export function NodeDetail() {
   return (
     <section className="node-detail">
       <p><Link to={nodeListReturnPath(location.state)}>返回节点列表</Link></p>
-      {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "traffic" ? daily.error : undefined, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
+      {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "overview" ? disks.error : undefined, tab === "traffic" ? daily.error : undefined, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
       <header className="node-head" role="group" aria-label="节点状态">
         <div className="node-head-title">
           <h1>{node ? node.name : `节点 #${nodeId}`}</h1>

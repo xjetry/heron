@@ -10,18 +10,20 @@ import (
 	"testing"
 	"time"
 
+	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/clock"
 	"github.com/xjetry/heron/internal/probelimit"
 )
 
-// loopbackTargets 放行本机回环：引擎测试只连本机的服务，不依赖宿主网络。
+// loopbackTargets 放行本机回环：引擎测试只连本机的服务，不依赖宿主网络。本机接口地址固定为双栈，
+// 两族都具备，测试结果不随运行它的机器有没有某一族的地址而变。
 func loopbackTargets(t *testing.T, r *net.Resolver) Targets {
 	t.Helper()
 	p, err := ParsePolicy([]string{"127.0.0.0/8", "::1/128"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Targets{Resolver: r, Policy: p}
+	return Targets{Resolver: r, Policy: p, HostAddrs: func() ([]netip.Addr, error) { return dualStackHost, nil }}
 }
 
 func TestPolicyDefaults(t *testing.T) {
@@ -174,7 +176,7 @@ func TestPolicyHostAddresses(t *testing.T) {
 // 列不出本机地址时拒绝这次探测：放行会让本机地址在这段时间里可探测。
 func TestTargetsFailClosedWhenHostAddressesUnknown(t *testing.T) {
 	tg := Targets{HostAddrs: func() ([]netip.Addr, error) { return nil, errors.New("netlink down") }}
-	if _, err := tg.Resolve(t.Context(), "1.1.1.1", true, true); err == nil || !strings.Contains(err.Error(), "netlink down") {
+	if _, err := tg.Resolve(t.Context(), "1.1.1.1", heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED, bothStacks); err == nil || !strings.Contains(err.Error(), "netlink down") {
 		t.Fatalf("err = %v, want the enumeration failure", err)
 	}
 }

@@ -282,8 +282,8 @@ func TestRootOpensOnlyWithReadOnlyFlags(t *testing.T) {
 		}
 		return true
 	})
-	// 四处 openat 调用（Open、Stat、StatID、FSType）、根目录一次 Open、回退一次 Openat、探测与正常各一个 OpenHow。
-	want := map[string]int{"r.openat": 4, "unix.Open": 1, "unix.Openat": 1, "unix.OpenHow": 2}
+	// 五处 openat 调用（Open、Stat、StatID、FSType、MountUsage）、根目录一次 Open、回退一次 Openat、探测与正常各一个 OpenHow。
+	want := map[string]int{"r.openat": 5, "unix.Open": 1, "unix.Openat": 1, "unix.OpenHow": 2}
 	if !maps.Equal(counts, want) {
 		t.Fatalf("open sites = %v, want %v; a new open path must be added to this check deliberately", counts, want)
 	}

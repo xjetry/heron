@@ -3,9 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/url"
 	"sort"
+	"sync"
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
@@ -86,14 +87,15 @@ func (s *Service) ListAlertRules(ctx context.Context, _ *connect.Request[heronv1
 	return connect.NewResponse(out), nil
 }
 
-func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv1.SaveAlertRuleRequest]) (*connect.Response[heronv1.SaveAlertRuleResponse], error) {
-	r := req.Msg.GetRule()
+// ruleFromProto 是协议的告警规则到存储形状的唯一转换，保存与通知样例共用：枚举按协议词汇解析、出错以 rule.<字段> 点名，
+// 其余字段原样带入，由 alert.CheckRule 与 store 裁决。
+func ruleFromProto(r *heronv1.AlertRule) (store.AlertRule, error) {
 	if err := checkTaskID(r.GetTaskId(), "rule.task_id"); err != nil {
-		return nil, err
+		return store.AlertRule{}, err
 	}
 	kind, err := parseEnum(alertKinds, r.GetKind(), "rule", "kind")
 	if err != nil {
-		return nil, err
+		return store.AlertRule{}, err
 	}
 	var metric store.ProbeMetric
 	// 只有探测规则使用指标。其余种类显式传入的指标也先按协议枚举解析，表外值在这里以协议词汇报错；表内值由
@@ -101,14 +103,14 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv
 	if kind == store.KindProbe || r.GetMetric() != heronv1.ProbeMetric_PROBE_METRIC_UNSPECIFIED {
 		metric, err = parseEnum(probeMetrics, r.GetMetric(), "rule", "metric")
 		if err != nil {
-			return nil, err
+			return store.AlertRule{}, err
 		}
 	}
 	var resourceMetric store.ResourceMetric
 	if kind == store.KindResource || r.GetResourceMetric() != heronv1.ResourceMetric_RESOURCE_METRIC_UNSPECIFIED {
 		resourceMetric, err = parseEnum(resourceMetrics, r.GetResourceMetric(), "rule", "resource_metric")
 		if err != nil {
-			return nil, err
+			return store.AlertRule{}, err
 		}
 	}
 	// rtt_mode 的零值是"没发这个字段"：rtt 规则按固定阈值收（不带它的旧客户端保存的就是固定阈值规则），存储层显式落值、
@@ -118,7 +120,7 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv
 	if r.GetRttMode() != heronv1.RttMode_RTT_MODE_UNSPECIFIED {
 		rttMode, err = parseEnum(rttModes, r.GetRttMode(), "rule", "rtt_mode")
 		if err != nil {
-			return nil, err
+			return store.AlertRule{}, err
 		}
 	} else if kind == store.KindProbe && metric == store.MetricRttMs {
 		rttMode = store.RttThreshold
@@ -128,20 +130,108 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv
 	if r.GetBaselineMode() != heronv1.BaselineMode_BASELINE_MODE_UNSPECIFIED {
 		baselineMode, err = parseEnum(baselineModes, r.GetBaselineMode(), "rule", "baseline_mode")
 		if err != nil {
-			return nil, err
+			return store.AlertRule{}, err
 		}
 	}
 	tags, err := cleanTags("rule.selector_tags", r.GetSelectorTags())
 	if err != nil {
+		return store.AlertRule{}, err
+	}
+	return store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore()), ResourceMetric: resourceMetric, RecoveryThreshold: r.GetRecoveryThreshold(), SelectorTags: tags,
+		RttMode: rttMode, BaselineMode: baselineMode, BaselineWindowS: int(r.GetBaselineWindowS()), BaselineMinSamples: int(r.GetBaselineMinSamples()),
+		UpperDeviationPct: r.GetUpperDeviationPct(), LowerDeviationPct: r.GetLowerDeviationPct(), CooldownS: int(r.GetCooldownS()), FixedBaselineMs: r.GetFixedBaselineMs()}, nil
+}
+
+func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv1.SaveAlertRuleRequest]) (*connect.Response[heronv1.SaveAlertRuleResponse], error) {
+	r, err := ruleFromProto(req.Msg.GetRule())
+	if err != nil {
 		return nil, err
 	}
-	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore()), ResourceMetric: resourceMetric, RecoveryThreshold: r.GetRecoveryThreshold(), SelectorTags: tags,
-		RttMode: rttMode, BaselineMode: baselineMode, BaselineWindowS: int(r.GetBaselineWindowS()), BaselineMinSamples: int(r.GetBaselineMinSamples()),
-		UpperDeviationPct: r.GetUpperDeviationPct(), LowerDeviationPct: r.GetLowerDeviationPct(), CooldownS: int(r.GetCooldownS()), FixedBaselineMs: r.GetFixedBaselineMs()})
+	saved, err := s.alerts.SaveRule(ctx, r)
 	if err != nil {
 		return nil, s.operationError(err, "rule", "saving alert rule failed")
 	}
 	return connect.NewResponse(&heronv1.SaveAlertRuleResponse{Rule: ruleProto(saved)}), nil
+}
+
+// alertSample 是预览与试投递共同的输入处理：规则经 ruleFromProto，节点须存在，阶段只有 firing 与 recovered，
+// 样例由 alert.Engine.Sample 给出（渠道只能是已保存的，见那里）。
+func (s *Service) alertSample(ctx context.Context, rule *heronv1.AlertRule, nodeID int64, transition string) (alert.Sample, error) {
+	phase := store.Transition(transition)
+	if phase != store.TransitionFiring && phase != store.TransitionRecovered {
+		return alert.Sample{}, invalid("transition must be one of %s, %s; got %q", store.TransitionFiring, store.TransitionRecovered, transition)
+	}
+	r, err := ruleFromProto(rule)
+	if err != nil {
+		return alert.Sample{}, err
+	}
+	n, err := s.store.GetNode(ctx, nodeID)
+	if errors.Is(err, store.ErrNotFound) {
+		return alert.Sample{}, notFound(nodeID)
+	}
+	if err != nil {
+		return alert.Sample{}, s.operationError(err, "node_id", "reading sample node failed")
+	}
+	sample, err := s.alerts.Sample(ctx, r, n, phase)
+	if err != nil {
+		return alert.Sample{}, s.operationError(err, "rule", "building alert notification sample failed")
+	}
+	return sample, nil
+}
+
+func (s *Service) PreviewAlertNotification(ctx context.Context, req *connect.Request[heronv1.PreviewAlertNotificationRequest]) (*connect.Response[heronv1.PreviewAlertNotificationResponse], error) {
+	sample, err := s.alertSample(ctx, req.Msg.GetRule(), req.Msg.GetNodeId(), req.Msg.GetTransition())
+	if err != nil {
+		return nil, err
+	}
+	out := &heronv1.PreviewAlertNotificationResponse{}
+	for _, c := range sample.Channels {
+		p, err := s.notifier.Preview(c, sample.Message)
+		if err != nil {
+			out.Previews = append(out.Previews, &heronv1.AlertNotificationPreview{ChannelId: c.ID, Error: err.Error()})
+			continue
+		}
+		out.Previews = append(out.Previews, &heronv1.AlertNotificationPreview{ChannelId: c.ID, Method: p.Method, UrlHost: p.Target, Body: p.Body})
+	}
+	return connect.NewResponse(out), nil
+}
+
+// TestAlertSummaryPrefix 是试投递摘要的固定前缀：收到的人据它分辨这不是真实告警。只加在摘要上，其余模板变量保持
+// 真实形态，接收方按真实事件解析的模板照样能用。
+const TestAlertSummaryPrefix = "[测试] "
+
+func (s *Service) TestAlertNotification(ctx context.Context, req *connect.Request[heronv1.TestAlertNotificationRequest]) (*connect.Response[heronv1.TestAlertNotificationResponse], error) {
+	sample, err := s.alertSample(ctx, req.Msg.GetRule(), req.Msg.GetNodeId(), req.Msg.GetTransition())
+	if err != nil {
+		return nil, err
+	}
+	m := sample.Message
+	m.Summary = TestAlertSummaryPrefix + m.Summary
+	// 渠道各自同步发出、彼此并发：每个至多 alert.NotifyTimeout，请求总时长不随渠道数（至多 alert.SampleChannelLimit）叠加。
+	sent := make([]error, len(sample.Channels))
+	var wg sync.WaitGroup
+	for i, c := range sample.Channels {
+		wg.Go(func() { sent[i] = s.notifier.SendNow(ctx, c, m) })
+	}
+	wg.Wait()
+	out := &heronv1.TestAlertNotificationResponse{}
+	for i, c := range sample.Channels {
+		result := &heronv1.AlertNotificationTestResult{ChannelId: c.ID, Ok: sent[i] == nil}
+		if sent[i] != nil {
+			// 与投递同一个分类（alert.Classify）与同一个协议映射（deliveryFailureProto）：表外的类别同样是 internal。
+			r, _ := alert.Classify(sent[i])
+			failure, err := deliveryFailureProto(r.Failure)
+			if err != nil {
+				return nil, s.operationError(err, "", "test alert notification failed")
+			}
+			result.Failure, result.Error = failure, sent[i].Error()
+			if r.Failure == store.FailureHTTPStatus {
+				result.HttpStatus = proto.Uint32(uint32(r.HTTPStatus))
+			}
+		}
+		out.Results = append(out.Results, result)
+	}
+	return connect.NewResponse(out), nil
 }
 
 func (s *Service) DeleteAlertRule(ctx context.Context, req *connect.Request[heronv1.DeleteAlertRuleRequest]) (*connect.Response[heronv1.DeleteAlertRuleResponse], error) {
@@ -167,7 +257,7 @@ func channelProto(c store.NotifyChannel) (*heronv1.NotifyChannel, error) {
 		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
 			return nil, err
 		}
-		u, err := url.Parse(cfg.URL)
+		host, err := alert.URLHost(cfg.URL)
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +266,7 @@ func channelProto(c store.NotifyChannel) (*heronv1.NotifyChannel, error) {
 			names = append(names, k)
 		}
 		sort.Strings(names)
-		out.Webhook = &heronv1.WebhookConfig{HasUrl: cfg.URL != "", UrlHost: u.Scheme + "://" + u.Host, HeaderNames: names, Method: cfg.Method, BodyTemplate: cfg.BodyTemplate}
+		out.Webhook = &heronv1.WebhookConfig{HasUrl: cfg.URL != "", UrlHost: host, HeaderNames: names, Method: cfg.Method, BodyTemplate: cfg.BodyTemplate}
 	}
 	return out, nil
 }

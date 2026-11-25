@@ -67,6 +67,13 @@ type execSnapshot struct {
 	readCPUUsage func() (uint64, error)
 	readMemEnv   func() (usage, error)
 	readSwapEnv  func() (usage, error)
+
+	// 选盘的输入（ProcFS.diskMounts），与上面的口径同一次识别得出。mounts 是本周期读到的挂载表，读不出或认不出时
+	// 为 nil、mountErr 给出原因；readerInContainer 是读者的部署标识（deployenv.ContainerEvidence），与挂载根是不是
+	// 环境 cgroup 一起决定读者的挂载表是否描述被观测主机。darwin 不用这三项。
+	mounts            []mountinfoEntry
+	mountErr          error
+	readerInContainer bool
 }
 
 // execEvidence 是一次识别读到的原始证据。buildExecSnapshot 只看它，不再碰系统，
@@ -83,7 +90,7 @@ type execEvidence struct {
 
 	// 来源判断：mountinfo 全表（nil 表示读不出或解析失败，来源全部按未知），以及四个
 	// 被消费文件的设备号键（"major:minor"；errk 非 nil 按 stat 失败即来源未知）。
-	mounts        []mountEntry
+	mounts        []mountinfoEntry
 	mountErr      error
 	statDev       fileDev
 	meminfoDev    fileDev
@@ -175,26 +182,22 @@ func readLimit[T uint64 | float64](fsys fs.FS, name string, parse func(string) (
 	return limitValue[T]{value: v, numeric: true}
 }
 
-// mountEntry 是 /proc/self/mountinfo 的一行里识别要用的两件事：文件系统所在设备
-// （"major:minor"，与 st_dev 的键同构）与文件系统类型。
-type mountEntry struct{ dev, fstype string }
-
 // mountTypes 把挂载表折叠成设备号到 fstype 的映射。同一设备号多次出现是常态：bind
 // 挂载把同一文件系统实例挂到多个挂载点（lxcfs 的逐文件绑定即如此），fstype 必然相同；
 // 而叠加挂载（mount -t proc 之类的新实例）拿的是新设备号（内核 7.0.14-orbstack 上实测），不产生
 // 重复设备号。出现两种 fstype 视为表不可信：该设备从表里剔除，来源按未知处理，
 // 结论与行序无关。
-func mountTypes(mounts []mountEntry) map[string]string {
+func mountTypes(mounts []mountinfoEntry) map[string]string {
 	out := make(map[string]string, len(mounts))
 	drop := map[string]bool{}
 	for _, m := range mounts {
 		if prev, ok := out[m.dev]; ok {
-			if prev != m.fstype {
+			if prev != m.fsType {
 				drop[m.dev] = true
 			}
 			continue
 		}
-		out[m.dev] = m.fstype
+		out[m.dev] = m.fsType
 	}
 	for dev := range drop {
 		delete(out, dev)
@@ -247,18 +250,20 @@ func (p *ProcFS) identify() *execSnapshot {
 		r.Close()
 	}
 	ev.meminfo, ev.meminfoErr = p.meminfo()
+	inContainer := deployenv.Read(p.Reader).ContainerEvidence()
 	if ev.cgroup2 {
 		switch _, err := fs.Stat(p.Root, "sys/fs/cgroup/cgroup.type"); {
 		case err == nil:
 			ev.env = p.gatherEnv()
 		case errors.Is(err, fs.ErrNotExist):
 			ev.hostRoot = true
-			ev.containerSignal = deployenv.Read(p.Reader).ContainerEvidence()
+			ev.containerSignal = inContainer
 		default:
 			ev.rootStatErr = err
 		}
 	}
 	snap := buildExecSnapshot(ev)
+	snap.mounts, snap.mountErr, snap.readerInContainer = ev.mounts, ev.mountErr, inContainer
 	if snap.exec.GetCpu() == heronv1.ResourceScope_RESOURCE_SCOPE_ENVIRONMENT {
 		snap.readCPUUsage = p.readCgroupCPUUsage
 	}

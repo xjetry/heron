@@ -65,17 +65,17 @@ it("块大小只取调用方传入的上限，0 与负数不是不限，也不�
   expect(chunkNodeIds([1n, 2n, 3n], -1)).toEqual({ ok: false, reason: "non-positive-limit" });
 });
 
-it("全超时 100%、全本地错误 0%、混合按 lost/sent；三者都没有 RTT，不把 null 画成 0", () => {
+it("全超时 100%、全本地错误无丢包率读数、混合按 lost/sent；三者都没有 RTT，不把 null 画成 0", () => {
   const view = assembleComparison([1n, 2n, 3n], names, [chunk([
     { nodeId: 1n, samples: [sample(120, 10, 10, 0)] },
     { nodeId: 2n, samples: [sample(120, 5, 0, 5)] },
     { nodeId: 3n, samples: [sample(120, 10, 4, 3)] },
   ])], from, to);
   expect(view.complete).toBe(true);
-  expect(view.loss.labels).toEqual(["edge #1", "edge #2", "other"]);
+  expect(view.loss.labels).toEqual(["edge #1", "other"]);
   expect(view.loss.data[0]).toEqual([60, 120, 180, 240]);
-  expect(view.loss.data.slice(1).map((col) => col[1])).toEqual([100, 0, 40]);
-  expect(view.loss.missing).toEqual([]);
+  expect(view.loss.data.slice(1).map((col) => col[1])).toEqual([100, 40]);
+  expect(view.loss.missing).toEqual(["edge #2"]);
   expect(view.rtt.labels).toEqual([]);
   expect(view.rtt.data.slice(1)).toEqual([]);
   expect(view.rtt.missing).toEqual(["edge #1", "edge #2", "other"]);

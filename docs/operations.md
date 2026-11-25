@@ -160,6 +160,16 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 - 规则按最长前缀匹配；前缀一样长时本地规则优先于默认规则。前缀必须写成规范形式（`10.0.0.0/8`，不能写 `10.1.2.3/8`）；同一前缀不能同时出现在两个列表里。配置文件里有不认识的字段时 agent 拒绝启动，免得拼错的规则被静默忽略。
 - 计入流量与速率的网卡由 `heron-agent run` 的 `--net-include` / `--net-exclude` 控制（逗号分隔的 glob，给出任一个即整个替换平台默认规则；默认规则与各平台默认值见 `heron-agent run -h`）。安装脚本不暴露这两个参数：systemd 用 drop-in 覆盖 `ExecStart`，OpenRC 改 `/etc/init.d/heron-agent`，macOS 改 plist 的 `ProgramArguments`；升级会重写发行包自带的服务定义，drop-in 之外的改动要重放。
 - hub 地址同样只能在节点本机改：`heron-agent configure --hub <新地址>`，沿用 token 与本地策略，见 [install.md 的更换 hub 地址](install.md#更换-hub-地址)。
+- 本地数据盘：agent 在根盘之外按挂载表采集本地数据盘的逐盘容量，管理端节点详情的「本地磁盘」列出最满的 16 块（公开页不显示挂载路径）。只认本地持久化文件系统（Linux：ext2/3/4、xfs、btrfs、zfs、f2fs、bcachefs、jfs、reiserfs、nilfs2、ntfs3；macOS：apfs、hfs，系统卷除外），不认 vfat（EFI 分区）、网络与 FUSE 文件系统以及挂在它们下面的盘、文件系统本身只读的挂载、小于 256 MiB 的分区、被别的挂载盖住的挂载点。共享同一块设备或存储池的挂载点（绑定挂载、btrfs 子卷、ZFS 数据集、APFS 容器里的卷）只报一个：根所在的报 `/`，其余报最短路径。容器里运行而没给 `--host-root` 时只报根。根盘用量（概览与历史里的磁盘）始终是 `/`。
+- 不想监测的盘写进排除规则（按挂载路径 glob，`/` 总是监测），改完重启服务；`run --disk-exclude` 显式给出时以命令行为准（容器形态改命令行更方便）：
+
+  ```sh
+  sudo heron-agent configure --disk-exclude '/mnt/*,/srv/backup'
+  sudo heron-agent configure --disk-exclude ""   # 清空
+  ```
+
+  某块合格的盘读不出（权限、I/O 错误）时整份逐盘读数缺失，节点诊断的采集失败项记「逐盘容量」，agent 日志点名路径；不需要监测它就把它加进排除规则。
+- 在线更新经 hub 中转（`--update-source hub`）的节点：更新器读 agent 配置时拒绝不认识的字段，不认识 `disk_exclude` 的旧版更新器会因此取不到更新。在这类节点上写 `disk_exclude` 之前先重跑新版安装器升级更新器，或改用 `run --disk-exclude`。
 - agent 日志有总量上限（突发之后被压掉的行数记在下一条日志里）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
 
 ## 排查

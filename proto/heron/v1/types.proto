@@ -71,6 +71,18 @@ message NetInterfaceCounter {
   uint64 tx_bytes = 3;
 }
 
+// 一个本地数据盘挂载点的容量，与同一请求的 Metrics 同一次采样。字节口径与 Metrics.disk_total / disk_used 相同：
+// total 是文件系统的全部块，used 是全部块减空闲块（含 root 保留）。共享同一块设备或同一存储池的多个挂载点只出现一项，
+// 代表路径取根 "/"，其次取最短路径（同长按字节序）。
+message DiskMountUsage {
+  // 被观测主机上的挂载路径：以 "/" 开头的规范绝对路径（path.Clean 不变），非空 UTF-8、无控制字符、至多 256 字节
+  // （agentwire.ValidateDiskMountPath）。容器里以 --host-root 采集时是宿主机上的路径，不带宿主根前缀。
+  string path = 1;
+  // 大于 0；used 不超过它。
+  uint64 total = 2;
+  uint64 used = 3;
+}
+
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
 message Facts {
   string hostname = 1;
@@ -195,6 +207,13 @@ message AgentDiagnostics {
   uint32 net_structure_excluded_total = 9;
   // 结构规则把名字规则放行的网卡全部排除，本次退回只按名字规则计入；此时排除列表为空。
   bool net_structure_fallback = 10;
+  // 生效的本地数据盘排除规则（heron-agent 的 --disk-exclude 或配置的 disk_exclude），按挂载路径做 glob 匹配；
+  // 至多 64 个，每个以 "/" 开头、至多 128 字节。根 "/" 不受排除规则影响。
+  repeated string disk_exclude = 11;
+  // 本次纳入监测的本地数据盘总数（含根盘，已去重、已排除），即 ReportRequest.disk_mounts_total 的同一次取值；
+  // 逐盘容量不进诊断，它们随每次上报走 ReportRequest.disk_mounts。本次逐盘采集失败（failed_collectors 含
+  // DISK_MOUNTS）或 agent 不提供时为 0。只在集合大小变化时改变，不随容量读数变化。
+  uint32 disk_mounts_total = 12;
 }
 
 message NetStructureExclusion {
@@ -232,6 +251,8 @@ enum CollectionComponent {
   COLLECTION_COMPONENT_DISK_IO = 11;
   // /proc/net/snmp 的 TCP 计数；平台不提供时（darwin）不记失败。
   COLLECTION_COMPONENT_TCP_STATS = 12;
+  // 本地数据盘的逐盘容量（挂载表与各挂载点的 statfs）；根盘用量仍记在 DISK。
+  COLLECTION_COMPONENT_DISK_MOUNTS = 13;
 }
 
 // NetworkInfo 保留 agent 对两个地址族的原始探测结果；AddressDetection 的状态与地址由
@@ -333,11 +354,34 @@ message ProbeTask {
   string dns_server = 6;
   // 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
   // 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
-  // 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
   bytes cert_spki_sha256 = 7;
   // 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
   // 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
   bytes config_id = 8;
+  // 探测地址族，只对 ICMP、TCP、HTTP 任务有意义。DNS 任务携带非缺省值即 InvalidArgument：连向解析器的地址族
+  // 已由 dns_server 的字面量唯一决定，查什么记录另由 dns_record_type 表达，两者正交。
+  // 目标（ICMP 的 target、TCP 的 host、HTTP URL 的主机）是 IP 字面量时，显式地址族必须与字面量同族，否则
+  // InvalidArgument；hub 保存与 agent 应用调用同一份校验。
+  ProbeIpFamily ip_family = 9;
+  // DNS 任务查询的记录类型，缺省即 A。其他种类携带非缺省值即 InvalidArgument。
+  DnsRecordType dns_record_type = 10;
+}
+
+// 探测地址族。缺省（UNSPECIFIED）即自动：agent 只在本机具备的地址族里选，本机两族都具备时名字优先取 IPv4。
+// 本机具备某族 ⇔ 本机接口上有该族的非回环、非链路本地地址（ICMP 还要求该族的套接字可用）。显式要求本机
+// 不具备的地址族，或目标字面量属于本机不具备的地址族时，agent 每个周期上报 ProbeError（不计入丢包），不静默跳过。
+enum ProbeIpFamily {
+  PROBE_IP_FAMILY_UNSPECIFIED = 0;
+  // 只解析 A 记录、只经 IPv4 发起。
+  PROBE_IP_FAMILY_IPV4 = 1;
+  // 只解析 AAAA 记录、只经 IPv6 发起。
+  PROBE_IP_FAMILY_IPV6 = 2;
+}
+
+// DNS 探测查询的资源记录类型。缺省（UNSPECIFIED）即 A；应答里带有所查类型的记录才算解析成功。
+enum DnsRecordType {
+  DNS_RECORD_TYPE_UNSPECIFIED = 0;
+  DNS_RECORD_TYPE_AAAA = 1;
 }
 
 message ProbeTasks {

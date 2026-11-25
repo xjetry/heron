@@ -149,6 +149,7 @@ func TestNetworkOldSnapshotRestoresWithoutInventingAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeV51Config(t, db)
 	removeV50Config(t, db)
 	removeV49Config(t, db)
 	removeV48Config(t, db)

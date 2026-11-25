@@ -214,9 +214,13 @@ func (h *ifacesOnly) hasNetStructure() bool       { return false }
 func (h *ifacesOnly) netStructure(string) (netStructure, error) {
 	return netStructure{}, errors.New("ifacesOnly has no structure attributes")
 }
-func (h *ifacesOnly) facts() hostFacts        { return hostFacts{} }
-func (h *ifacesOnly) identify() *execSnapshot { return identifyFailedSnapshot() }
-func (h *ifacesOnly) close() error            { return nil }
+func (h *ifacesOnly) diskMounts(*execSnapshot) ([]mountEntry, error) {
+	return nil, errNoReading
+}
+func (h *ifacesOnly) mountUsage(string) (usage, error) { return usage{}, errNoReading }
+func (h *ifacesOnly) facts() hostFacts                 { return hostFacts{} }
+func (h *ifacesOnly) identify() *execSnapshot          { return identifyFailedSnapshot() }
+func (h *ifacesOnly) close() error                     { return nil }
 
 // 被排除的网卡不进合计，未给 --net-exclude 时用 Host 的默认列表，给了就整个替换默认列表。
 func TestExcludedInterfacesAreNotSummed(t *testing.T) {
@@ -557,7 +561,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	wantFacts := &heronv1.Facts{
 		Hostname: "synth", Os: "Synth Linux 1", Kernel: "6.1.0-synth", Arch: runtime.GOARCH, Virtualization: "lxc",
 		CpuModel: "Synth CPU", CpuCores: 3, AgentVersion: "v9", IcmpAvailable: true,
-		Diagnostics: &heronv1.AgentDiagnostics{NetExclude: slices.Clone(linuxNetExclude), NetInterfaces: []string{"eth0"}, NetInterfacesTotal: 1, NetStructureRules: true},
+		// 读者有容器标识、又没有显式宿主根：挂载表是容器自己的，逐盘只报根。
+		Diagnostics: &heronv1.AgentDiagnostics{NetExclude: slices.Clone(linuxNetExclude), NetInterfaces: []string{"eth0"}, NetInterfacesTotal: 1, NetStructureRules: true, DiskMountsTotal: 1},
 		// 真根 + 容器标识（PID 1 的 container=lxc）：读数仍是整机，记说明。
 		Execution: &heronv1.ExecutionScope{
 			Kind: heronv1.ScopeKind_SCOPE_KIND_HOST, Cpu: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
@@ -570,6 +575,9 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	}
 	if d := protoDiff(c.Facts(c.Identify()), wantFacts); d != nil {
 		t.Fatalf("facts differ:\n%s", strings.Join(d, "\n"))
+	}
+	if list, total := c.DiskMounts(); total != 1 || len(list) != 1 || !proto.Equal(list[0], &heronv1.DiskMountUsage{Path: "/", Total: 9000, Used: 1234}) {
+		t.Fatalf("disk mounts = %v (total %d), want the root reading only", list, total)
 	}
 }
 

@@ -92,7 +92,7 @@ func (p *HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 			port = "80"
 		}
 	}
-	ip, err := p.Targets.Resolve(ctx, u.Hostname(), true, true)
+	ip, err := p.Targets.Resolve(ctx, u.Hostname(), t.GetIpFamily(), bothStacks)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}

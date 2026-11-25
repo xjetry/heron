@@ -16,10 +16,11 @@ import (
 	"github.com/xjetry/heron/internal/clock"
 )
 
-// DNS 手组一条 A 查询发给任务指定的解析器，测量从发出到收到应答的耗时。
-// 单个 UDP 包，不重试、不走 TCP：探的是"这个解析器此刻能不能答出 A 记录"，重试会把
-// 一次失败伪装成一次慢成功。NXDOMAIN/SERVFAIL/REFUSED、无 A 记录、解不开的应答与
-// 对不上号的应答都计入丢包；dns_server 非法、地址策略拒绝与 socket/fd 等本机原因是 error。
+// DNS 手组一条查询（任务的 dns_record_type：缺省 A，或 AAAA）发给任务指定的解析器，测量从发出到收到应答的耗时。
+// 单个 UDP 包，不重试、不走 TCP：探的是"这个解析器此刻能不能答出这类记录"，重试会把
+// 一次失败伪装成一次慢成功。NXDOMAIN/SERVFAIL/REFUSED、没有所查类型的记录、解不开的应答与
+// 对不上号的应答都计入丢包；dns_server 非法、地址策略拒绝、本机没有解析器地址所属的族与 socket/fd 等本机原因是 error。
+// 连解析器走哪一族只由 dns_server 字面量决定，与查询的记录类型无关：经 IPv4 解析器查 AAAA 是合法的。
 type DNS struct {
 	Clock   clock.Clock
 	Targets Targets
@@ -36,8 +37,9 @@ func (p DNS) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	if _, err := netip.ParseAddr(host); err != nil {
 		return Outcome{Err: fmt.Sprintf("dns_server %q does not use an IP literal", t.GetDnsServer())}
 	}
-	// 解析器即使已是 IP 字面量也走 Targets：要发包的地址在解析之后、发包之前按 Policy 检查，跳过这一步会让字面量解析器绕开默认拒绝。
-	ip, err := p.Targets.Resolve(ctx, host, true, true)
+	// 解析器即使已是 IP 字面量也走 Targets：要发包的地址在解析之后、发包之前按 Policy 检查，跳过这一步会让字面量解析器绕开默认拒绝；
+	// 本机是否具备字面量所属的族也在那里核对。DNS 任务没有探测地址族（CheckTask 拒绝非缺省值），按自动传入。
+	ip, err := p.Targets.Resolve(ctx, host, heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED, bothStacks)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}
@@ -57,7 +59,7 @@ func (p DNS) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 		Header: dnsmessage.Header{ID: binary.BigEndian.Uint16(id[:]), RecursionDesired: true},
 		Questions: []dnsmessage.Question{{
 			Name:  name,
-			Type:  dnsmessage.TypeA,
+			Type:  recordType(t.GetDnsRecordType()),
 			Class: dnsmessage.ClassINET,
 		}},
 	}).Pack()
@@ -92,11 +94,19 @@ func (p DNS) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	return Outcome{RttUs: uint32(elapsed / time.Microsecond)}
 }
 
-// dnsResolved 裁决应答报文：只有对得上号、NOERROR 且带着 A 记录的应答才是解析成功，
-// 其余——拒绝、空应答、残报文、张冠李戴——都是"这一次没有解析成功"，计入丢包。
+// recordType 把任务的记录类型换成报文类型；CheckTask 只放行定义过的取值。
+func recordType(t heronv1.DnsRecordType) dnsmessage.Type {
+	if t == heronv1.DnsRecordType_DNS_RECORD_TYPE_AAAA {
+		return dnsmessage.TypeAAAA
+	}
+	return dnsmessage.TypeA
+}
+
+// dnsResolved 裁决应答报文：只有对得上号、NOERROR 且带着所查类型记录（查询报文里那一个问题的类型）的应答才是解析成功，
+// 其余——拒绝、空应答、只有别的类型的记录、残报文、张冠李戴——都是"这一次没有解析成功"，计入丢包。
 func dnsResolved(query, answer []byte) bool {
 	var q, r dnsmessage.Message
-	if err := q.Unpack(query); err != nil {
+	if err := q.Unpack(query); err != nil || len(q.Questions) != 1 {
 		return false
 	}
 	if err := r.Unpack(answer); err != nil || !r.Response || r.ID != q.ID {
@@ -106,7 +116,7 @@ func dnsResolved(query, answer []byte) bool {
 		return false
 	}
 	for _, rr := range r.Answers {
-		if rr.Header.Type == dnsmessage.TypeA {
+		if rr.Header.Type == q.Questions[0].Type {
 			return true
 		}
 	}

@@ -178,6 +178,12 @@ const (
 	// AdminServiceTestNotifyChannelProcedure is the fully-qualified name of the AdminService's
 	// TestNotifyChannel RPC.
 	AdminServiceTestNotifyChannelProcedure = "/heron.v1.AdminService/TestNotifyChannel"
+	// AdminServicePreviewAlertNotificationProcedure is the fully-qualified name of the AdminService's
+	// PreviewAlertNotification RPC.
+	AdminServicePreviewAlertNotificationProcedure = "/heron.v1.AdminService/PreviewAlertNotification"
+	// AdminServiceTestAlertNotificationProcedure is the fully-qualified name of the AdminService's
+	// TestAlertNotification RPC.
+	AdminServiceTestAlertNotificationProcedure = "/heron.v1.AdminService/TestAlertNotification"
 	// AdminServiceGetSettingsProcedure is the fully-qualified name of the AdminService's GetSettings
 	// RPC.
 	AdminServiceGetSettingsProcedure = "/heron.v1.AdminService/GetSettings"
@@ -242,6 +248,9 @@ const (
 	AdminServiceGetApiReferenceProcedure = "/heron.v1.AdminService/GetApiReference"
 	// AdminServiceGetCallerProcedure is the fully-qualified name of the AdminService's GetCaller RPC.
 	AdminServiceGetCallerProcedure = "/heron.v1.AdminService/GetCaller"
+	// AdminServiceGetNodeDisksProcedure is the fully-qualified name of the AdminService's GetNodeDisks
+	// RPC.
+	AdminServiceGetNodeDisksProcedure = "/heron.v1.AdminService/GetNodeDisks"
 )
 
 // AdminServiceClient is a client for the heron.v1.AdminService service.
@@ -374,6 +383,14 @@ type AdminServiceClient interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
+	// 按编辑中的规则（可未保存）与一个样例节点渲染各关联渠道在某一阶段会发出的请求，不出网。请求体由投递同一条渲染
+	// 路径给出，与真实告警逐字节相同；模板执行出错的渠道在结果里给出错误原文，其余渠道照常渲染。
+	// 渲染结果含按请求体模板展开的内容，模板里可能放着下游密钥，所以只对会话开放。
+	PreviewAlertNotification(context.Context, *connect.Request[v1.PreviewAlertNotificationRequest]) (*connect.Response[v1.PreviewAlertNotificationResponse], error)
+	// 与 PreviewAlertNotification 同一个样例，摘要前冠以 "[测试] "，同步发往各关联渠道（并发，每个渠道至多 10 秒），
+	// 逐渠道给出结果。不写告警状态与事件、不建投递记录、不占渠道的每分钟节奏。接收方的错误原文可能回显请求体，
+	// 所以只对会话开放。
+	TestAlertNotification(context.Context, *connect.Request[v1.TestAlertNotificationRequest]) (*connect.Response[v1.TestAlertNotificationResponse], error)
 	// 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
 	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
@@ -429,6 +446,9 @@ type AdminServiceClient interface {
 	// 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
 	// 试错；会话返回 session。指定节点的 token 也能调用。
 	GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error)
+	// 节点最近一次上报的本地数据盘逐盘容量，只在 hub 内存里（hub 重启后到该节点再次上报前为空）。挂载路径是 agent 自报的
+	// 任意文本，所以不进可压缩的 GetSnapshot，也没有公开对应。节点不存在或不在调用方范围内返回 NotFound。
+	GetNodeDisks(context.Context, *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the heron.v1.AdminService service. By default, it
@@ -754,6 +774,18 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("TestNotifyChannel")),
 			connect.WithClientOptions(opts...),
 		),
+		previewAlertNotification: connect.NewClient[v1.PreviewAlertNotificationRequest, v1.PreviewAlertNotificationResponse](
+			httpClient,
+			baseURL+AdminServicePreviewAlertNotificationProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("PreviewAlertNotification")),
+			connect.WithClientOptions(opts...),
+		),
+		testAlertNotification: connect.NewClient[v1.TestAlertNotificationRequest, v1.TestAlertNotificationResponse](
+			httpClient,
+			baseURL+AdminServiceTestAlertNotificationProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("TestAlertNotification")),
+			connect.WithClientOptions(opts...),
+		),
 		getSettings: connect.NewClient[v1.GetSettingsRequest, v1.GetSettingsResponse](
 			httpClient,
 			baseURL+AdminServiceGetSettingsProcedure,
@@ -886,6 +918,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("GetCaller")),
 			connect.WithClientOptions(opts...),
 		),
+		getNodeDisks: connect.NewClient[v1.GetNodeDisksRequest, v1.GetNodeDisksResponse](
+			httpClient,
+			baseURL+AdminServiceGetNodeDisksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetNodeDisks")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -943,6 +981,8 @@ type adminServiceClient struct {
 	saveNotifyChannel        *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
 	deleteNotifyChannel      *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
 	testNotifyChannel        *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
+	previewAlertNotification *connect.Client[v1.PreviewAlertNotificationRequest, v1.PreviewAlertNotificationResponse]
+	testAlertNotification    *connect.Client[v1.TestAlertNotificationRequest, v1.TestAlertNotificationResponse]
 	getSettings              *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
 	getBackupStatus          *connect.Client[v1.GetBackupStatusRequest, v1.GetBackupStatusResponse]
 	listRestoreRecords       *connect.Client[v1.ListRestoreRecordsRequest, v1.ListRestoreRecordsResponse]
@@ -965,6 +1005,7 @@ type adminServiceClient struct {
 	deleteApiToken           *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
 	getApiReference          *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
 	getCaller                *connect.Client[v1.GetCallerRequest, v1.GetCallerResponse]
+	getNodeDisks             *connect.Client[v1.GetNodeDisksRequest, v1.GetNodeDisksResponse]
 }
 
 // ExecuteChange calls heron.v1.AdminService.ExecuteChange.
@@ -1227,6 +1268,16 @@ func (c *adminServiceClient) TestNotifyChannel(ctx context.Context, req *connect
 	return c.testNotifyChannel.CallUnary(ctx, req)
 }
 
+// PreviewAlertNotification calls heron.v1.AdminService.PreviewAlertNotification.
+func (c *adminServiceClient) PreviewAlertNotification(ctx context.Context, req *connect.Request[v1.PreviewAlertNotificationRequest]) (*connect.Response[v1.PreviewAlertNotificationResponse], error) {
+	return c.previewAlertNotification.CallUnary(ctx, req)
+}
+
+// TestAlertNotification calls heron.v1.AdminService.TestAlertNotification.
+func (c *adminServiceClient) TestAlertNotification(ctx context.Context, req *connect.Request[v1.TestAlertNotificationRequest]) (*connect.Response[v1.TestAlertNotificationResponse], error) {
+	return c.testAlertNotification.CallUnary(ctx, req)
+}
+
 // GetSettings calls heron.v1.AdminService.GetSettings.
 func (c *adminServiceClient) GetSettings(ctx context.Context, req *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
 	return c.getSettings.CallUnary(ctx, req)
@@ -1335,6 +1386,11 @@ func (c *adminServiceClient) GetApiReference(ctx context.Context, req *connect.R
 // GetCaller calls heron.v1.AdminService.GetCaller.
 func (c *adminServiceClient) GetCaller(ctx context.Context, req *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error) {
 	return c.getCaller.CallUnary(ctx, req)
+}
+
+// GetNodeDisks calls heron.v1.AdminService.GetNodeDisks.
+func (c *adminServiceClient) GetNodeDisks(ctx context.Context, req *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error) {
+	return c.getNodeDisks.CallUnary(ctx, req)
 }
 
 // AdminServiceHandler is an implementation of the heron.v1.AdminService service.
@@ -1467,6 +1523,14 @@ type AdminServiceHandler interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
+	// 按编辑中的规则（可未保存）与一个样例节点渲染各关联渠道在某一阶段会发出的请求，不出网。请求体由投递同一条渲染
+	// 路径给出，与真实告警逐字节相同；模板执行出错的渠道在结果里给出错误原文，其余渠道照常渲染。
+	// 渲染结果含按请求体模板展开的内容，模板里可能放着下游密钥，所以只对会话开放。
+	PreviewAlertNotification(context.Context, *connect.Request[v1.PreviewAlertNotificationRequest]) (*connect.Response[v1.PreviewAlertNotificationResponse], error)
+	// 与 PreviewAlertNotification 同一个样例，摘要前冠以 "[测试] "，同步发往各关联渠道（并发，每个渠道至多 10 秒），
+	// 逐渠道给出结果。不写告警状态与事件、不建投递记录、不占渠道的每分钟节奏。接收方的错误原文可能回显请求体，
+	// 所以只对会话开放。
+	TestAlertNotification(context.Context, *connect.Request[v1.TestAlertNotificationRequest]) (*connect.Response[v1.TestAlertNotificationResponse], error)
 	// 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
 	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
@@ -1522,6 +1586,9 @@ type AdminServiceHandler interface {
 	// 调用方自己：API token 返回自己的名称、权限、节点范围与有效期——进门先读它，规划能做什么，不必靠 PermissionDenied
 	// 试错；会话返回 session。指定节点的 token 也能调用。
 	GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error)
+	// 节点最近一次上报的本地数据盘逐盘容量，只在 hub 内存里（hub 重启后到该节点再次上报前为空）。挂载路径是 agent 自报的
+	// 任意文本，所以不进可压缩的 GetSnapshot，也没有公开对应。节点不存在或不在调用方范围内返回 NotFound。
+	GetNodeDisks(context.Context, *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1843,6 +1910,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("TestNotifyChannel")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServicePreviewAlertNotificationHandler := connect.NewUnaryHandler(
+		AdminServicePreviewAlertNotificationProcedure,
+		svc.PreviewAlertNotification,
+		connect.WithSchema(adminServiceMethods.ByName("PreviewAlertNotification")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceTestAlertNotificationHandler := connect.NewUnaryHandler(
+		AdminServiceTestAlertNotificationProcedure,
+		svc.TestAlertNotification,
+		connect.WithSchema(adminServiceMethods.ByName("TestAlertNotification")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceGetSettingsHandler := connect.NewUnaryHandler(
 		AdminServiceGetSettingsProcedure,
 		svc.GetSettings,
@@ -1975,6 +2054,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("GetCaller")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetNodeDisksHandler := connect.NewUnaryHandler(
+		AdminServiceGetNodeDisksProcedure,
+		svc.GetNodeDisks,
+		connect.WithSchema(adminServiceMethods.ByName("GetNodeDisks")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/heron.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceExecuteChangeProcedure:
@@ -2081,6 +2166,10 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteNotifyChannelHandler.ServeHTTP(w, r)
 		case AdminServiceTestNotifyChannelProcedure:
 			adminServiceTestNotifyChannelHandler.ServeHTTP(w, r)
+		case AdminServicePreviewAlertNotificationProcedure:
+			adminServicePreviewAlertNotificationHandler.ServeHTTP(w, r)
+		case AdminServiceTestAlertNotificationProcedure:
+			adminServiceTestAlertNotificationHandler.ServeHTTP(w, r)
 		case AdminServiceGetSettingsProcedure:
 			adminServiceGetSettingsHandler.ServeHTTP(w, r)
 		case AdminServiceGetBackupStatusProcedure:
@@ -2125,6 +2214,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceGetApiReferenceHandler.ServeHTTP(w, r)
 		case AdminServiceGetCallerProcedure:
 			adminServiceGetCallerHandler.ServeHTTP(w, r)
+		case AdminServiceGetNodeDisksProcedure:
+			adminServiceGetNodeDisksHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2342,6 +2433,14 @@ func (UnimplementedAdminServiceHandler) TestNotifyChannel(context.Context, *conn
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.TestNotifyChannel is not implemented"))
 }
 
+func (UnimplementedAdminServiceHandler) PreviewAlertNotification(context.Context, *connect.Request[v1.PreviewAlertNotificationRequest]) (*connect.Response[v1.PreviewAlertNotificationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.PreviewAlertNotification is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) TestAlertNotification(context.Context, *connect.Request[v1.TestAlertNotificationRequest]) (*connect.Response[v1.TestAlertNotificationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.TestAlertNotification is not implemented"))
+}
+
 func (UnimplementedAdminServiceHandler) GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetSettings is not implemented"))
 }
@@ -2428,4 +2527,8 @@ func (UnimplementedAdminServiceHandler) GetApiReference(context.Context, *connec
 
 func (UnimplementedAdminServiceHandler) GetCaller(context.Context, *connect.Request[v1.GetCallerRequest]) (*connect.Response[v1.GetCallerResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetCaller is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetNodeDisks(context.Context, *connect.Request[v1.GetNodeDisksRequest]) (*connect.Response[v1.GetNodeDisksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetNodeDisks is not implemented"))
 }

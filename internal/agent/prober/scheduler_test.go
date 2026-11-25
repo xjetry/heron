@@ -399,6 +399,40 @@ func TestApplyRejectsPinConstraintViolations(t *testing.T) {
 	}
 }
 
+// 地址族与记录类型的约束在 agent 应用清单时同样生效：与 hub 保存同一份 CheckTask，冲突的任务留 error 结果、不启动。
+func TestApplyRejectsFamilyConstraintViolations(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	q := NewQueue(QueueCap)
+	s := NewScheduler(quietEngine{}, q, clk, logger())
+	defer s.Stop()
+	literal := tcpTask("192.0.2.1:443") // IPv4 字面量要求 IPv6
+	literal.IpFamily = heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6
+	dnsFamily := dnsTask("1.1.1.1:53") // DNS 任务不带地址族
+	dnsFamily.Id, dnsFamily.IpFamily = 2, heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6
+	record := task(3) // 非 DNS 任务不带记录类型
+	record.DnsRecordType = heronv1.DnsRecordType_DNS_RECORD_TYPE_AAAA
+	ok := task(4)
+	ok.Target, ok.IpFamily = "example.com", heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{literal, dnsFamily, record, ok}})
+	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
+	want := map[uint64]string{1: "conflicts with target address 192.0.2.1", 2: "ip_family does not apply to a DNS task", 3: "dns_record_type only applies to a DNS task"}
+	if len(rs) != len(want) {
+		t.Fatalf("rejections=%v, want %d", rs, len(want))
+	}
+	for _, r := range rs {
+		if !strings.Contains(r.Outcome.Err, want[r.TaskID]) {
+			t.Fatalf("rejection for task %d = %q, want %q", r.TaskID, r.Outcome.Err, want[r.TaskID])
+		}
+	}
+	s.mu.Lock()
+	_, running := s.running[4]
+	n := len(s.running)
+	s.mu.Unlock()
+	if n != 1 || !running {
+		t.Fatalf("running=%d (task 4 running=%v), want only the valid task", n, running)
+	}
+}
+
 // orderEngine 记录 pruneTasks 与 Probe 的调用顺序；Probe 在登记完成前自旋等待，
 // 使"先起跑后登记"的顺序错误确定性地留下 probe 先于 prune 的记录，不靠时序运气。
 type orderEngine struct {

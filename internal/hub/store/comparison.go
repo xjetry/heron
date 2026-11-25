@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/hub/metric"
 )
 
@@ -100,18 +99,13 @@ func (s *Store) ListComparisonNodes(ctx context.Context, taskID uint64, visibili
 		return ProbeTaskRecord{}, false, nil, err
 	}
 	defer tx.Rollback()
-	t := &heronv1.ProbeTask{}
-	var id, kind, interval, timeout, order int64
-	var all bool
-	q := "SELECT id, kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server FROM probe_task WHERE id = ?"
-	switch err := tx.QueryRowContext(ctx, q, int64(taskID)).Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer); {
+	rec, err = scanProbeTask(tx.QueryRowContext(ctx, "SELECT "+probeTaskColumns+" FROM probe_task WHERE id = ?", int64(taskID)))
+	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return ProbeTaskRecord{}, false, nil, nil
 	case err != nil:
 		return ProbeTaskRecord{}, false, nil, err
 	}
-	t.Id, t.Kind, t.IntervalS, t.TimeoutMs = taskID, heronv1.ProbeKind(kind), uint32(interval), uint32(timeout)
-	rec = ProbeTaskRecord{Task: t, AllNodes: all, SortOrder: order}
 	if rec.SelectorTags, err = selectorTags(tx, "probe_task", "task_id", int64(taskID)); err != nil {
 		return ProbeTaskRecord{}, false, nil, err
 	}

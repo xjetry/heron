@@ -35,6 +35,22 @@ type entry struct {
 	// 由写库时的加法合并并入已有的行。
 	buckets map[int64]*metric.Bucket
 	probes  map[probeKey]*metric.ProbeBucket
+	// disks 是最近一次上报的本地数据盘逐盘容量（ReportRequest.disk_mounts），只在内存里，不进分钟桶。
+	disks diskState
+}
+
+type diskState struct {
+	mounts []*heronv1.DiskMountUsage
+	total  uint32
+	at     time.Time
+}
+
+// Disks 是一个节点最近一次上报的逐盘容量。Total 为 0 表示那次上报没有逐盘读数；SampledAt 是那次上报的到达墙钟。
+type Disks struct {
+	Mounts    []*heronv1.DiskMountUsage
+	Total     uint32
+	SampledAt time.Time
+	Online    bool
 }
 
 type probeKey struct {
@@ -81,6 +97,31 @@ func (l *Live) Observe(nodeID int64, source string, m *heronv1.Metrics) (ts int6
 	e.metrics, e.lastSeen, e.lastSeenWall, e.source = m, now, wall, source
 	l.bucket(e, ts).Add(m)
 	return ts, gap, first
+}
+
+// ObserveDisks 记录一次已通过校验的上报携带的逐盘容量，必须紧跟同一次上报的 Observe 调用：到达时刻取 Observe
+// 记下的 lastSeenWall，所以两者描述同一次上报。上报没带逐盘读数（total 为 0）时同样覆盖：不回显上一次的读数冒充
+// 当前采样。节点已被 Forget 时丢弃。调用方保证 mounts 不再被修改。
+func (l *Live) ObserveDisks(nodeID int64, mounts []*heronv1.DiskMountUsage, total uint32) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.nodes[nodeID]
+	if e == nil {
+		return
+	}
+	e.disks = diskState{mounts: mounts, total: total, at: e.lastSeenWall}
+}
+
+// Disks 返回节点最近一次上报的逐盘容量；本进程还没收到该节点的上报时 ok 为假。在线判定同 Get。
+func (l *Live) Disks(nodeID int64) (Disks, bool) {
+	now := l.clk.Mono()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, ok := l.nodes[nodeID]
+	if !ok {
+		return Disks{}, false
+	}
+	return Disks{Mounts: e.disks.mounts, Total: e.disks.total, SampledAt: e.disks.at, Online: l.online(e, now)}, true
 }
 
 func (l *Live) bucket(e *entry, ts int64) *metric.Bucket {

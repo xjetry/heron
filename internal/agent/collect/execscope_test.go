@@ -68,10 +68,10 @@ func TestParseMountinfo(t *testing.T) {
 
 func dev(dev string) fileDev { return fileDev{dev: dev} }
 
-func procMounts() []mountEntry {
-	return []mountEntry{
-		{dev: fixtureProcDev, fstype: "proc"},
-		{dev: fixtureLxcfsDev, fstype: "fuse.lxcfs"},
+func procMounts() []mountinfoEntry {
+	return []mountinfoEntry{
+		{dev: fixtureProcDev, fsType: "proc"},
+		{dev: fixtureLxcfsDev, fsType: "fuse.lxcfs"},
 	}
 }
 

@@ -148,6 +148,29 @@ func (r *dirRoot) FSType(name string) (uint64, error) {
 	return uint64(st.Type), nil
 }
 
+// MountUsage 经 O_PATH 打开 name 后 fstat 与 fstatfs 同一个 fd：判定目录与取用量的是同一个对象，
+// 不会在两次路径解析之间换成别的挂载。
+func (r *dirRoot) MountUsage(name string) (uint64, uint64, error) {
+	fd, err := r.openat("statfs", name, rootPathFlags)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return 0, 0, &fs.PathError{Op: "stat", Path: name, Err: err}
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return 0, 0, &fs.PathError{Op: "statfs", Path: name, Err: unix.ENOTDIR}
+	}
+	var sf unix.Statfs_t
+	if err := unix.Fstatfs(fd, &sf); err != nil {
+		return 0, 0, &fs.PathError{Op: "statfs", Path: name, Err: err}
+	}
+	total, used := statfsUsage(&sf)
+	return total, used, nil
+}
+
 func (r *dirRoot) Usage() (uint64, uint64, error) {
 	var st unix.Statfs_t
 	if err := unix.Fstatfs(r.fd, &st); err != nil {

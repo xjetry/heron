@@ -25,7 +25,7 @@ func (p TCP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}
-	ip, err := p.Targets.Resolve(ctx, host, true, true)
+	ip, err := p.Targets.Resolve(ctx, host, t.GetIpFamily(), bothStacks)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}

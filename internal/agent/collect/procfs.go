@@ -6,6 +6,9 @@ import (
 	"io/fs"
 	"math"
 	"strings"
+	"syscall"
+
+	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 )
 
 // linuxNetExclude 是 Linux 的名字规则：回环、容器与虚拟机的路由型端点（不挂网桥时结构上与真实上联口
@@ -21,6 +24,9 @@ var linuxNetExclude = []string{"lo", "docker*", "veth*", "br-*", "virbr*", "tap*
 type ProcFS struct {
 	Root   Root
 	Reader Root
+	// HostRoot 是显式给出的宿主根（--host-root）在读者命名空间里的路径；空表示被观测主机就是读者自己的根 "/"。
+	// 选盘据此把读者挂载表里的路径换成宿主机上的路径，并据此决定读者在容器里时是否仍按挂载表选盘。
+	HostRoot string
 }
 
 func (p *ProcFS) close() error { return errors.Join(p.Root.Close(), p.Reader.Close()) }
@@ -65,6 +71,38 @@ func (p *ProcFS) swap() (usage, error) {
 
 func (p *ProcFS) disk() (usage, error) {
 	total, used, err := p.Root.Usage()
+	return usage{total: total, used: used}, err
+}
+
+// diskMounts 用识别快照里的挂载表（proc/self/mountinfo，读者自己的挂载命名空间，规则见 linuxMountEntries）。
+// 读者在容器里（挂载根是环境 cgroup，或读者根上有部署标识）而没有显式宿主根时，挂载表是容器自己的：卷与逐文件
+// 绑定都在里面，路径与宿主机上的盘对不上，所以只报根。
+func (p *ProcFS) diskMounts(snap *execSnapshot) ([]mountEntry, error) {
+	if p.HostRoot == "" && (snap.exec.GetKind() == heronv1.ScopeKind_SCOPE_KIND_CGROUP_NAMESPACE || snap.readerInContainer) {
+		return nil, nil
+	}
+	if snap.mounts == nil {
+		if snap.mountErr != nil {
+			return nil, fmt.Errorf("mountinfo: %w", snap.mountErr)
+		}
+		return nil, errors.New("mountinfo: not read in this cycle")
+	}
+	dir := p.HostRoot
+	if dir == "" {
+		dir = "/"
+	}
+	return linuxMountEntries(snap.mounts, dir), nil
+}
+
+// mountUsage 在宿主根内打开挂载路径（openat2 RESOLVE_IN_ROOT，见 dirRoot）：路径里的符号链接与 ".." 都解析不出根。
+func (p *ProcFS) mountUsage(mp string) (usage, error) {
+	total, used, err := p.Root.MountUsage(strings.TrimPrefix(mp, "/"))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return usage{}, errMountGone
+	case errors.Is(err, syscall.ENOTDIR):
+		return usage{}, errMountNotDir
+	}
 	return usage{total: total, used: used}, err
 }
 

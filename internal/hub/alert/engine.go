@@ -551,7 +551,7 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 			silenced = cur.firedSilenced
 			if cur.state == store.StateFiring && !cur.firedAt.IsZero() {
 				// firedAt 由进入 firing 的转换记录；离线告警已等待宽限期，因此这是告警持续时间，不是节点离线时长。
-				summary += "，告警持续 " + formatAlertDuration(now.Sub(cur.firedAt))
+				summary = withFiringDuration(summary, now.Sub(cur.firedAt))
 			}
 		} else if !r.Kind.IsCalendar() {
 			// 日历类提醒（到期、证书到期）永远不被静默，其余种类的触发按此刻的维护开关与静默窗口抑制。
@@ -794,18 +794,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 				o.Recovered, o.SinceRecovery = true, e.offlineStart(entry, seen, node).Sub(cur.recoveredAt)
 			}
 			next, tr := NextOffline(cur.state, o)
-			summary := fmt.Sprintf("节点 %s 离线 %s（规则 %s）", node.Name, unseen.Round(time.Second), r.Name)
-			if !seen {
-				last := "从未上报"
-				if !node.LastSeenAt.IsZero() {
-					last = "最后在线于 " + node.LastSeenAt.Format(time.RFC3339)
-				}
-				summary = fmt.Sprintf("节点 %s 离线，%s（规则 %s）", node.Name, last, r.Name)
-			}
-			if tr != nil && *tr == store.TransitionRecovered {
-				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
-			}
-			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), node.Maintenance, "", tr, summary, unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), node.Maintenance, "", tr, offlineSummary(node, r, seen, unseen, tr), unseen.Seconds()); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -818,6 +807,22 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// offlineSummary 是离线规则的文案。seen 为真时节点本次启动后上报过，写已离线时长 unseen；否则时长没有起点可言，
+// 写库里的最后上报时刻（或从未上报）。恢复只写已恢复上报，告警持续时长由 apply 追加。
+func offlineSummary(n store.Node, r store.AlertRule, seen bool, unseen time.Duration, tr *store.Transition) string {
+	if tr != nil && *tr == store.TransitionRecovered {
+		return fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", n.Name, r.Name)
+	}
+	if !seen {
+		last := "从未上报"
+		if !n.LastSeenAt.IsZero() {
+			last = "最后在线于 " + n.LastSeenAt.Format(time.RFC3339)
+		}
+		return fmt.Sprintf("节点 %s 离线，%s（规则 %s）", n.Name, last, r.Name)
+	}
+	return fmt.Sprintf("节点 %s 离线 %s（规则 %s）", n.Name, unseen.Round(time.Second), r.Name)
 }
 
 func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
@@ -877,10 +882,12 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 				var value float64
 				switch r.Metric {
 				case store.MetricLossPct:
-					if b.Sent == 0 {
+					// 全是探测错误的分钟没有丢包率：缺读数既不触发也不恢复（NextProbe）。
+					loss, ok := b.LossPct()
+					if !ok {
 						continue
 					}
-					value = float64(b.Lost) / float64(b.Sent) * 100
+					value = loss
 				case store.MetricRttMs:
 					if b.RttN == 0 {
 						continue
@@ -900,11 +907,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(cur.state, samples, r.ForMinutes)
 			next, tr = coolDown(r, cur, e.clk.Now(), next, tr)
 			value := samples[len(samples)-1].Value
-			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
-			if r.RttMode == store.RttRelative {
-				summary = band.summary(node.Name, r.Name, value)
-			}
-			if err := e.apply(ctx, cy, r, node.ID, next, false, node.Maintenance, "", tr, summary, value); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, false, node.Maintenance, "", tr, probeSummary(node, r, band, value), value); err != nil {
 				errs = append(errs, err)
 			}
 		}

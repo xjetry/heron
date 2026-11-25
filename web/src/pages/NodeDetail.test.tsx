@@ -33,6 +33,7 @@ const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [
 const defaultImpl = {
   listNodes, getTraffic,
   getSnapshot: async () => ({ nodes: [] }),
+  getNodeDisks: async () => ({ total: 1, sampledAt: 990n, online: true, mounts: [{ path: "/", total: 10n * 1024n ** 3n, used: 1024n ** 3n }] }),
   listTags: async () => ({ tags: [] }),
   queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } }),
   queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60 }),
@@ -663,3 +664,23 @@ it("从列表带着查询串进入时，返回链接还原同一组筛选，切 
   }
 });
 
+
+it("概览按本节点取逐盘容量；其他 tab 不取", async () => {
+  const asked: bigint[] = [];
+  const getNodeDisks = async (req: { nodeId: bigint }) => {
+    asked.push(req.nodeId);
+    return { total: 2, sampledAt: 990n, online: true, mounts: [{ path: "/data", total: 100n * 1024n ** 3n, used: 95n * 1024n ** 3n }, { path: "/", total: 10n * 1024n ** 3n, used: 1024n ** 3n }] };
+  };
+  renderWithAdmin({ ...defaultImpl, getNodeDisks }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const card = within(await screen.findByRole("region", { name: "本地磁盘" }));
+  expect(await card.findByText("/data")).toBeInTheDocument();
+  expect(asked).toEqual([7n]);
+});
+
+it("诊断 tab 不请求逐盘容量", async () => {
+  let asked = 0;
+  renderWithAdmin({ ...defaultImpl, getNodeDisks: async () => { asked++; return {}; } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
+  await screen.findByRole("heading", { name: "db-01" });
+  expect(screen.queryByRole("region", { name: "本地磁盘" })).not.toBeInTheDocument();
+  expect(asked).toBe(0);
+});

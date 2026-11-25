@@ -4,7 +4,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { Facts, Metrics, NetInterfaceCounter, ProbeResult, ProbeTasks } from "./types_pb";
+import type { DiskMountUsage, Facts, Metrics, NetInterfaceCounter, ProbeResult, ProbeTasks } from "./types_pb";
 import { file_heron_v1_types } from "./types_pb";
 import type { UpdateStatus, UpdateTask } from "./update_pb";
 import { file_heron_v1_update } from "./update_pb";
@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/agent.proto.
  */
 export const file_heron_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSLdAgoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSEgoKZmFjdHNfaGFzaBgEIAEoBhIeCgVmYWN0cxgFIAEoCzIPLmhlcm9uLnYxLkZhY3RzEiYKBnVwZGF0ZRgGIAEoCzIWLmhlcm9uLnYxLlVwZGF0ZVN0YXR1cxIUCgx0YXNrc19kaWdlc3QYCCABKAwSGAoLdXBkYXRlX2hhc2gYCSABKAZIAIgBARI1Cg5uZXRfaW50ZXJmYWNlcxgKIAMoCzIdLmhlcm9uLnYxLk5ldEludGVyZmFjZUNvdW50ZXJCDgoMX3VwZGF0ZV9oYXNoSgQIAxAESgQIBxAIUg10YXNrc192ZXJzaW9uUgxjYXBhYmlsaXRpZXMi4wEKDlJlcG9ydFJlc3BvbnNlEhoKEnJlcG9ydF9pbnRlcnZhbF9tcxgBIAEoDRIjCgV0YXNrcxgCIAEoCzIULmhlcm9uLnYxLlByb2JlVGFza3MSEgoKd2FudF9mYWN0cxgDIAEoCBIkCgZ1cGRhdGUYBCABKAsyFC5oZXJvbi52MS5VcGRhdGVUYXNrEi0KCWRldGVjdGlvbhgFIAEoCzIaLmhlcm9uLnYxLk5ldHdvcmtEZXRlY3Rpb24SEwoLd2FudF91cGRhdGUYByABKAhKBAgGEAdSDGNhcGFiaWxpdGllcyI4ChBOZXR3b3JrRGV0ZWN0aW9uEhEKCXNraXBfaXB2NBgBIAEoCBIRCglza2lwX2lwdjYYAiABKAgiMgoRR2V0UmVsZWFzZVJlcXVlc3QSDwoHdGFza19pZBgBIAEoCRIMCgRhcmNoGAIgASgJIkYKEkdldFJlbGVhc2VSZXNwb25zZRIMCgRzdW1zGAEgASgMEhEKCXNpZ25hdHVyZRgCIAEoDBIPCgdhcmNoaXZlGAMgASgMMtcBCgxBZ2VudFNlcnZpY2USQQoIUmVnaXN0ZXISGS5oZXJvbi52MS5SZWdpc3RlclJlcXVlc3QaGi5oZXJvbi52MS5SZWdpc3RlclJlc3BvbnNlEjsKBlJlcG9ydBIXLmhlcm9uLnYxLlJlcG9ydFJlcXVlc3QaGC5oZXJvbi52MS5SZXBvcnRSZXNwb25zZRJHCgpHZXRSZWxlYXNlEhsuaGVyb24udjEuR2V0UmVsZWFzZVJlcXVlc3QaHC5oZXJvbi52MS5HZXRSZWxlYXNlUmVzcG9uc2VCLlosZ2l0aHViLmNvbS94amV0cnkvaGVyb24vZ2VuL2hlcm9uL3YxO2hlcm9udjFiBnByb3RvMw", [file_heron_v1_types, file_heron_v1_update]);
+  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSKnAwoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSEgoKZmFjdHNfaGFzaBgEIAEoBhIeCgVmYWN0cxgFIAEoCzIPLmhlcm9uLnYxLkZhY3RzEiYKBnVwZGF0ZRgGIAEoCzIWLmhlcm9uLnYxLlVwZGF0ZVN0YXR1cxIUCgx0YXNrc19kaWdlc3QYCCABKAwSGAoLdXBkYXRlX2hhc2gYCSABKAZIAIgBARI1Cg5uZXRfaW50ZXJmYWNlcxgKIAMoCzIdLmhlcm9uLnYxLk5ldEludGVyZmFjZUNvdW50ZXISLQoLZGlza19tb3VudHMYCyADKAsyGC5oZXJvbi52MS5EaXNrTW91bnRVc2FnZRIZChFkaXNrX21vdW50c190b3RhbBgMIAEoDUIOCgxfdXBkYXRlX2hhc2hKBAgDEARKBAgHEAhSDXRhc2tzX3ZlcnNpb25SDGNhcGFiaWxpdGllcyLjAQoOUmVwb3J0UmVzcG9uc2USGgoScmVwb3J0X2ludGVydmFsX21zGAEgASgNEiMKBXRhc2tzGAIgASgLMhQuaGVyb24udjEuUHJvYmVUYXNrcxISCgp3YW50X2ZhY3RzGAMgASgIEiQKBnVwZGF0ZRgEIAEoCzIULmhlcm9uLnYxLlVwZGF0ZVRhc2sSLQoJZGV0ZWN0aW9uGAUgASgLMhouaGVyb24udjEuTmV0d29ya0RldGVjdGlvbhITCgt3YW50X3VwZGF0ZRgHIAEoCEoECAYQB1IMY2FwYWJpbGl0aWVzIjgKEE5ldHdvcmtEZXRlY3Rpb24SEQoJc2tpcF9pcHY0GAEgASgIEhEKCXNraXBfaXB2NhgCIAEoCCIyChFHZXRSZWxlYXNlUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEgwKBGFyY2gYAiABKAkiRgoSR2V0UmVsZWFzZVJlc3BvbnNlEgwKBHN1bXMYASABKAwSEQoJc2lnbmF0dXJlGAIgASgMEg8KB2FyY2hpdmUYAyABKAwy1wEKDEFnZW50U2VydmljZRJBCghSZWdpc3RlchIZLmhlcm9uLnYxLlJlZ2lzdGVyUmVxdWVzdBoaLmhlcm9uLnYxLlJlZ2lzdGVyUmVzcG9uc2USOwoGUmVwb3J0EhcuaGVyb24udjEuUmVwb3J0UmVxdWVzdBoYLmhlcm9uLnYxLlJlcG9ydFJlc3BvbnNlEkcKCkdldFJlbGVhc2USGy5oZXJvbi52MS5HZXRSZWxlYXNlUmVxdWVzdBocLmhlcm9uLnYxLkdldFJlbGVhc2VSZXNwb25zZUIuWixnaXRodWIuY29tL3hqZXRyeS9oZXJvbi9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_heron_v1_types, file_heron_v1_update]);
 
 /**
  * @generated from message heron.v1.RegisterRequest
@@ -127,6 +127,23 @@ export type ReportRequest = Message<"heron.v1.ReportRequest"> & {
    * @generated from field: repeated heron.v1.NetInterfaceCounter net_interfaces = 10;
    */
   netInterfaces: NetInterfaceCounter[];
+
+  /**
+   * 与 metrics 同一次采样的本地数据盘逐盘容量：按使用率（used ÷ total）降序、同使用率按路径字节序升序，取前至多
+   * 16 项（agentwire.MaxDiskMounts）；根盘 "/" 与其余挂载点同样参与排序，可能被截掉。hub 只把它放进内存里的实时状态
+   * （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。
+   *
+   * @generated from field: repeated heron.v1.DiskMountUsage disk_mounts = 11;
+   */
+  diskMounts: DiskMountUsage[];
+
+  /**
+   * 截断前的总数：0 表示这次没有逐盘读数（采集失败或 agent 不提供），此时列表为空；否则列表长度恰为
+   * min(disk_mounts_total, 16)。
+   *
+   * @generated from field: uint32 disk_mounts_total = 12;
+   */
+  diskMountsTotal: number;
 };
 
 /**

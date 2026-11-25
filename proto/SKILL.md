@@ -81,11 +81,15 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 历史网络速率有两种口径：`rx_bytes` / `tx_bytes` 的 `sum / stepS` 是桶均值；`net_rx_bps` / `net_tx_bps` 的 `max` 是 agent 本地采样速率峰值（bytes/s）。`n=0` 或缺少速率序列表示没有读数，不能补零或拿均值代替峰值。CPU 与内存的 `max` 同样表示采样峰值。`load1_per_core` 是 agent 采样时算好的按核负载，无单位，与 `load1` 同形；`n=0` 或缺席表示这一分钟没有采样，不能用 `load1` 除以核数补出来。agent 不上报 load_cores 时这一分钟没有这个序列。TCP 的四条序列 `tcp_active_opens_ps`、`tcp_passive_opens_ps`、`tcp_out_segs_ps`、`tcp_retrans_segs_ps` 单位 count/s；重传率不是一条序列，取同一个点上 `tcp_retrans_segs_ps` 与 `tcp_out_segs_ps` 的 mean × n 之比再乘 100，分母为 0 时没有重传率。没有采样的分钟（含序列引入之前留下的分钟）没有这四条的读数。
 
+本地数据盘的逐盘容量不进历史，也不在 `GetSnapshot` 里：`GetNodeDisks`（`{"nodeId":"42"}`）返回节点最近一次上报的逐盘读数，只在 hub 内存里，hub 重启后到节点再次上报前为空。`mounts` 按使用率（`used ÷ total`）降序、同使用率按 `path` 升序，至多 16 项；`total` 是截断前的盘数，0 表示那次上报没有逐盘读数（采集失败或 agent 版本不提供）；`sampledAt` 缺席表示 hub 启动后还没收到该节点的上报，`online` 为 false 时是离线前的最后一次读数。共享同一块设备或存储池的挂载点只出现一项（根所在的那组报 `/`，其余报最短路径）。快照与历史里的 `diskTotal` / `diskUsed` 始终是根盘 `/`。公开端没有对应接口，挂载路径不公开。
+
 历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
 
 两个服务的 QueryMetrics 均返回与 ts 对齐的 coverage：minutes 为留存的已准入上报分钟数，observed 为 hub 观测分钟数，observedReported 为两者交集；三项独立可缺席（未知）。纯观测点的指标 n=0，不能画成零读数。coverageSummary 按请求窗口的完整已闭合分钟汇总，不随 maxPoints 改变：覆盖率为 observedReportedMinutes/observedMinutes，未知分钟为 eligibleMinutes−observedMinutes；分母为零时无可观测区间，coverageStart 缺席时尚无覆盖记录。覆盖起点是接收首报的分钟，迁移前节点为最早留存证据；不等于在线率或 SLA。公开节点的 observed 暴露 hub 在保留期内的观测分钟。
 
 `ListProbeTasks` 与 `QueryProbes` 返回展示顺序，已删除任务的历史排在最后，按编号升序。`ReorderProbeTasks` 只接受完整任务 ID 排列且仅允许会话调用，不改变 agent 的执行配置版本。付款周期枚举为月、季、半年、年、两年、三年、五年；五年对应 `BILLING_CYCLE_QUINQUENNIAL`。
+
+探测地址族 `task.ipFamily` 只用于 ICMP、TCP、HTTP 任务：`PROBE_IP_FAMILY_UNSPECIFIED`（缺省）即自动，agent 只在节点本机具备的地址族里选，双栈节点上名字优先取 IPv4；`PROBE_IP_FAMILY_IPV4`、`PROBE_IP_FAMILY_IPV6` 只走该族。目标（ICMP 目标、TCP 的主机、HTTP URL 的主机）是 IP 字面量时，显式地址族必须与之同族，否则 `invalid_argument`。DNS 任务不得带非缺省的 `ipFamily`：连解析器走哪一族由 `dnsServer` 的字面量决定；要查的记录类型用 `task.dnsRecordType`，缺省即 A，`DNS_RECORD_TYPE_AAAA` 查 AAAA，两者可以任意组合（经 IPv4 解析器查 AAAA 也合法）。改这两项走 `ExecuteChange` 时掩码路径是 `task.ipFamily`、`task.dnsRecordType`，改了就是新的 `configId`。节点本机没有任务需要的地址族（接口上没有该族的非回环、非链路本地地址，ICMP 还要该族的套接字可用）时，每个周期记一次探测错误（`errors`），不计入丢包；一分钟里全是错误时这一分钟没有丢包率读数，丢包告警既不因它触发，也不因它恢复。
 
 `SaveProbeTask` 里 `task.configId` 与 `task.certSpkiSha256` 是只输出字段，写进去会被忽略，不报错。钉指纹或清除指纹用 `certPin`：缺席表示保持原指纹（新建即不钉）；`setSpkiSha256` 是 32 字节，空字节不是清除；清除必须选 `clear`。`expectedConfigId` 必须等于任务当前的 `configId`，否则 `failed_precondition`。给已有任务设置指纹时必须带上它；新建任务不要带。只改指纹、不改其他字段是合法的：`task` 只给 `id`，其余字段留零值，任务字段与节点选择沿用库里的。`ListProbeCertificates`（只读，公开端没有）按节点返回当前身份下的成功证书、未绑定身份的旧观测，以及当前身份的候选。信任一个候选是对看过的那份配置做一次 `certPin.setSpkiSha256`（候选指纹），`expectedConfigId` 设成这次读到的 `configId`。`SaveProbeTask` 只限会话；API token 走 `ExecuteChange` 的 `saveProbeTask`：`task` 只给 `id`，带上 `certPin` 与 `expectedConfigId`，省略 `updateMask`——空掩码加指纹动作就是只改指纹。这要求 token 有预授权的配置权限，且任务的节点选择器在它的范围内。同时改别的字段时照常给 `updateMask`，指纹动作与前置条件不进掩码，原样生效。各节点指纹不同就分开确认。bytes 字段的 JSON 是 base64。
 

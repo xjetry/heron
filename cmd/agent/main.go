@@ -142,6 +142,7 @@ func runRun(args []string) error {
 	exclude := fs.String("net-exclude", "", "comma-separated interface globs to skip (default: "+strings.Join(collect.DefaultNetExclude(), ", ")+
 		"; on Linux the default also skips stacked devices, virtual bridge ports, overlays and tunnels by their sysfs structure); giving this flag or --net-include replaces the whole default")
 	hostRoot := fs.String("host-root", "", "linux only: directory where the host's root is mounted (e.g. /hostfs in a container run with --network host -v /:/hostfs:ro); metrics and facts describe that host (default: this process's root)")
+	diskExclude := fs.String("disk-exclude", "", diskExcludeUsage+"; giving this flag replaces disk_exclude from the config file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -161,6 +162,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	col.DiskExclude = diskExcludeFor(cfg, fs, *diskExclude)
 	// Collector 持有根 fd；最先 defer、最后关闭：调度停止与 ICMP 关闭之后不再有采集。
 	defer col.Close()
 	col.Log = log
@@ -221,6 +223,21 @@ func logStarting(log *slog.Logger, hub string) {
 	log.Info("agent starting", "hub", hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)
 }
 
+// diskExcludeFor 给出 run 生效的本地数据盘排除规则：命令行显式给出（含空串）即替换配置里的规则——容器里改命令行
+// 比改卷里的配置文件方便，两处都写时以命令行为准；没给出时用配置里的。fs 必须已经 Parse。
+func diskExcludeFor(cfg agentconfig.Config, fs *flag.FlagSet, flagValue string) []string {
+	out := cfg.DiskExclude
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "disk-exclude" {
+			out = splitList(flagValue)
+		}
+	})
+	return out
+}
+
+// diskExcludeUsage 是 run 与 configure 共用的 --disk-exclude 说明。
+const diskExcludeUsage = "comma-separated mount path globs (path.Match, e.g. /mnt/*) whose local disks are not monitored; the root / is always monitored"
+
 func splitList(s string) []string {
 	if s == "" {
 		return nil
@@ -245,6 +262,7 @@ func runConfigure(args []string, out io.Writer) error {
 	insecure := fs.Bool("insecure-http", false, "accept a plain http hub address (the node token and metrics travel unencrypted)")
 	allow := fs.String("probe-allow", "", "comma-separated CIDR prefixes the agent may probe despite the defaults; empty clears")
 	deny := fs.String("probe-deny", "", "comma-separated CIDR prefixes the agent refuses to probe in addition to the defaults; empty clears")
+	diskExclude := fs.String("disk-exclude", "", diskExcludeUsage+"; empty clears")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -265,6 +283,8 @@ func runConfigure(args []string, out io.Writer) error {
 			cfg.ProbeAllow = splitList(*allow)
 		case "probe-deny":
 			cfg.ProbeDeny = splitList(*deny)
+		case "disk-exclude":
+			cfg.DiskExclude = splitList(*diskExclude)
 		}
 	})
 	if err := client.Validate(cfg); err != nil {
@@ -274,6 +294,6 @@ func runConfigure(args []string, out io.Writer) error {
 		return err
 	}
 	policy, _ := client.Policy(cfg)
-	fmt.Fprintf(out, "hub=%s insecure_http=%v %s\nrestart the heron-agent service to apply\n", cfg.Hub, cfg.InsecureHTTP, policy)
+	fmt.Fprintf(out, "hub=%s insecure_http=%v %s disk_exclude=%v\nrestart the heron-agent service to apply\n", cfg.Hub, cfg.InsecureHTTP, policy, cfg.DiskExclude)
 	return nil
 }
