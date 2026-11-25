@@ -2161,7 +2161,8 @@ type Node struct {
 	// 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
 	// 这里，清空 country_pin 即回落到它。
 	CountryLookup string `protobuf:"bytes,19,opt,name=country_lookup,json=countryLookup,proto3" json:"country_lookup,omitempty"`
-	// 维护状态：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。
+	// 维护状态：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。维护关闭且不在
+	// 任何生效的维护静默窗口内时，维护期间触发、仍未恢复的告警由 hub 补发触发通知（见 AlertEvent.silenced）。
 	// 随 UpdateNode 整体替换；CreateNode 不接受（新节点恒为 false）。
 	Maintenance bool `protobuf:"varint,20,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
 	// 节点在全部节点里按全序 (sort_order, id) 升序的名次，从 1 起，随读按当前全序计算：标签过滤（tags、
@@ -5739,7 +5740,8 @@ type AlertStateEntry struct {
 	// 恢复后一小时内再次开始的离线（离线开始即最后一次上报），要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。
 	// 由 hub 的离线巡检算出，不落库，hub 重启后第一轮巡检之前为 false。
 	Flapping bool `protobuf:"varint,5,opt,name=flapping,proto3" json:"flapping,omitempty"`
-	// 仅 firing：这次触发进入 firing 时处于维护静默覆盖内、没有投递，恢复也将不投递；其余状态恒为 false。
+	// 仅 firing：这次触发进入 firing 时处于维护静默覆盖内、尚未发出触发通知，此时恢复也将不投递；静默与节点维护都解除后
+	// hub 补发触发通知（见 AlertEvent.silenced），此后为 false。其余状态恒为 false。
 	Silenced      bool `protobuf:"varint,6,opt,name=silenced,proto3" json:"silenced,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -10487,7 +10489,11 @@ type AlertEvent struct {
 	// 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
 	Value      float64          `protobuf:"fixed64,7,opt,name=value,proto3" json:"value,omitempty"`
 	Deliveries []*AlertDelivery `protobuf:"bytes,8,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
-	// 生成时是否处于维护静默覆盖内：为真时不产生任何投递（deliveries 为空）。恢复事件记配对 firing 的值。
+	// 生成时是否处于维护静默覆盖内：为真时不产生任何投递（deliveries 为空），之后也不会补建投递。恢复事件记配对的触发
+	// 是否始终没有发出通知：静默期内触发、静默期内恢复的，两条都为真。静默期内触发、节点维护与静默窗口都解除时仍未恢复的，
+	// hub 在解除后的下一轮离线巡检（每 10 秒一轮）追加一条为假的 firing 事件补发通知：at 是补发时刻，summary 在原触发的摘要后附注
+	// 静默结束时仍未恢复与自最初触发起的持续时长，value 沿用原触发的观测值；之后的恢复事件为假、照常投递，持续时长仍从
+	// 最初触发起算。
 	Silenced      bool `protobuf:"varint,9,opt,name=silenced,proto3" json:"silenced,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -209,7 +209,7 @@ func TestRecordTransitionWritesStateEventAndDeliveries(t *testing.T) {
 		t.Fatalf("persisted event=%+v err=%v", got, err)
 	}
 	states, err := s.ListAlertStates(t.Context())
-	if err != nil || !reflect.DeepEqual(states, []StateRow{{RuleID: r.ID, NodeID: ids[0], State: StateFiring, SinceAt: ev.At, FiredAt: ev.At}}) {
+	if err != nil || !reflect.DeepEqual(states, []StateRow{{RuleID: r.ID, NodeID: ids[0], State: StateFiring, SinceAt: ev.At, FiredAt: ev.At, NotifiedAt: ev.At}}) {
 		t.Fatalf("transition states=%+v err=%v", states, err)
 	}
 }

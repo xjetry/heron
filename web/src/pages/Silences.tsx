@@ -34,7 +34,7 @@ export function Silences() {
   const ruleName = (id: bigint) => ruleList.find((r) => r.id === id)?.name ?? `规则 #${id}`;
   return (
     <section>
-      <PageHeader title="维护静默" description="覆盖内的规则与节点在窗口内产生的告警事件照常记录但不投递；恢复是否投递只看配对的触发是否投递过。到期提醒与系统事件不受静默影响。节点的维护开关在节点编辑里设置。"
+      <PageHeader title="维护静默" description="覆盖内的规则与节点在窗口内产生的告警事件照常记录但不投递；窗口内触发又恢复的故障不再通知，窗口结束且节点不在维护时仍未恢复的补发一次触发通知，恢复照常通知。到期提醒与系统事件不受静默影响。节点的维护开关在节点编辑里设置。"
         actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建维护静默</button>} />
       {gate.banner}
       {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
