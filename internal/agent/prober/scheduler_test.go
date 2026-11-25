@@ -433,6 +433,42 @@ func TestApplyRejectsFamilyConstraintViolations(t *testing.T) {
 	}
 }
 
+// 状态码判据的准入在 agent 侧同样生效：非 HTTP 任务带判据、精确码越界的 HTTP 任务各报一次拒绝且不运行，
+// 合法的严格 2xx 与精确码任务照常运行。
+func TestApplyRejectsHTTPStatusPolicyViolations(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	q := NewQueue(QueueCap)
+	s := NewScheduler(quietEngine{}, q, clk, logger())
+	defer s.Stop()
+	tcp := tcpTask("example.com:443")
+	tcp.HttpStatusPolicy = heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_SUCCESS
+	outOfRange := httpTask("https://example.com/")
+	outOfRange.Id, outOfRange.HttpStatusPolicy, outOfRange.HttpExpectedStatus = 2, heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT, 600
+	strict := httpTask("https://example.com/")
+	strict.Id, strict.HttpStatusPolicy = 3, heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_SUCCESS
+	exact := httpTask("https://example.com/")
+	exact.Id, exact.HttpStatusPolicy, exact.HttpExpectedStatus = 4, heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT, 204
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{tcp, outOfRange, strict, exact}})
+	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
+	want := map[uint64]string{1: "http_status_policy only applies to an HTTP task", 2: "http_expected_status must be between 100 and 599"}
+	if len(rs) != len(want) {
+		t.Fatalf("rejections=%v, want %d", rs, len(want))
+	}
+	for _, r := range rs {
+		if !strings.Contains(r.Outcome.Err, want[r.TaskID]) {
+			t.Fatalf("rejection for task %d = %q, want %q", r.TaskID, r.Outcome.Err, want[r.TaskID])
+		}
+	}
+	s.mu.Lock()
+	_, runStrict := s.running[3]
+	_, runExact := s.running[4]
+	n := len(s.running)
+	s.mu.Unlock()
+	if n != 2 || !runStrict || !runExact {
+		t.Fatalf("running=%d (strict=%v exact=%v), want only the two valid HTTP tasks", n, runStrict, runExact)
+	}
+}
+
 // orderEngine 记录 pruneTasks 与 Probe 的调用顺序；Probe 在登记完成前自旋等待，
 // 使"先起跑后登记"的顺序错误确定性地留下 probe 先于 prune 的记录，不靠时序运气。
 type orderEngine struct {

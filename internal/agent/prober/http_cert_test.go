@@ -53,7 +53,7 @@ func TestHTTPCertNotCarried(t *testing.T) {
 	if out := p.Probe(t.Context(), httpTask(plain.URL)); out.Err != "" || out.Timeout || out.CertNotAfter != 0 {
 		t.Fatalf("http 200=%+v, want success without cert", out)
 	}
-	// 状态 ≥400 计入丢包，即使握手成功也不携带。
+	// 缺省判据下状态 ≥400 计入丢包，即使握手成功也不携带。
 	var status atomic.Int64
 	status.Store(http.StatusInternalServerError)
 	s, _ := certTestServer(t, &status)

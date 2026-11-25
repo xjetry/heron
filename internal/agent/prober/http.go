@@ -22,9 +22,9 @@ import (
 const CertReportInterval = time.Hour
 
 // HTTP 测量一次 GET 从拨号到收到响应头的耗时；解析与整个请求（连接、TLS、等响应头）共用预算。
-// URL 非法、解析失败与本地策略拒绝是 error；状态 ≥400 与 TLS 握手失败（含证书错误）计入丢包，
-// 连接失败经 classify 区分。不跟随重定向（3xx 本身就是答案）、不复用连接、不读正文：
-// 探的是"这个 URL 能不能给出 <400 的响应头"，不是内容。
+// URL 非法、解析失败与本地策略拒绝是 error；状态码不满足任务的判据（statusAccepted）与 TLS 握手失败
+// （含证书错误）计入丢包，连接失败经 classify 区分。不跟随重定向（3xx 本身就是答案）、不复用连接、不读正文：
+// 探的是"这个 URL 给出的响应头是否满足判据"，不是内容。
 //
 // 任务钉了 cert_spki_sha256 时跳过默认的链与主机名校验（InsecureSkipVerify），改在
 // VerifyConnection 里只比对叶证书公钥指纹与有效期：钉住即把信任锚定在这份公钥上，
@@ -135,16 +135,31 @@ func (p *HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	if elapsed > timeout {
 		return Outcome{Timeout: true}
 	}
-	if resp.StatusCode >= 400 {
+	if !statusAccepted(t, resp.StatusCode) {
 		return Outcome{Timeout: true}
 	}
 	out := Outcome{RttUs: uint32(elapsed / time.Microsecond)}
 	// HTTPS 握手成功（能走到这里即已完成握手）时顺带带回链首枚证书的到期时刻，
-	// 每 (任务, 身份) 至多每小时一次（reportCert 承载频率上限）；状态 ≥400 已在上面折返，不携带。
+	// 每 (任务, 身份) 至多每小时一次（reportCert 承载频率上限）；状态码不符已在上面折返，不携带，也不占额度。
 	if u.Scheme == "https" && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 && p.reportCert(t.GetId(), t.GetConfigId(), now) {
 		out.CertNotAfter = resp.TLS.PeerCertificates[0].NotAfter.Unix()
 	}
 	return out
+}
+
+// statusAccepted 是 HTTP 任务状态码判据的唯一实现。取值范围由 probelimit.CheckTask 在 Apply 前裁决过
+// （EXACT 的码在 100–599，未定义的策略整条任务被拒），所以这里不会见到未定义的策略；万一见到按不满足处理，
+// 方向是报丢包而不是把不认识的判据当成放宽。
+func statusAccepted(t *heronv1.ProbeTask, code int) bool {
+	switch t.GetHttpStatusPolicy() {
+	case heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_UNSPECIFIED:
+		return code >= 100 && code < 400
+	case heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_SUCCESS:
+		return code >= 200 && code < 300
+	case heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT:
+		return code == int(t.GetHttpExpectedStatus())
+	}
+	return false
 }
 
 // tlsConfig 返回钉住校验用的 TLS 配置；未钉时原样返回注入配置（生产为 nil）。
