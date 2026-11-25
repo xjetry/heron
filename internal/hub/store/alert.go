@@ -154,11 +154,21 @@ type StateRow struct {
 	RecoveredAt time.Time
 	// FiredAt 是这一对规则与节点最近一次进入 firing 的时刻，零值表示从未触发过（库里是 0）。与 RecoveredAt 一样是一段
 	// 历史而不是当前状态的属性，由 setAlertState 维护：写入 firing 记当下，其余写入沿用库里的值，调用方不给出它。
-	// 冷却（rtt 相对判定的 cooldown_s）按它判断新的触发是否落在上一次触发之后的冷却期内；状态行被删除时一起消失。
+	// 静默解除后的补发不改它（RecordUnsilencedFiring），所以恢复文案的告警持续时长总从故障最初触发起算；状态行被删除时一起消失。
 	FiredAt time.Time
-	// FiredSilenced 表示当前 firing 进入时处于维护静默覆盖内、没有投递：恢复是否投递只看它，
-	// 与恢复时刻是否静默无关。随触发转换写入（见 RecordTransition），恢复转换把它写回 0。
+	// FiredSilenced 表示当前 firing 进入时处于维护静默覆盖内、还没有发出触发通知：恢复是否投递只看它，与恢复时刻是否
+	// 静默无关。随触发转换写入（见 RecordTransition）；静默与维护都解除后仍在 firing 时，补发（RecordUnsilencedFiring）
+	// 把它写回 0，此后的恢复照常投递；恢复转换同样把它写回 0。
 	FiredSilenced bool
+	// FiredSummary 与 FiredValue 是被静默的那次触发事件的摘要与观测值，补发据此成文：只在 FiredSilenced 为真时有值，
+	// 其余恒为空与 0。它们随状态存而不从事件读回，理由同 FiredExpiresOn：事件按保留期清理，firing 却可以一直持续。
+	FiredSummary string
+	FiredValue   float64
+	// NotifiedAt 是这一对规则与节点最近一次以未静默的触发事件发出通知的时刻，零值表示从未发出过（库里是 0）。由写入口
+	// 维护，调用方不给出它：setAlertState 在未静默地进入 firing 时记当下，补发（RecordUnsilencedFiring）记补发时刻，
+	// 其余写入沿用库里的值。冷却（rtt 相对判定的 cooldown_s）按它判断新的触发是否落在上一次通知之后的冷却期内——
+	// 被静默、没有发出过通知的触发不开始冷却。状态行被删除时一起消失。
+	NotifiedAt time.Time
 }
 
 type Transition string
@@ -851,7 +861,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced, fired_at FROM alert_state ORDER BY rule_id, node_id")
+	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced, fired_at, fired_summary, fired_value, notified_at FROM alert_state ORDER BY rule_id, node_id")
 	if err != nil {
 		return nil, err
 	}
@@ -861,13 +871,16 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 		var r StateRow
 		var since int64
 		var recovered sql.NullInt64
-		var fired int64
-		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered, &r.FiredSilenced, &fired); err != nil {
+		var fired, notified int64
+		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered, &r.FiredSilenced, &fired, &r.FiredSummary, &r.FiredValue, &notified); err != nil {
 			return nil, err
 		}
 		r.SinceAt = time.Unix(since, 0).UTC()
 		if fired != 0 {
 			r.FiredAt = time.Unix(fired, 0).UTC()
+		}
+		if notified != 0 {
+			r.NotifiedAt = time.Unix(notified, 0).UTC()
 		}
 		if recovered.Valid {
 			r.RecoveredAt = time.Unix(recovered.Int64, 0).UTC()
@@ -878,10 +891,13 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 }
 
 // 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。整行替换：每次写都给出
-// fired_expires_on、recovered_at 与 fired_silenced，上一个状态记的值不会留到下一个状态；要沿用时由调用方显式带上。
-// fired_at 例外，由这里按库里的上一行推出（见 StateRow.FiredAt）：从非 firing 写成 firing 记 since，其余沿用上一行的值，
-// 没有上一行时为 0。它不经调用方，所以任何种类、任何写入口进入 firing 都记下它，不会有入口漏带而把冷却的起点抹掉。
-func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string, recoveredAt time.Time, firedSilenced bool) error {
+// fired_expires_on、recovered_at 与被静默的触发事件（silenced），上一个状态记的值不会留到下一个状态；要沿用时由调用方
+// 显式带上。silenced 非 nil 表示这次写入的是被静默的 firing：fired_silenced 记 1，fired_summary、fired_value 记它的摘要
+// 与观测值；nil 时三者写回 0、空串、0。
+// fired_at 与 notified_at 例外，由这里按库里的上一行推出（见 StateRow.FiredAt、StateRow.NotifiedAt）：从非 firing 写成
+// firing 时 fired_at 记 since，未被静默的还把 notified_at 记 since；其余沿用上一行的值，没有上一行时为 0。它们不经调用方，
+// 所以任何种类、任何写入口进入 firing 都记下它们，不会有入口漏带而把持续时长或冷却的起点抹掉。
+func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string, recoveredAt time.Time, silenced *AlertEvent) error {
 	if err := requireAlertReference(tx, "alert_rule", ObjectAlertRule, ruleID); err != nil {
 		return err
 	}
@@ -897,24 +913,32 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 		recovered = recoveredAt.Unix()
 	}
 	var prevState string
-	var prevFired int64
-	err = tx.QueryRow("SELECT state, fired_at FROM alert_state WHERE rule_id = ? AND node_id = ?", ruleID, nodeID).Scan(&prevState, &prevFired)
+	var prevFired, prevNotified int64
+	err = tx.QueryRow("SELECT state, fired_at, notified_at FROM alert_state WHERE rule_id = ? AND node_id = ?", ruleID, nodeID).Scan(&prevState, &prevFired, &prevNotified)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	firedAt := prevFired
+	firedAt, notifiedAt := prevFired, prevNotified
 	if state == StateFiring && AlertState(prevState) != StateFiring {
 		firedAt = since.Unix()
+		if silenced == nil {
+			notifiedAt = since.Unix()
+		}
 	}
-	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced, fired_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered, firedSilenced, firedAt)
+	firedSummary, firedValue := "", 0.0
+	if silenced != nil {
+		firedSummary, firedValue = silenced.Summary, silenced.Value
+	}
+	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced, fired_at, fired_summary, fired_value, notified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered, silenced != nil, firedAt, firedSummary, firedValue, notifiedAt)
 	return err
 }
 
 // SetAlertState 写不带事件的状态变化。alert 的状态机只经触发转换进入 firing（那一步走 RecordTransition），所以这里
-// 写的状态没有触发时的到期日，也不在 firing 内：fired_silenced 恒写 0。recoveredAt 含义见 StateRow.RecoveredAt，零值写 NULL。
+// 写的状态没有触发时的到期日，也不在 firing 内：没有被静默的触发，fired_silenced 恒写 0。recoveredAt 含义见
+// StateRow.RecoveredAt，零值写 NULL。
 func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since, recoveredAt time.Time) error {
-	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "", recoveredAt, false) })
+	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "", recoveredAt, nil) })
 }
 
 // 候选集撤销不是恢复观测，删除状态不产生事件；重复清理同一对规则与节点仍然成功。
@@ -927,7 +951,8 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 与 recoveredAt 随状态写入，
 // 含义见 StateRow.FiredExpiresOn 与 StateRow.RecoveredAt。fired_silenced 由转换方向推出：进入 firing 记这次触发是否被
-// 静默（ev.Silenced），恢复转换写回 0——配对的 firing 已随这次恢复闭环，下一轮的恢复判定从新的触发重新计。
+// 静默（ev.Silenced），被静默的连同这条事件的摘要与观测值一起记下供补发；恢复转换写回 0——配对的 firing 已随这次恢复
+// 闭环，下一轮的恢复判定从新的触发重新计。
 func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, recoveredAt time.Time, ev AlertEvent, targets []DeliveryTarget) (AlertEvent, error) {
 	if _, system := SystemEventKind(ev.Transition); system {
 		return AlertEvent{}, fmt.Errorf("rule %d, node %d: transition %q belongs to a system event, not to a rule and node", ruleID, nodeID, ev.Transition)
@@ -935,8 +960,48 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt, state == StateFiring && ev.Silenced); err != nil {
+		var silenced *AlertEvent
+		if state == StateFiring && ev.Silenced {
+			silenced = &ev
+		}
+		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt, silenced); err != nil {
 			return err
+		}
+		return recordAlertEvent(tx, &ev, targets)
+	})
+	if err != nil {
+		return AlertEvent{}, err
+	}
+	return ev, nil
+}
+
+// ErrNoSilencedFiring 表示 RecordUnsilencedFiring 的目标此刻不是一个被静默的 firing（已恢复、已补发过或状态行已删除）。
+var ErrNoSilencedFiring = errors.New("alert state is not a silenced firing")
+
+// RecordUnsilencedFiring 为一个被静默的 firing 补发触发通知：追加一条 ev.At 时刻、未静默的 firing 事件并按 targets 建投递，
+// 同事务把状态行的 fired_silenced 写回 0、清掉留给补发的摘要与观测值、notified_at 记 ev.At。状态本身没有转换：
+// state、since_at 与 fired_at 不动，后续恢复的持续时长仍从最初触发起算；静默期内落库的那条 silenced = 1 的原始事件
+// 也不动——它没有投递行是"被静默的事件没有投递"这条不变式（recordAlertEvent），改写它的投递就打破了审计。
+// 事件的 transition 与 silenced 由这里定死为 firing 与 false，调用方只给出时刻、摘要与观测值。
+//
+// 准入在同一事务里检查：状态行必须仍是 fired_silenced = 1 的 firing，否则返回 ErrNoSilencedFiring、什么都不写。
+// 所以同一次被静默的触发至多补发一次，与恢复、删除之间的交错也不会留下没有 firing 状态的补发事件。
+func (s *Store) RecordUnsilencedFiring(ctx context.Context, ruleID, nodeID int64, ev AlertEvent, targets []DeliveryTarget) (AlertEvent, error) {
+	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
+	ev.Transition, ev.Silenced = TransitionFiring, false
+	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.Exec("UPDATE alert_state SET fired_silenced = 0, fired_summary = '', fired_value = 0, notified_at = ? WHERE rule_id = ? AND node_id = ? AND state = ? AND fired_silenced = 1",
+			ev.At.Unix(), ruleID, nodeID, StateFiring)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("rule %d, node %d: %w", ruleID, nodeID, ErrNoSilencedFiring)
 		}
 		return recordAlertEvent(tx, &ev, targets)
 	})

@@ -740,7 +740,8 @@ export type Node = Message<"heron.v1.Node"> & {
   countryLookup: string;
 
   /**
-   * 维护状态：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。
+   * 维护状态：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。维护关闭且不在
+   * 任何生效的维护静默窗口内时，维护期间触发、仍未恢复的告警由 hub 补发触发通知（见 AlertEvent.silenced）。
    * 随 UpdateNode 整体替换；CreateNode 不接受（新节点恒为 false）。
    *
    * @generated from field: bool maintenance = 20;
@@ -2482,7 +2483,8 @@ export type AlertStateEntry = Message<"heron.v1.AlertStateEntry"> & {
   flapping: boolean;
 
   /**
-   * 仅 firing：这次触发进入 firing 时处于维护静默覆盖内、没有投递，恢复也将不投递；其余状态恒为 false。
+   * 仅 firing：这次触发进入 firing 时处于维护静默覆盖内、尚未发出触发通知，此时恢复也将不投递；静默与节点维护都解除后
+   * hub 补发触发通知（见 AlertEvent.silenced），此后为 false。其余状态恒为 false。
    *
    * @generated from field: bool silenced = 6;
    */
@@ -4901,7 +4903,11 @@ export type AlertEvent = Message<"heron.v1.AlertEvent"> & {
   deliveries: AlertDelivery[];
 
   /**
-   * 生成时是否处于维护静默覆盖内：为真时不产生任何投递（deliveries 为空）。恢复事件记配对 firing 的值。
+   * 生成时是否处于维护静默覆盖内：为真时不产生任何投递（deliveries 为空），之后也不会补建投递。恢复事件记配对的触发
+   * 是否始终没有发出通知：静默期内触发、静默期内恢复的，两条都为真。静默期内触发、节点维护与静默窗口都解除时仍未恢复的，
+   * hub 在解除后的下一轮离线巡检（每 10 秒一轮）追加一条为假的 firing 事件补发通知：at 是补发时刻，summary 在原触发的摘要后附注
+   * 静默结束时仍未恢复与自最初触发起的持续时长，value 沿用原触发的观测值；之后的恢复事件为假、照常投递，持续时长仍从
+   * 最初触发起算。
    *
    * @generated from field: bool silenced = 9;
    */

@@ -543,9 +543,14 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 				}
 			}
 		case 50:
-			// 与迁移 50 同源：probe_task 加地址族与记录类型两列，只在配置层。
+			// 补发内容与通知时刻三列在配置层的 alert_state 上；回填读的 alert_event、node、alert_rule 也都在配置层。
 			if layer == "config" {
 				statements = migrationV50Config
+			}
+		case 51:
+			// 与迁移 51 同源：probe_task 加地址族与记录类型两列，只在配置层。
+			if layer == "config" {
+				statements = migrationV51Config
 			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)

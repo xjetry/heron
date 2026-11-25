@@ -76,6 +76,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	48: migrateV48Config,
 	49: migrateV49Config,
 	50: execAll(migrationV50Config),
+	51: execAll(migrationV51Config),
 }
 
 // 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。
@@ -158,9 +159,31 @@ func migrateV49Config(tx *sql.Tx) error {
 	return nil
 }
 
-// v50：探测任务的探测地址族与 DNS 记录类型。旧任务取缺省 0（自动、A 记录），与升级前 agent 的执行方式相同，
-// 不能迁出别的值：那会让已有任务在调用方不知情时改测另一件事。只在配置层，迁移与配置快照共用。
+// v50：静默解除后的补发与按实际通知计的冷却，全部在配置层的 alert_state 上。
+//   - notified_at：冷却改为从实际发出的触发通知起算。旧库只知道 fired_at，除"当前 firing 且被静默"的行之外都按
+//     原口径沿用 fired_at——升级不改变已在进行的冷却；被静默的 firing 从未发出通知，记 0。
+//   - fired_summary、fired_value：只为当前被静默的 firing 回填，优先取配对的那条触发事件（该对最新的 firing 事件，
+//     进入 firing 时写下、silenced = 1）；事件已按保留期清理时用节点名与规则名拼一句，保证待补发的行摘要不为空。
 var migrationV50Config = []string{
+	`ALTER TABLE alert_state ADD COLUMN fired_summary TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE alert_state ADD COLUMN fired_value REAL NOT NULL DEFAULT 0`,
+	`ALTER TABLE alert_state ADD COLUMN notified_at INTEGER NOT NULL DEFAULT 0`,
+	`UPDATE alert_state SET notified_at = fired_at WHERE NOT (state = 'firing' AND fired_silenced = 1)`,
+	`UPDATE alert_state SET (fired_summary, fired_value) = (
+  SELECT e.summary, e.value FROM alert_event e
+  WHERE e.rule_id = alert_state.rule_id AND e.node_id = alert_state.node_id AND e.transition = 'firing' AND e.silenced = 1
+  ORDER BY e.id DESC LIMIT 1)
+WHERE state = 'firing' AND fired_silenced = 1 AND EXISTS (
+  SELECT 1 FROM alert_event e
+  WHERE e.rule_id = alert_state.rule_id AND e.node_id = alert_state.node_id AND e.transition = 'firing' AND e.silenced = 1)`,
+	`UPDATE alert_state SET fired_summary = '节点 ' || COALESCE((SELECT name FROM node WHERE id = alert_state.node_id), '') ||
+  ' 规则 ' || COALESCE((SELECT name FROM alert_rule WHERE id = alert_state.rule_id), '') || ' 在静默期内触发'
+WHERE state = 'firing' AND fired_silenced = 1 AND fired_summary = ''`,
+}
+
+// v51：探测任务的探测地址族与 DNS 记录类型。旧任务取缺省 0（自动、A 记录），与升级前 agent 的执行方式相同，
+// 不能迁出别的值：那会让已有任务在调用方不知情时改测另一件事。只在配置层，迁移与配置快照共用。
+var migrationV51Config = []string{
 	`ALTER TABLE probe_task ADD COLUMN ip_family INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE probe_task ADD COLUMN dns_record_type INTEGER NOT NULL DEFAULT 0`,
 }

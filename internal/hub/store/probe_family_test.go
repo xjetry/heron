@@ -11,14 +11,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// schemaV50 冻结 v50 的完整 DDL：v49 加上 probe_task 的探测地址族与 DNS 记录类型两列。
-var schemaV50 = append(slices.Clone(schemaV49),
+// schemaV51 冻结 v51 的完整 DDL：v50 加上 probe_task 的探测地址族与 DNS 记录类型两列。
+var schemaV51 = append(slices.Clone(schemaV50),
 	`ALTER TABLE probe_task ADD COLUMN ip_family INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE probe_task ADD COLUMN dns_record_type INTEGER NOT NULL DEFAULT 0`,
 )
 
-// removeV50Config 把当前配置库或快照退回 v49 的 probe_task 结构，供从旧版本起步的迁移与恢复测试使用。
-func removeV50Config(t *testing.T, db *sql.DB) {
+// removeV51Config 把当前配置库或快照退回 v50 的 probe_task 结构，供从旧版本起步的迁移与恢复测试使用。
+func removeV51Config(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec("ALTER TABLE probe_task DROP COLUMN ip_family; ALTER TABLE probe_task DROP COLUMN dns_record_type"); err != nil {
 		t.Fatal(err)
@@ -137,8 +137,8 @@ func TestProbeTaskFamilySurvivesConfigSnapshot(t *testing.T) {
 		t.Fatalf("restored %v, want %v and %v", tasks, saved.Task, savedDNS.Task)
 	}
 
-	// 同一份快照退回 v49 的结构：恢复时迁移补列，两项都取缺省。
-	old := filepath.Join(t.TempDir(), "config-v49.db")
+	// 同一份快照退回 v50 的结构：恢复时迁移补列，两项都取缺省。
+	old := filepath.Join(t.TempDir(), "config-v50.db")
 	if err := s.SnapshotConfig(ctx, old); err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +146,8 @@ func TestProbeTaskFamilySurvivesConfigSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	removeV50Config(t, db)
-	if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 49"); err != nil {
+	removeV51Config(t, db)
+	if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 50"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -155,14 +155,14 @@ func TestProbeTaskFamilySurvivesConfigSnapshot(t *testing.T) {
 	}
 	tasks = restore(t, old)
 	if len(tasks) != 2 || tasks[0].Task.GetIpFamily() != heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED || tasks[1].Task.GetDnsRecordType() != heronv1.DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED || tasks[0].Task.GetTarget() != "example.com:443" {
-		t.Fatalf("restored v49 snapshot %v, want the default family and record type", tasks)
+		t.Fatalf("restored v50 snapshot %v, want the default family and record type", tasks)
 	}
 }
 
-// 迁移 50 只补两列，旧任务一律取缺省：升级前的任务按自动地址族、A 记录执行，迁出别的值会悄悄改变它们测的东西。
-func TestMigrationFromV49AddsProbeFamilyColumns(t *testing.T) {
+// 迁移 51 只补两列，旧任务一律取缺省：升级前的任务按自动地址族、A 记录执行，迁出别的值会悄悄改变它们测的东西。
+func TestMigrationFromV50AddsProbeFamilyColumns(t *testing.T) {
 	t.Parallel()
-	migrated := migrateFrom(t, 49, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 50, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, dns_server, config_id) VALUES (4, 'legacy.example', 60, 1000, 0, '1.1.1.1:53', x'01010101010101010101010101010101')"); err != nil {
 			t.Fatal(err)
 		}
