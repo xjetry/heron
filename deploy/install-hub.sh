@@ -29,12 +29,12 @@ RELEASE_SHA256=""
 BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
 # 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
 # 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/heron/heron.db，不接受覆盖。
-SERVE_FLAGS='listen timezone offline-after trusted-proxies public-dir admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
+SERVE_FLAGS='listen public-listen timezone offline-after trusted-proxies public-dir admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
 nl='
 '
 cr=$(printf '\r')
 usage() {
-  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--timezone ZONE] [--offline-after DURATION] [--trusted-proxies CIDRS] [--public-dir DIR] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--public-listen ADDR] [--timezone ZONE] [--offline-after DURATION] [--trusted-proxies CIDRS] [--public-dir DIR] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
   echo '       --admin-origin is only for migrating existing Passkeys; new registrations bind the current HTTPS hostname' >&2
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
@@ -622,26 +622,38 @@ awk -v flags="db $SERVE_FLAGS" '
     for (i = 1; i <= count; i++) print "--" order[i] "=" val[order[i]]
   }
 ' "$work/args" "$work/overrides" > "$work/merged" || exit 1
-# 没有 --listen 时 serve 用自己的默认值 127.0.0.1:8080（cmd/hub/serve.go），端口预检按同一个值查。
-EXEC=""; listen=127.0.0.1:8080; db=""
+# 没有 --listen 时 serve 用自己的默认值 127.0.0.1:8080（cmd/hub/serve.go），端口预检按同一个值查。没有
+# --public-listen 或给了空值时 serve 不开公开监听（同一文件），也就没有第二个端口要查。
+EXEC=""; listen=127.0.0.1:8080; public_listen=""; db=""
 while IFS= read -r arg; do
   case "$arg" in
     --listen=*) listen=${arg#--listen=};;
+    --public-listen=*) public_listen=${arg#--public-listen=};;
     --db=*) db=${arg#--db=};;
   esac
   quote_arg "$arg"
   EXEC="$EXEC $quoted"
 done < "$work/merged"
 [ "$db" = /var/lib/heron/heron.db ] || fail 'installed unit must use --db /var/lib/heron/heron.db'
-port=${listen##*:}
-case "$port" in ''|*[!0-9]*) fail "listen address must end in a numeric TCP port: $listen";; esac
-if ! { [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; }; then fail "invalid TCP port: $port"; fi
+# listen_port 把监听地址的端口取进 port 并校验；check_port 按端口号查占用，不看地址。
+listen_port() {
+  port=${2##*:}
+  case "$port" in ''|*[!0-9]*) fail "$1 address must end in a numeric TCP port: $2";; esac
+  if ! { [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; }; then fail "invalid TCP port: $port"; fi
+}
+listen_port listen "$listen"
+ports=$port
+if [ -n "$public_listen" ]; then
+  listen_port public-listen "$public_listen"
+  ports="$ports $port"
+fi
 HERON_HUB_EXEC=${EXEC# }
 export HERON_HUB_EXEC
 awk '/^ExecStart=/ { print "ExecStart=" ENVIRON["HERON_HUB_EXEC"]; next } { print }' "$work/heron-hub.service" > "$work/unit"
 
+# check_port 查 $1 这个端口：/proc 提供监听 inode，再经 fd 定位持有者；不能只按进程名排除，另一个同名进程也会占端口。
 check_port() {
-  # /proc 提供监听 inode，再经 fd 定位持有者；不能只按进程名排除，另一个同名进程也会占端口。
+  port=$1
   own=0
   if [ -f "$UNIT" ]; then
     own=$(systemctl show heron-hub -p MainPID --value </dev/null)
@@ -671,7 +683,8 @@ check_port() {
 # 停服前先核对一遍，这里失败时旧服务照常运行。这一遍只为早失败：目录此时是 0770，服务组还能增删其中的条目，
 # 改属主的依据是下面停服加锁之后的复检。
 if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to heron-hub; old service was not stopped'; fi
-check_port
+# 两个监听的端口在停服前都查：任一个被别的进程占着，新 hub 起来后就绑不上，查到时旧服务照常运行。
+for p in $ports; do check_port "$p"; done
 prepare_updater
 stop_service
 # 从这里起旧服务已停：之后任何失败退出都由 on_exit 回滚（rollback_hub），直到启动确认成功。

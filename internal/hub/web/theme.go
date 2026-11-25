@@ -28,14 +28,11 @@ type ThemeSource interface {
 // PreviewAccess 必须逐请求检查短期能力以及其所属管理员会话；能力不由 cookie 自动授予。
 type PreviewAccess func(context.Context, string) (id, digest string, ok bool)
 
-func ThemeHandler(src ThemeSource, builtin http.Handler, preview PreviewAccess, log *slog.Logger) http.Handler {
-	return &themeHandler{src: src, builtin: builtin, preview: preview, log: log}
-}
-
-type themeHandler struct {
+// Themes 是进程内的主题快照：当前选择与按资源计量的字节缓存，随 ThemeSource 的代数整体换代。挂主题的每个监听都从
+// 同一个 Themes 取 Handler，缓存上界（themeCacheBytes、themeCacheEntries）因此按进程计，不随监听数翻倍，各监听看到的
+// 也是同一代选择。
+type Themes struct {
 	src        ThemeSource
-	builtin    http.Handler
-	preview    PreviewAccess
 	log        *slog.Logger
 	mu         sync.Mutex
 	gen        uint64
@@ -43,6 +40,23 @@ type themeHandler struct {
 	current    store.Theme
 	resources  []themeResource
 	cacheBytes int
+}
+
+func NewThemes(src ThemeSource, log *slog.Logger) *Themes {
+	return &Themes{src: src, log: log}
+}
+
+// Handler 服务一个监听上的主题面：根入口在选了可执行主题时回主题容器、否则交给 builtin，/_heron/themes/ 下是已发布
+// 版本的资源，/_heron/preview/ 下是 preview 准入的短期预览。preview 为 nil 时预览路径一律 404：不挂管理面板的
+// 监听不承载预览，它的能力由那个监听上的面板签发、只对同源页面有意义。
+func (t *Themes) Handler(builtin http.Handler, preview PreviewAccess) http.Handler {
+	return &themeHandler{themes: t, builtin: builtin, preview: preview}
+}
+
+type themeHandler struct {
+	themes  *Themes
+	builtin http.Handler
+	preview PreviewAccess
 }
 
 type themeResource struct {
@@ -56,7 +70,7 @@ const themeCacheEntries = 256
 
 // 缓存按资源计量并同时限制字节和条目；冷读只加载目标文件，不因轮换摘要读取包内无关内容。
 // 返回的字节此后只读；换代清空索引不会改变已经开始的响应。
-func (h *themeHandler) snapshot(ctx context.Context, id, digest, rel string) (themeResource, error) {
+func (h *Themes) snapshot(ctx context.Context, id, digest, rel string) (themeResource, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	gen := h.src.ThemeGeneration()
@@ -112,9 +126,9 @@ func (h *themeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ThemeRuntimeHandler().ServeHTTP(w, r)
 		return
 	}
-	p, err := h.snapshot(r.Context(), "", "", "")
+	p, err := h.themes.snapshot(r.Context(), "", "", "")
 	if err != nil {
-		h.unavailable(w, r, err)
+		h.themes.unavailable(w, r, err)
 		return
 	}
 	if p.meta.ID == "" || theme.CheckExecutable(p.meta.SDK) != nil {
@@ -163,9 +177,9 @@ func (h *themeHandler) servePackage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	p, err := h.snapshot(r.Context(), id, digest, rel)
+	p, err := h.themes.snapshot(r.Context(), id, digest, rel)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		h.unavailable(w, r, err)
+		h.themes.unavailable(w, r, err)
 		return
 	}
 	if err != nil || theme.CheckExecutable(p.meta.SDK) != nil || (!preview && !p.meta.Published) {
@@ -183,7 +197,7 @@ func (h *themeHandler) servePackage(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, path.Base(rel), time.Time{}, bytes.NewReader(p.content))
 }
 
-func (h *themeHandler) unavailable(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Themes) unavailable(w http.ResponseWriter, r *http.Request, err error) {
 	h.log.Error("reading theme failed", "err", err, "path", r.URL.Path)
 	SandboxHeaders(w.Header())
 	http.Error(w, "theme unavailable", http.StatusInternalServerError)
