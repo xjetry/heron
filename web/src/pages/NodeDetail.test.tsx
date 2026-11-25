@@ -81,7 +81,7 @@ it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量
   renderWithAdmin({ ...defaultImpl, listNodes: async () => { throw new ConnectError("nodes down", Code.Unavailable); } },
     [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
-  expect(await screen.findAllByTestId("chart")).toHaveLength(12);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(13);
   expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "流量" }));
   expect(await screen.findByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
@@ -92,7 +92,7 @@ it("listNodes 挂起不阻挡历史图表，诊断 tab 显示加载中", async (
   let release!: (v: Awaited<ReturnType<typeof listNodes>>) => void;
   const pending = new Promise<Awaited<ReturnType<typeof listNodes>>>((resolve) => { release = resolve; });
   renderWithAdmin({ ...defaultImpl, listNodes: () => pending }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect(await screen.findAllByTestId("chart")).toHaveLength(12);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(13);
   fireEvent.click(screen.getByRole("tab", { name: "Agent 诊断" }));
   expect(screen.getByText("加载中…")).toBeInTheDocument();
   expect(screen.queryByText("主机名")).toBeNull();
@@ -107,13 +107,13 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
     return { level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } };
   });
   renderWithAdmin({ ...defaultImpl, queryMetrics, getTraffic: async () => ({ ...await getTraffic(), now: 1_757_000_000n + (fail ? 60n : 0n) }) }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect(await screen.findAllByTestId("chart")).toHaveLength(12);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(13);
   await screen.findByText(/级别 1m，每点 60 秒/);
   fail = true;
   // 下次流量轮询带来跨分钟的 hub now，换键后的历史请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
-  expect(screen.getAllByTestId("chart")).toHaveLength(12);
+  expect(screen.getAllByTestId("chart")).toHaveLength(13);
   expect(screen.getByText(/级别 1m，每点 60 秒/)).toBeInTheDocument();
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"，
   // 失败已经由上面的横幅表达。
@@ -143,7 +143,7 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   expect(screen.queryAllByTestId("chart")).toHaveLength(0);
   await act(async () => { releaseNode8(); });
   expect(await screen.findByText(/级别 5m，每点 300 秒/)).toBeInTheDocument();
-  expect(screen.getAllByTestId("chart")).toHaveLength(12);
+  expect(screen.getAllByTestId("chart")).toHaveLength(13);
 });
 
 it("告警事件 tab 内嵌该节点的事件列表，离开概览前不请求事件与名称", async () => {
@@ -197,7 +197,7 @@ it("同窗口同名任务各有一张探测图，标题带编号区分并链接�
     expect(within(heading).getByRole("link")).toHaveAttribute("href", `/probes/${id}/compare`);
     expect(within(heading.parentElement!).getAllByTestId("chart")).toHaveLength(1);
   }
-  expect(screen.getAllByTestId("chart")).toHaveLength(14);
+  expect(screen.getAllByTestId("chart")).toHaveLength(15);
 });
 
 it("状态头显示状态与最近上报、五段元信息、落后徽章及六格，编辑入口打开抽屉", async () => {
@@ -393,7 +393,7 @@ describe("NodeDetail", () => {
     renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByText(/级别 1m/);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
-    try { expect(screen.queryAllByTestId("chart").length).toBe(12); }
+    try { expect(screen.queryAllByTestId("chart").length).toBe(13); }
     finally { await act(async () => { release(); }); }
   });
 
@@ -451,18 +451,21 @@ describe("NodeDetail", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "db-01" })).toBeInTheDocument();
     expect(await screen.findByText(/级别 5m，每点 300 秒/)).toBeInTheDocument();
     const charts = screen.getAllByTestId("chart");
-    expect(charts).toHaveLength(12);
-    expect(charts[7]).toHaveAttribute("data-labels", "下行均值,上行均值,下行峰值,上行峰值");
-    expect(charts[7]).toHaveAttribute("data-unit", "bytes/s");
+    expect(charts).toHaveLength(13);
+    expect(charts[8]).toHaveAttribute("data-labels", "下行均值,上行均值,下行峰值,上行峰值");
+    expect(charts[8]).toHaveAttribute("data-unit", "bytes/s");
     expect(charts[0]).toHaveAttribute("data-unit", "percent");
     expect(charts[1]).toHaveAttribute("data-labels", "内存均值,内存峰值,交换均值");
     expect(charts[1]).toHaveAttribute("data-unit", "bytes");
-    expect(charts[3]).toHaveAttribute("data-labels", "负载均值");
-    expect(charts[4]).toHaveAttribute("data-labels", "按核负载均值");
-    expect(charts[8]).toHaveAttribute("data-labels", "读均值,写均值");
-    expect(charts[8]).toHaveAttribute("data-unit", "bytes/s");
-    expect(charts[9]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
-    expect(charts[9]).toHaveAttribute("data-unit", "percent");
+    expect(charts[2]).toHaveAttribute("data-labels", "根盘已用均值");
+    expect(charts[3]).toHaveAttribute("data-labels", "最满盘均值,根盘均值");
+    expect(charts[3]).toHaveAttribute("data-unit", "percent");
+    expect(charts[4]).toHaveAttribute("data-labels", "负载均值");
+    expect(charts[5]).toHaveAttribute("data-labels", "按核负载均值");
+    expect(charts[9]).toHaveAttribute("data-labels", "读均值,写均值");
+    expect(charts[9]).toHaveAttribute("data-unit", "bytes/s");
+    expect(charts[10]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
+    expect(charts[10]).toHaveAttribute("data-unit", "percent");
     expect(screen.getByText(/db-01\.internal/)).toBeInTheDocument();
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };
     expect(req.nodeId).toBe(7n);
@@ -521,7 +524,7 @@ it("探测图每个任务一张图，未标注的任务用编号，且与指标�
   expect(within(active).getByRole("link")).toHaveAttribute("href", "/probes/3/compare");
   const unlabeled = screen.getByRole("heading", { name: "任务 #9" });
   expect(within(unlabeled).queryByRole("link")).toBeNull();
-  expect(screen.getAllByTestId("chart")).toHaveLength(14);
+  expect(screen.getAllByTestId("chart")).toHaveLength(15);
   await waitFor(() => expect(windows.filter((w) => w.name === "probes")).toHaveLength(1));
   const m = windows.find((w) => w.name === "metrics")!;
   const p = windows.find((w) => w.name === "probes")!;
@@ -581,7 +584,7 @@ it("切窗请求挂起时保留探测图与图例", async () => {
     expect(await screen.findByRole("heading", { name: "ICMP 1.1.1.1" })).toBeInTheDocument();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
     expect(screen.getByRole("heading", { name: "ICMP 1.1.1.1" })).toBeInTheDocument();
-    expect(screen.getAllByTestId("chart")).toHaveLength(13);
+    expect(screen.getAllByTestId("chart")).toHaveLength(14);
     expect(screen.getByText("RTT 均值")).toBeInTheDocument();
   } finally {
     await act(async () => { releaseProbes(); });

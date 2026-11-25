@@ -17,7 +17,7 @@ export function Bar({ value, label, thin = false }: { value: number; label: stri
 
 export type Usage = { used: bigint; total: bigint; pct: number };
 
-// 容量类读数（内存、交换、磁盘）的使用率只在这里算：公开页卡片、状态墙方块与详情面板、着色档位、节点页现值格、
+// 容量类读数（内存、交换、根盘）的使用率只在这里算：公开页卡片、状态墙方块与详情面板、着色档位、节点页现值格、
 // 列表与管理端总览都调它，"有没有读数"的判定不会各写一份而走散。
 // total 缺失或为 0 时没有分母，used 缺失时没有分子，都返回 undefined 让调用方按无读数显示，而不是算成 0%。
 // 有读数时把已确认存在的 used / total 一并带回，调用方写"用量 / 总量"不必再判一次缺失。

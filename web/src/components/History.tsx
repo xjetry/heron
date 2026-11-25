@@ -75,7 +75,13 @@ const PANELS: { title: string; selections: SeriesSelection[]; unit?: string }[] 
     { name: "mem_used", value: "max", label: "内存峰值" },
     { name: "swap_used", value: "mean", label: "交换均值" },
   ] },
-  { title: "磁盘", selections: [{ name: "disk_used", value: "mean", label: "已用均值" }] },
+  // 「磁盘」是根盘字节（disk_used 一直只代表根盘）；使用率另起一图：最满盘与根盘各一条线、共用 0–100 的百分比轴，
+  // 最满盘缺读数的点留空洞，不拿根盘补——那是 hub 在写入时已经做过的事（没有逐盘读数时最满盘就是根盘）。
+  { title: "磁盘", selections: [{ name: "disk_used", value: "mean", label: "根盘已用均值" }] },
+  { title: "磁盘使用率", unit: "percent", selections: [
+    { name: "disk_max_used_pct", value: "mean", label: "最满盘均值" },
+    { name: "disk_used_pct", value: "mean", label: "根盘均值" },
+  ] },
   { title: "负载（1 分钟）", selections: [{ name: "load1", value: "mean", label: "负载均值" }] },
   // 按核负载约是 load1 除以核数，多核机器上比 load1 小一个数量级；一张图只有一根纵轴，放在一起会被压成贴底的
   // 平线，所以单独成图。

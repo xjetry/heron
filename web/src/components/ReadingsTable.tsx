@@ -8,7 +8,7 @@ import { Bar, Missing, usage } from "./Bar";
 // 管理端 Metrics 与公开页 PublicMetrics 共有的读数字段；两边的消息按结构满足它，表格不区分来源。
 export type Readings = {
   cpuPct?: number; load1?: number; load5?: number; load15?: number;
-  memUsed?: bigint; memTotal?: bigint; diskUsed?: bigint; diskTotal?: bigint;
+  memUsed?: bigint; memTotal?: bigint; diskMaxUsedPct?: number;
   netRxBps?: bigint; netTxBps?: bigint; uptimeS?: bigint;
 };
 
@@ -52,7 +52,8 @@ export function ReadingsTable<T>({ label, items, row, extra = [], now, className
                 <td data-label="节点">{r.name}</td>
                 <td data-label="CPU"><Meter label="CPU" value={m?.cpuPct} /></td>
                 <td data-label="内存"><Meter label="内存" value={usage(m?.memUsed, m?.memTotal)?.pct} /></td>
-                <td data-label="磁盘"><Meter label="磁盘" value={usage(m?.diskUsed, m?.diskTotal)?.pct} /></td>
+                {/* 磁盘列是最满盘使用率，与卡片、状态墙同一个字段。 */}
+                <td data-label="磁盘"><Meter label="磁盘" value={m?.diskMaxUsedPct} /></td>
                 <td data-label="负载" className="num">{m?.load1 !== undefined && m.load5 !== undefined && m.load15 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5.toFixed(2)} / ${m.load15.toFixed(2)}` : <Missing />}</td>
                 <td data-label="网络" className="num">{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
                 <td data-label="本周期" className="num">{r.traffic ? trafficText(r.traffic) : <Missing />}</td>

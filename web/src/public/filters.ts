@@ -78,9 +78,9 @@ export function sortNodes(nodes: readonly PublicNode[], sort: NodeSort): PublicN
   }
 }
 
-export type ColorBy = "status" | "cpu" | "memory" | "expiry";
+export type ColorBy = "status" | "cpu" | "memory" | "disk" | "expiry";
 export const COLOR_BYS: readonly { value: ColorBy; label: string }[] = [
-  { value: "status", label: "状态" }, { value: "cpu", label: "CPU" }, { value: "memory", label: "内存" }, { value: "expiry", label: "到期" },
+  { value: "status", label: "状态" }, { value: "cpu", label: "CPU" }, { value: "memory", label: "内存" }, { value: "disk", label: "磁盘" }, { value: "expiry", label: "到期" },
 ];
 
 // 状态着色来自五态，不给使用量档位；缺使用量读数不给档位，缺到期日与已出租由 expiryLevel 判为中性。
@@ -92,6 +92,8 @@ export function tileLevel(node: PublicNode, by: ColorBy): Level | undefined {
       const mem = usage(m?.memUsed, m?.memTotal);
       return mem ? usageLevel(mem.pct) : undefined;
     }
+    // 磁盘按最满盘使用率着色，与卡片的磁盘条同一个字段；根盘字节不参与。
+    case "disk": return m?.diskMaxUsedPct === undefined ? undefined : usageLevel(m.diskMaxUsedPct);
     case "expiry": return expiryLevel(node.billing?.daysLeft, node.rented);
     default: return undefined;
   }

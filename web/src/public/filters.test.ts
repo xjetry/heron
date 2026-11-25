@@ -84,6 +84,10 @@ it.each<[PublicNode, ColorBy, string | undefined]>([
   [node({ metrics: { memTotal: 10n } }), "memory", undefined],
   [node({ metrics: { memUsed: 1n, memTotal: 0n } }), "memory", undefined],
   [node({ metrics: { memUsed: 0n, memTotal: 10n } }), "memory", "neutral"],
+  // 磁盘着色取最满盘使用率；只有根盘字节没有最满盘读数时不给档位。
+  [node({ metrics: { diskMaxUsedPct: 95, diskUsed: 1n, diskTotal: 10n } }), "disk", "critical"],
+  [node({ metrics: { diskMaxUsedPct: 10, diskUsed: 9n, diskTotal: 10n } }), "disk", "neutral"],
+  [node({ metrics: { diskUsed: 9n, diskTotal: 10n } }), "disk", undefined],
   [nodes[1], "expiry", "attention"],
   [nodes[4], "expiry", "critical"],
   [nodes[0], "expiry", "neutral"],
@@ -167,6 +171,6 @@ it("空快照汇总全为零", () => {
 it("排序与着色选项使用约定的值、标签及顺序", () => {
   expect([NODE_SORTS, COLOR_BYS]).toEqual([
     [{ value: "default", label: "默认" }, { value: "expiry", label: "到期" }, { value: "cpu", label: "CPU" }, { value: "traffic", label: "流量" }],
-    [{ value: "status", label: "状态" }, { value: "cpu", label: "CPU" }, { value: "memory", label: "内存" }, { value: "expiry", label: "到期" }],
+    [{ value: "status", label: "状态" }, { value: "cpu", label: "CPU" }, { value: "memory", label: "内存" }, { value: "disk", label: "磁盘" }, { value: "expiry", label: "到期" }],
   ]);
 });

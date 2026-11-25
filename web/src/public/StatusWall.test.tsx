@@ -10,7 +10,7 @@ import { chooseOption } from "../test/select";
 
 // tokyo-1 的读数单独成常量：元素类型是各节点形状的联合，从 nodes[0] 上读不出 metrics，
 // 用例要在这份读数上覆写个别字段后再整份使用。
-const tokyo1Metrics = { cpuPct: 95, memUsed: 8n * 1024n ** 3n, memTotal: 10n * 1024n ** 3n, swapUsed: 0n, swapTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 2048n, netTxBps: 1024n, diskReadBps: 10n, diskWriteBps: 20n, tcpConns: 12, udpConns: 3, procs: 99, uptimeS: 90_000n, tcpActiveOpensPs: 2.5, tcpPassiveOpensPs: 10, tcpOutSegsPs: 200, tcpRetransSegsPs: 3 };
+const tokyo1Metrics = { cpuPct: 95, memUsed: 8n * 1024n ** 3n, memTotal: 10n * 1024n ** 3n, swapUsed: 0n, swapTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, diskMaxUsedPct: 85, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 2048n, netTxBps: 1024n, diskReadBps: 10n, diskWriteBps: 20n, tcpConns: 12, udpConns: 3, procs: 99, uptimeS: 90_000n, tcpActiveOpensPs: 2.5, tcpPassiveOpensPs: 10, tcpOutSegsPs: 200, tcpRetransSegsPs: 3 };
 
 const snapshot = {
   now: 1_000n, tags: ["prod"],
@@ -66,7 +66,9 @@ it("宽屏：默认选中墙上第一个节点，点方块只切换详情不导�
   expect(panel.getByText("运行 1d 1h")).toBeInTheDocument();
   expect(panel.getByRole("meter", { name: "内存 8.0 GiB / 10 GiB (80%)" })).toHaveAttribute("aria-valuenow", "80");
   expect(panel.getByRole("meter", { name: "交换 0 B / 1.0 GiB (0.0%)" })).toHaveAttribute("aria-valuenow", "0");
-  expect(panel.getByRole("meter", { name: "磁盘 1.0 GiB / 10 GiB (10%)" })).toHaveAttribute("aria-valuenow", "10");
+  // 磁盘一行是最满盘使用率，只有百分比；根盘另起一行带用量 / 总量。
+  expect(panel.getByRole("meter", { name: "磁盘 85%" })).toHaveAttribute("aria-valuenow", "85");
+  expect(panel.getByRole("meter", { name: "根盘 1.0 GiB / 10 GiB (10%)" })).toHaveAttribute("aria-valuenow", "10");
   // 条右侧的可见读数与读屏名同一写法（Bar 内的读屏文字不算可见读数）。
   expect(panel.getByText("内存").nextElementSibling?.querySelector(".detail-meter > .num")).toHaveTextContent(/^8\.0 GiB \/ 10 GiB \(80%\)$/);
   expect(panel.getByText("0.50 / 0.40 / 0.30")).toBeInTheDocument();
@@ -98,7 +100,7 @@ it("详情面板里无读数的项显示为破折号，从未上报的节点没�
   const panel = within(screen.getByRole("complementary", { name: "节点详情" }));
   expect(panel.getByText("从未上报")).toBeInTheDocument();
   expect(panel.queryAllByRole("meter")).toHaveLength(0);
-  expect(panel.getAllByLabelText("无读数")).toHaveLength(11);
+  expect(panel.getAllByLabelText("无读数")).toHaveLength(12);
   expect(panel.queryByText(/×/)).toBeNull();
 });
 
@@ -109,11 +111,11 @@ it("详情面板的 TCP 行：发出段为 0 时重传率写破折号，不写 0
   expect(panel.getByText("建连 2.50/s · 接入 10.0/s · 重传 –")).toBeInTheDocument();
 });
 
-it("详情面板的内存、交换、磁盘：总量为 0 或缺失、用量缺失时整行写破折号，不画条也不写 0%", async () => {
+it("详情面板的内存、交换、根盘：总量为 0 或缺失、用量缺失时整行写破折号，不画条也不写 0%；没有最满盘读数时磁盘一行同样写破折号", async () => {
   render(async () => ({ ...snapshot, nodes: [{ ...snapshot.nodes[0], metrics: { cpuPct: 5, memUsed: 1024n, memTotal: 0n, swapUsed: 0n, diskTotal: 4n * 1024n ** 3n } }] }));
   const panel = within(await screen.findByRole("complementary", { name: "节点详情" }));
   expect(panel.getAllByRole("meter").map((m) => m.getAttribute("aria-label"))).toEqual(["CPU 5.0%"]);
-  for (const label of ["内存", "交换", "磁盘"]) {
+  for (const label of ["内存", "交换", "磁盘", "根盘"]) {
     expect(panel.getByText(label).nextElementSibling).toHaveTextContent(/^–$/);
   }
 });

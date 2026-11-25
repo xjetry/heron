@@ -23,7 +23,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   const now = Math.floor(Date.now() / 1000);
   const minute = now - now % 60;
   const nodes: MessageInitShape<typeof PublicNodeSchema>[] = [
-    { id: 1n, name: "tokyo-core", country: "JP", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 2), facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuModel: "EPYC", cpuCores: 4, network: { ipv4: AVAILABLE, ipv6: AVAILABLE } }, metrics: { cpuPct: 72, memUsed: BigInt(3 * 1024 ** 3), memTotal: BigInt(4 * 1024 ** 3), diskUsed: BigInt(8 * 1024 ** 3), diskTotal: BigInt(32 * 1024 ** 3), uptimeS: 720000n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: BigInt(128 * 1024), netTxBps: BigInt(32 * 1024), tcpConns: 20, udpConns: 2, procs: 120 }, traffic: { totalRx: BigInt(1.5 * 1024 ** 4), totalTx: BigInt(640 * 1024 ** 3), periodRx: BigInt(12 * 1024 ** 3), periodTx: BigInt(8 * 1024 ** 3) }, billing: { price: "12", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-10-01", daysLeft: 10 } },
+    { id: 1n, name: "tokyo-core", country: "JP", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 2), facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuModel: "EPYC", cpuCores: 4, network: { ipv4: AVAILABLE, ipv6: AVAILABLE } }, metrics: { cpuPct: 72, memUsed: BigInt(3 * 1024 ** 3), memTotal: BigInt(4 * 1024 ** 3), diskUsed: BigInt(8 * 1024 ** 3), diskTotal: BigInt(32 * 1024 ** 3), diskMaxUsedPct: 60, uptimeS: 720000n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: BigInt(128 * 1024), netTxBps: BigInt(32 * 1024), tcpConns: 20, udpConns: 2, procs: 120 }, traffic: { totalRx: BigInt(1.5 * 1024 ** 4), totalTx: BigInt(640 * 1024 ** 3), periodRx: BigInt(12 * 1024 ** 3), periodTx: BigInt(8 * 1024 ** 3) }, billing: { price: "12", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-10-01", daysLeft: 10 } },
     { id: 2n, name: "tokyo-home", country: "JP", online: false, tags: ["家宽"], lastSeenAt: BigInt(now - 7200), metrics: { cpuPct: 5 } },
     { id: 3n, name: "hk-edge", country: "HK", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 1), maintenance: true, metrics: { cpuPct: 10, memUsed: BigInt(1024 ** 3), memTotal: BigInt(4 * 1024 ** 3) } },
     { id: 4n, name: "香港家宽-超长节点名称用于验证窄屏布局与完整可访问名称", country: "HK", online: true, tags: ["家宽"], lastSeenAt: BigInt(now - 1), facts: { network: { ipv4: AVAILABLE, ipv6: { state: AddressDetectionState.FAILED } } }, metrics: { cpuPct: 95, memUsed: BigInt(Math.floor(3.9 * 1024 ** 3)), memTotal: BigInt(4 * 1024 ** 3) } },
@@ -158,12 +158,13 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(card.getByText("US$12 / 月")).toBeVisible();
   await expect(card.locator(".expiry")).toHaveAttribute("data-level", "attention");
   await expect(card.locator(".expiry")).toContainText("剩 10 天");
-  // 内存与磁盘在用量 / 总量后附百分比；底部本周期之后是累计流量（total_rx / total_tx，不是本周期的 12 GiB / 8.0 GiB）。
+  // 内存在用量 / 总量后附百分比；磁盘是最满盘使用率（60%，不是根盘的 8.0 GiB / 32 GiB），只有百分比。
+  // 底部本周期之后是累计流量（total_rx / total_tx，不是本周期的 12 GiB / 8.0 GiB）。
   // CPU 在条下附总核心数（facts.cpu_cores）。
   await expect(card.getByRole("meter", { name: "内存 3.0 GiB / 4.0 GiB (75%)" })).toBeVisible();
-  await expect(card.getByRole("meter", { name: "磁盘 8.0 GiB / 32 GiB (25%)" })).toBeVisible();
-  await expect(card.locator(".node-meter > .num:not(.node-meter-detail)")).toHaveText(["72%", "75%", "25%"]);
-  await expect(card.locator(".node-meter-detail")).toHaveText(["4 核", "3.0 GiB / 4.0 GiB", "8.0 GiB / 32 GiB"]);
+  await expect(card.getByRole("meter", { name: "磁盘 60%" })).toBeVisible();
+  await expect(card.locator(".node-meter > .num:not(.node-meter-detail)")).toHaveText(["72%", "75%", "60%"]);
+  await expect(card.locator(".node-meter-detail")).toHaveText(["4 核", "3.0 GiB / 4.0 GiB"]);
   // 用量 / 总量在条下另起一行，百分比列定宽：三条等长，读数再长也不会把条挤短。
   const barWidths = await card.locator(".node-meter .bar").evaluateAll((bars) => bars.map((bar) => Math.round(bar.getBoundingClientRect().width)));
   expect(new Set(barWidths).size, barWidths.join()).toBe(1);

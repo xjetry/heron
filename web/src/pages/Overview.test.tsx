@@ -11,7 +11,7 @@ const snapshot = {
   nodes: [
     { id: 1n, name: "web-01", online: true, lastSeenAt: 999_990n,
       traffic: { periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
-      metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 3_725n } },
+      metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, diskMaxUsedPct: 80, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 3_725n } },
     { id: 2n, name: "never", online: false },
     { id: 3n, name: "gone", online: false, lastSeenAt: 900_000n },
   ],
@@ -45,7 +45,8 @@ it("实时表每行一个状态点与细条；维护中压过在线，不在快�
   expect(web.getByRole("img", { name: "在线" })).toBeInTheDocument();
   expect(web.getByRole("meter", { name: "CPU 42%" })).toHaveAttribute("aria-valuenow", "42");
   expect(web.getByRole("meter", { name: "内存 50%" })).toBeInTheDocument();
-  expect(web.getByRole("meter", { name: "磁盘 10%" })).toBeInTheDocument();
+  // 磁盘列是最满盘使用率（80%），不是根盘的 1 GiB / 10 GiB。
+  expect(web.getByRole("meter", { name: "磁盘 80%" })).toBeInTheDocument();
   expect(web.getByText("0.50 / 0.40 / 0.30")).toBeInTheDocument();
   expect(web.getByText("↓ 1.0 KiB/s ↑ 2.0 KiB/s")).toBeInTheDocument();
   expect(web.getByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();

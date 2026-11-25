@@ -45,6 +45,8 @@ const queryMetrics = async (req: QueryMetricsRequest) => {
       { name: "tcp_retrans_segs_ps", unit: "count/s", samples: [{ n: 3, mean: 3 }, { n: 1, mean: 0 }, { n: 1, mean: 1 }, { n: 0, mean: 9 }] },
       { name: "load1", unit: "", samples: [{ n: 3, mean: 6.4 }, { n: 1, mean: 0 }, { n: 1, mean: 8 }, { n: 0, mean: 99 }] },
       { name: "load1_per_core", unit: "", samples: [{ n: 3, mean: 0.4 }, { n: 1, mean: 0 }, { n: 0, mean: 99 }, { n: 0, mean: 99 }] },
+      { name: "disk_used_pct", unit: "percent", samples: [{ n: 3, mean: 20 }, { n: 1, mean: 0 }, { n: 1, mean: 21 }, { n: 0, mean: 99 }] },
+      { name: "disk_max_used_pct", unit: "percent", samples: [{ n: 3, mean: 88 }, { n: 1, mean: 0 }, { n: 0, mean: 99 }, { n: 0, mean: 99 }] },
     ],
     // QueryMetrics 成功响应总是带 coverageSummary；图表用例不关心覆盖率，给一份无起点的汇总。
     coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n },
@@ -88,6 +90,8 @@ it.each([
     { title: "CPU steal / iowait", labels: "steal 均值,iowait 均值", unit: "percent", soft: [false, false], points: [
       [1.5, 0, 2.5, null, null], [3.5, 0, 4.5, null, null],
     ] },
+    // 最满盘与根盘是两条线：最满盘缺读数的点留空洞，不拿根盘补。
+    { title: "磁盘使用率", labels: "最满盘均值,根盘均值", unit: "percent", soft: [false, false], points: [[88, 0, null, null, null], [20, 0, 21, null, null]] },
     { title: "负载（1 分钟）", labels: "负载均值", unit: "", soft: [false], points: [[6.4, 0, 8, null, null]] },
     { title: "按核负载（1 分钟）", labels: "按核负载均值", unit: "", soft: [false], points: [[0.4, 0, null, null, null]] },
     { title: "TCP 建连", labels: "主动均值,被动均值,主动峰值,被动峰值", unit: "count/s", soft: [false, false, true, true], points: [

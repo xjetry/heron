@@ -11,7 +11,7 @@ afterEach(() => { localStorage.clear(); });
 const nodes = [
   {
     id: 1n, name: "香港家宽", online: true, lastSeenAt: 998n, sortOrder: 0, country: "HK",
-    metrics: { cpuPct: 12, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 90_061n },
+    metrics: { cpuPct: 12, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, diskMaxUsedPct: 80, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 90_061n },
     traffic: { periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
     billing: { expiresOn: "2026-10-30", daysLeft: 21 },
   },
@@ -44,7 +44,8 @@ it("一行的内容：状态点、名称链接与国家徽章、三条细条、�
   expect(hk.getByTitle("国家 / 地区 HK")).toBeInTheDocument();
   expect(hk.getByRole("meter", { name: "CPU 12%" })).toBeInTheDocument();
   expect(hk.getByRole("meter", { name: "内存 50%" })).toBeInTheDocument();
-  expect(hk.getByRole("meter", { name: "磁盘 10%" })).toBeInTheDocument();
+  // 磁盘列是最满盘使用率（80%），不是根盘的 1 GiB / 10 GiB。
+  expect(hk.getByRole("meter", { name: "磁盘 80%" })).toBeInTheDocument();
   expect(hk.getByText("0.50 / 0.40 / 0.30")).toBeInTheDocument();
   expect(hk.getByText("↓ 1.0 KiB/s ↑ 2.0 KiB/s")).toBeInTheDocument();
   expect(hk.getByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();

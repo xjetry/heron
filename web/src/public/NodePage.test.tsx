@@ -22,7 +22,7 @@ it("公开节点的历史图表走 PublicService；首屏是实时状态头与�
   const queryProbes = vi.fn(async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [{ taskId: 3n, kind: ProbeKind.TCP, target: "example.com:443" }] }));
   const live = async () => ({ now: 1_000n, nodes: [{ id: 7n, name: "edge-1", online: true, lastSeenAt: 998n, country: "DE", tags: ["edge", "eu"], publicRemark: "法兰克福",
     facts: { os: "Alpine 3.21", arch: "arm64", cpuModel: "Neoverse", cpuCores: 2, virtualization: "kvm" },
-    metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, netRxBps: 2048n, netTxBps: 1024n, uptimeS: 90_000n },
+    metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, diskMaxUsedPct: 80, netRxBps: 2048n, netTxBps: 1024n, uptimeS: 90_000n },
     billing: { expiresOn: "2030-01-01", daysLeft: 10 } }] });
   renderWithService(PublicService, { getSnapshot: live, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   const head = (await screen.findByRole("heading", { level: 1, name: "edge-1" })).closest("header")!;
@@ -31,14 +31,15 @@ it("公开节点的历史图表走 PublicService；首屏是实时状态头与�
   expect(within(head).getAllByText(/^(edge|eu)$/).map((el) => el.textContent)).toEqual(["edge", "eu"]);
   expect(within(screen.getByRole("group", { name: "CPU" })).getByText("42%")).toBeInTheDocument();
   expect(within(screen.getByRole("group", { name: "内存" })).getByText("50%")).toBeInTheDocument();
-  expect(within(screen.getByRole("group", { name: "磁盘" })).getByText("10%")).toBeInTheDocument();
+  // 磁盘现值格是最满盘使用率，不是根盘的 10%。
+  expect(within(screen.getByRole("group", { name: "磁盘" })).getByText("80%")).toBeInTheDocument();
   expect(screen.getByRole("group", { name: "网络" })).toHaveTextContent("↓ 2.0 KiB/s ↑ 1.0 KiB/s");
   expect(screen.getByRole("group", { name: "运行时长" })).toHaveTextContent("1d 1h");
   expect(screen.getByRole("group", { name: "剩余天数" })).toHaveTextContent("10 天");
   expect(within(screen.getByRole("group", { name: "剩余天数" })).getByText("10").closest("[data-level]")).toHaveAttribute("data-level", "attention");
   expect(within(screen.getByRole("group", { name: "剩余天数" })).getByText("10")).toHaveClass("num");
   expect(await screen.findByRole("heading", { name: "TCP example.com:443" })).toBeInTheDocument();
-  expect(screen.getAllByTestId("chart")).toHaveLength(13);
+  expect(screen.getAllByTestId("chart")).toHaveLength(14);
   for (const r of ["1h", "6h", "24h", "7d", "30d"]) expect(screen.getByRole("button", { name: r })).toBeInTheDocument();
   expect(within(head).getByText("Alpine 3.21").closest("dl")).toHaveClass("facts-inline");
   expect(within(head).getByText("Neoverse × 2")).toBeInTheDocument();
@@ -99,13 +100,13 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
   const queryProbes = vi.fn(async () => ({ level: "1m", stepS: 60, series: [] }));
   renderWithService(PublicService, { getSnapshot: async () => ({ ...await snapshot(), now: 1_000n + (fail ? 60n : 0n) }), queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   await screen.findByRole("heading", { level: 1, name: "edge-1" });
-  expect(await screen.findAllByTestId("chart")).toHaveLength(12);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(13);
   await screen.findByText(/级别 1m，每点 60 秒/);
   fail = true;
   // 下次快照轮询带来跨分钟的 hub now，换键后的历史请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
-  expect(screen.getAllByTestId("chart")).toHaveLength(12);
+  expect(screen.getAllByTestId("chart")).toHaveLength(13);
   expect(screen.getByText(/级别 1m，每点 60 秒/).closest("header")).toBe(rangeHeader());
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"。
   expect(screen.queryByText(/图表还不是/)).toBeNull();
@@ -133,7 +134,7 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   expect(screen.queryAllByTestId("chart")).toHaveLength(0);
   await act(async () => { releaseNode8(); });
   expect(await screen.findByText(/级别 5m，每点 300 秒/)).toBeInTheDocument();
-  expect(screen.getAllByTestId("chart")).toHaveLength(12);
+  expect(screen.getAllByTestId("chart")).toHaveLength(13);
 });
 
 it("节点页标题带国家 / 地区徽章", async () => {

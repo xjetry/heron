@@ -69,7 +69,9 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
         <Row label="CPU 使用">{m?.cpuPct !== undefined ? <Meter value={m.cpuPct} label="CPU" text={percent(m.cpuPct)} /> : <Missing />}</Row>
         <Capacity label="内存" used={m?.memUsed} total={m?.memTotal} />
         <Capacity label="交换" used={m?.swapUsed} total={m?.swapTotal} />
-        <Capacity label="磁盘" used={m?.diskUsed} total={m?.diskTotal} />
+        {/* 磁盘是最满盘使用率（只公开百分比，不公开是哪块盘）；根盘另起一行带用量 / 总量，两者口径不同，不合成一行。 */}
+        <Row label="磁盘">{m?.diskMaxUsedPct !== undefined ? <Meter value={m.diskMaxUsedPct} label="磁盘" text={percent(m.diskMaxUsedPct)} /> : <Missing />}</Row>
+        <Capacity label="根盘" used={m?.diskUsed} total={m?.diskTotal} />
         <Row label="负载">{m?.load1 !== undefined && m.load5 !== undefined && m.load15 !== undefined ? <span className="num">{m.load1.toFixed(2)} / {m.load5.toFixed(2)} / {m.load15.toFixed(2)}</span> : <Missing />}</Row>
         <Row label="网络">
           {m?.netRxBps !== undefined && m.netTxBps !== undefined ? <span className="num">↓ {bytes(m.netRxBps)}/s ↑ {bytes(m.netTxBps)}/s</span> : <Missing />}

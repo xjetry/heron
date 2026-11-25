@@ -46,7 +46,9 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
       <div className="node-meters">
         <Meter label="CPU" value={m?.cpuPct} detail={f?.cpuCores ? `${f.cpuCores} 核` : undefined} />
         <Capacity label="内存" used={m?.memUsed} total={m?.memTotal} />
-        <Capacity label="磁盘" used={m?.diskUsed} total={m?.diskTotal} />
+        {/* 磁盘条是最满盘使用率（hub 写入的 diskMaxUsedPct），不画根盘：独立数据盘写满时根盘可能还空着。
+            不附用量 / 总量：根盘的字节不是这根条的分子分母，写在一起会让人以为 90% 指的是根盘。 */}
+        <Meter label="磁盘" value={m?.diskMaxUsedPct} />
       </div>
       <p className="node-network num" role="group" aria-label="网络速率">
         ↓ {m?.netRxBps !== undefined ? `${bytes(m.netRxBps)}/s` : <Missing />} ↑ {m?.netTxBps !== undefined ? `${bytes(m.netTxBps)}/s` : <Missing />}

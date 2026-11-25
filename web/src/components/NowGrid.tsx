@@ -3,7 +3,7 @@ import { Missing, usage } from "./Bar";
 import { bytes, duration, percent } from "../lib/format";
 import { expiryLevel } from "../lib/status";
 
-export type NowMetrics = { cpuPct?: number; memUsed?: bigint; memTotal?: bigint; diskUsed?: bigint; diskTotal?: bigint; netRxBps?: bigint; netTxBps?: bigint; uptimeS?: bigint };
+export type NowMetrics = { cpuPct?: number; memUsed?: bigint; memTotal?: bigint; diskMaxUsedPct?: number; netRxBps?: bigint; netTxBps?: bigint; uptimeS?: bigint };
 
 function Now({ label, children }: { label: string; children: ReactNode }) {
   return <div className="now-cell" role="group" aria-label={label}><dt>{label}</dt><dd>{children}</dd></div>;
@@ -16,12 +16,12 @@ const num = (text: string) => <span className="num">{text}</span>;
 // billing，已出租来自节点；漏传 rented 会把已出租的剩余天数按未出租上色。
 export function NowGrid({ metrics: m, daysLeft, rented }: { metrics: NowMetrics | undefined; daysLeft: number | undefined; rented: boolean }) {
   const mem = usage(m?.memUsed, m?.memTotal);
-  const disk = usage(m?.diskUsed, m?.diskTotal);
   return (
     <dl className="now-grid">
       <Now label="CPU">{m?.cpuPct !== undefined ? num(percent(m.cpuPct)) : <Missing />}</Now>
       <Now label="内存">{mem ? num(percent(mem.pct)) : <Missing />}</Now>
-      <Now label="磁盘">{disk ? num(percent(disk.pct)) : <Missing />}</Now>
+      {/* 磁盘是最满盘使用率（hub 写入），不是根盘；逐盘明细在管理端的「本地磁盘」。 */}
+      <Now label="磁盘">{m?.diskMaxUsedPct !== undefined ? num(percent(m.diskMaxUsedPct)) : <Missing />}</Now>
       {/* 收发各占一行：写成一行时在格子宽度下会从「59 KiB/s」中间折断，六格高度也跟着不齐。 */}
       <Now label="网络">{m?.netRxBps !== undefined && m.netTxBps !== undefined
         ? <><span className="num now-line">↓ {bytes(m.netRxBps)}/s</span> <span className="num now-line">↑ {bytes(m.netTxBps)}/s</span></>

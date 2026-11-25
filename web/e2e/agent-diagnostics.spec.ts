@@ -32,10 +32,15 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
   await expect(card.getByText("10000 ms", { exact: false })).toBeVisible();
   await expect(card.getByText("最近保存的诊断，不保证实时健康。生效参数只读。")).toBeVisible();
   await expect(card.getByText("2 块（含根盘）", { exact: true })).toBeVisible();
+  // 最满盘使用率由 hub 取逐盘列表首项（/srv/private-disk 的 90%）写进实时读数，管理端现值格与公开快照都是这个数；
+  // 公开快照只有百分比，挂载路径不随它出去（下方全文核对）。
+  // 公开快照有短时缓存，轮询到这次上报生效为止。
+  await expect.poll(async () => must(await rpc(page, PublicService.method.getSnapshot, {})).nodes.find((entry) => entry.id === node.id)?.metrics?.diskMaxUsedPct).toBe(90);
   // 逐盘容量只在内存实时状态里，经 GetNodeDisks 显示在概览；最满的排在最前。
   await page.getByRole("tab", { name: "概览", exact: true }).click();
   const disks = page.getByRole("region", { name: "本地磁盘" });
   await expect(disks.getByRole("row").nth(1)).toContainText("/srv/private-disk");
+  await expect(page.getByRole("group", { name: "节点状态" }).getByRole("group", { name: "磁盘" })).toHaveText(/90%/);
   await page.getByRole("tab", { name: "Agent 诊断", exact: true }).click();
   await expect(card).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("diagnostics-desktop.png"), fullPage: true });

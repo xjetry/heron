@@ -24,13 +24,14 @@ async function renderCards(nodes: object[]) {
   fireEvent.click(screen.getByRole("button", { name: "卡片" }));
 }
 
-it("卡片：名称、国家、状态徽章；系统图标 · 虚拟化 · 架构；三条进度条（CPU 带核心数，内存与磁盘带用量 / 总量与百分比）；↓↑ 速率；底部本周期、累计流量、费用、到期，运行时长在最后一行", async () => {
+it("卡片：名称、国家、状态徽章；系统图标 · 虚拟化 · 架构；三条进度条（CPU 带核心数，内存带用量 / 总量与百分比，磁盘是最满盘使用率）；↓↑ 速率；底部本周期、累计流量、费用、到期，运行时长在最后一行", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2031, 0, 1));
   await renderCards([{
     id: 1n, name: "香港家宽", online: true, lastSeenAt: 998n, country: "HK", tags: ["家宽"], publicRemark: "联通 4837",
     facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuCores: 2 },
-    metrics: { cpuPct: 0, memUsed: 0n, memTotal: 1024n ** 3n, diskUsed: 9n * 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, uptimeS: 90000n, netRxBps: 0n, netTxBps: 1024n },
+    // 根盘 20%，最满的数据盘 90%：进度条取最满盘，不写根盘的字节（那不是这根条的分子分母）。
+    metrics: { cpuPct: 0, memUsed: 0n, memTotal: 1024n ** 3n, diskUsed: 2n * 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, diskMaxUsedPct: 90, uptimeS: 90000n, netRxBps: 0n, netTxBps: 1024n },
     traffic: { totalRx: 300n * 1024n ** 3n, totalTx: 5n * 1024n ** 4n, periodRx: 1024n ** 3n, periodTx: 2n * 1024n ** 3n, quotaUsedBytes: 2n * 1024n ** 3n, quotaBytes: 4n * 1024n ** 3n, quotaUsedPct: 50 },
     billing: { price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2026-10-01", daysLeft: 4 },
   }]);
@@ -46,8 +47,8 @@ it("卡片：名称、国家、状态徽章；系统图标 · 虚拟化 · 架�
   expect.soft(meta.textContent).not.toMatch(/运行|1d 1h/);
   expect.soft(card.getByRole("meter", { name: "CPU 2 核 (0.0%)" })).toHaveAttribute("aria-valuenow", "0");
   expect.soft(card.getByRole("meter", { name: "内存 0 B / 1.0 GiB (0.0%)" })).toHaveAttribute("aria-valuenow", "0");
-  expect.soft(card.getByRole("meter", { name: "磁盘 9.0 GiB / 10 GiB (90%)" })).toHaveAttribute("data-level", "attention");
-  expect.soft(meterRows(screen.getByRole("article", { name: "香港家宽" }))).toEqual([["CPU", "0.0%", "2 核"], ["内存", "0.0%", "0 B / 1.0 GiB"], ["磁盘", "90%", "9.0 GiB / 10 GiB"]]);
+  expect.soft(card.getByRole("meter", { name: "磁盘 90%" })).toHaveAttribute("data-level", "attention");
+  expect.soft(meterRows(screen.getByRole("article", { name: "香港家宽" }))).toEqual([["CPU", "0.0%", "2 核"], ["内存", "0.0%", "0 B / 1.0 GiB"], ["磁盘", "90%"]]);
   expect.soft(card.getByRole("group", { name: "网络速率" })).toHaveTextContent("↓ 0 B/s ↑ 1.0 KiB/s");
   expect.soft(card.getByText("本周期").nextElementSibling).toHaveTextContent("2.0 GiB / 4.0 GiB (50.0%)下载 + 上传");
   expect.soft(card.getByText("累计流量").nextElementSibling).toHaveTextContent(/^↓ 300 GiB ↑ 5\.0 TiB$/);
@@ -76,21 +77,26 @@ it("没填费用与到期、没有运行时长读数时底行写破折号；已�
   expect.soft(lapsed.getByText("已过期 3 天").closest(".expiry")).toHaveAttribute("data-level", "critical");
 });
 
-it("内存与磁盘的百分比按 used / total 计；总量为 0 或缺失、用量缺失时不画条，写破折号而不是 0%", async () => {
+it("内存的百分比按 used / total 计，磁盘取最满盘使用率；总量为 0 或缺失、用量缺失、没有最满盘读数时不画条，写破折号而不是 0%", async () => {
   await renderCards([
-    { id: 1n, name: "quarter", online: true, lastSeenAt: 998n, metrics: { memUsed: 1n * 1024n ** 3n, memTotal: 4n * 1024n ** 3n, diskUsed: 3n * 1024n ** 3n, diskTotal: 4n * 1024n ** 3n } },
+    { id: 1n, name: "quarter", online: true, lastSeenAt: 998n, metrics: { memUsed: 1n * 1024n ** 3n, memTotal: 4n * 1024n ** 3n, diskUsed: 3n * 1024n ** 3n, diskTotal: 4n * 1024n ** 3n, diskMaxUsedPct: 75 } },
     { id: 2n, name: "zero-total", online: true, lastSeenAt: 998n, metrics: { cpuPct: 5, memUsed: 1024n, memTotal: 0n, diskUsed: 0n } },
     { id: 3n, name: "no-used", online: true, lastSeenAt: 998n, metrics: { cpuPct: 5, diskTotal: 4n * 1024n ** 3n } },
   ]);
   const quarter = within(screen.getByRole("article", { name: "quarter" }));
   expect.soft(quarter.getByRole("meter", { name: "内存 1.0 GiB / 4.0 GiB (25%)" })).toHaveAttribute("aria-valuenow", "25");
-  expect.soft(quarter.getByRole("meter", { name: "磁盘 3.0 GiB / 4.0 GiB (75%)" })).toHaveAttribute("aria-valuenow", "75");
+  expect.soft(quarter.getByRole("meter", { name: "磁盘 75%" })).toHaveAttribute("aria-valuenow", "75");
   const zero = within(screen.getByRole("article", { name: "zero-total" }));
   expect.soft(zero.getAllByRole("meter").map((m) => m.getAttribute("aria-label"))).toEqual(["CPU 5.0%"]);
   expect.soft(meterRows(screen.getByRole("article", { name: "zero-total" }))).toEqual([["CPU", "5.0%"], ["内存", "–"], ["磁盘", "–"]]);
   const noUsed = within(screen.getByRole("article", { name: "no-used" }));
   expect.soft(noUsed.getAllByRole("meter").map((m) => m.getAttribute("aria-label"))).toEqual(["CPU 5.0%"]);
   expect.soft(meterRows(screen.getByRole("article", { name: "no-used" }))).toEqual([["CPU", "5.0%"], ["内存", "–"], ["磁盘", "–"]]);
+});
+
+it("磁盘条只认 hub 给出的最满盘使用率：只有根盘字节、没有 diskMaxUsedPct 时是无读数，不拿根盘自己再算一份", async () => {
+  await renderCards([{ id: 1n, name: "root-only", online: true, lastSeenAt: 998n, metrics: { cpuPct: 5, diskUsed: 3n * 1024n ** 3n, diskTotal: 4n * 1024n ** 3n } }]);
+  expect.soft(meterRows(screen.getByRole("article", { name: "root-only" }))).toEqual([["CPU", "5.0%"], ["内存", "–"], ["磁盘", "–"]]);
 });
 
 it("累计流量：零用量写 0 B，traffic 缺失时不出这一行", async () => {
