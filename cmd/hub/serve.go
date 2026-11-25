@@ -56,24 +56,52 @@ func newMux(mounts ...mount) *http.ServeMux {
 	return mux
 }
 
-// routes 是生产服务与挂载点测试共用的 HTTP 装配。
+// routes 是生产服务与挂载点测试共用的 HTTP 装配。page 是主监听根路径的公开面（主题带预览），publicPage 是公开监听
+// 根路径的公开面（同一份主题快照，不带预览，见 web.Themes.Handler）；只装主监听时 publicPage 可以为 nil。
 type routes struct {
 	agent, admin, public mount
-	page                 http.Handler
+	page, publicPage     http.Handler
 	publicEnabled        func() bool
 }
 
-// 管理面板与 RPC 使用明确挂载点；其余路径统一经过公开总闸，包含主题资源与预览。
+// panelOnly 是只挂在主监听上的挂载点：上报、管理 RPC 与面板。newHandler 与 newPublicHandler 都从这里取，
+// 新加的管理侧挂载点进了这张表，就同时在主监听上服务、在公开监听上被 404 占住。
+func (r routes) panelOnly() []mount {
+	return []mount{r.agent, r.admin, mountOf(web.Prefix, web.Handler())}
+}
+
+// newHandler 是主监听的全量路由：管理面板与 RPC 使用明确挂载点；其余路径统一经过公开总闸，包含主题资源与预览。
 func newHandler(r routes) http.Handler {
 	if r.publicEnabled == nil {
 		panic("routes.publicEnabled is required")
 	}
-	return newMux(r.agent, r.admin,
+	return newMux(append(r.panelOnly(),
 		// /healthz 在打开库、加载索引、挂载全部服务之后放进同一个 mux，因此与 srv.Serve 同生命周期。
 		mountOf("/healthz", http.HandlerFunc(healthzHandler)),
 		mountOf(r.public.path, api.WithAdminPath(r.public.h, web.Prefix)),
-		mountOf(web.Prefix, web.Handler()),
-		mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
+		mountOf("/", web.PublicGate(r.page, r.publicEnabled, web.Prefix)))...)
+}
+
+// newPublicHandler 是公开监听的路由：只有 /healthz、不带面板入口的 PublicService 与总闸后的公开面。r.public.h 与
+// 主监听挂的是同一个处理器（api.Public.Handler 每次交出同一条链），按来源的限流配额与快照字节缓存因此两个监听共用，
+// 换个端口不能多拿一份配额。
+//
+// panelOnly 的每个路径在这里挂 404：不挂的话它们落到根路径的公开面，应答由公开面决定而不是 404（/admin/ 下的路径
+// 经客户端路由回落得到公开页，POST 的管理与上报 RPC 得到主题面对非 GET 的 405）。反代据此只按端口分流，不必再写
+// 屏蔽管理路径的规则。
+func newPublicHandler(r routes) http.Handler {
+	if r.publicEnabled == nil || r.publicPage == nil {
+		panic("routes.publicEnabled and routes.publicPage are required")
+	}
+	mounts := []mount{
+		mountOf("/healthz", http.HandlerFunc(healthzHandler)),
+		r.public,
+		mountOf("/", web.PublicGate(r.publicPage, r.publicEnabled, "")),
+	}
+	for _, m := range r.panelOnly() {
+		mounts = append(mounts, mountOf(m.path, http.NotFoundHandler()))
+	}
+	return newMux(mounts...)
 }
 
 func runServe(args []string) error {
@@ -110,6 +138,9 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 type serveOptions struct {
 	db     string
 	listen string
+	// publicListen 是 --public-listen 的原值，空串表示不开公开监听。非空时 parseServeOptions 已核对它与 listen 不重叠
+	// （listenersOverlap）。
+	publicListen string
 	// adminOrigin 是 --admin-origin 经 auth.ParsePasskeyOrigin 规范化后的值，空串表示未给出。
 	adminOrigin string
 	retention   store.Retention
@@ -144,6 +175,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	geoMMDB := fs.String("geo-mmdb", "", fmt.Sprintf("local MaxMind country database (at most %d MiB); overrides the HTTP lookup service and makes no network requests; read fully into memory and structurally verified at startup (the file carries no checksum, so a value replaced by another valid value is not detected, only structural damage such as invalid UTF-8 is) and not read again while running, so a replaced file takes effect on restart; geo.enabled still controls lookup", geo.MaxMMDBBytes>>20))
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
+	publicListen := fs.String(publicListenFlag, "", "additional listen address that serves only the public side: /healthz, the public API without the admin entry, and the public page with published themes behind the public page switch; the admin panel, the admin API and agent reporting are not served there (404), so a reverse proxy can give the status page its own hostname without path rules. --listen keeps serving everything. Both listeners share the public API's per-source rate limit and response cache, --trusted-proxies and the stall timeout; empty disables it; must not overlap --listen")
 	adminOrigin := fs.String(adminOriginFlag, "", "legacy Passkey origin, used only to migrate existing credentials without a persisted binding; new registrations bind the current HTTPS origin automatically; an invalid value is rejected at startup even when a binding is persisted")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout; a node's recorded source address is also the proxy address")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
@@ -163,7 +195,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	if err := applyFlagEnv(fs, lookupEnv); err != nil {
 		return serveOptions{}, err
 	}
-	opts := serveOptions{db: *db, listen: *listen, publicDir: *publicDir, geoMMDB: *geoMMDB, offlineReload: offlineReloadEvery}
+	opts := serveOptions{db: *db, listen: *listen, publicListen: *publicListen, publicDir: *publicDir, geoMMDB: *geoMMDB, offlineReload: offlineReloadEvery}
 	// 缺席才选择 HTTP；显式空路径也必须打开并报错，不能把部署配置错误变成意外出网。HERON_GEO_MMDB 经 applyFlagEnv
 	// 回填后同样算作给出，设为空串也是显式空路径。
 	fs.Visit(func(f *flag.Flag) {
@@ -176,6 +208,11 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	}
 	opts.retention = retention
 	var err error
+	if opts.publicListen != "" {
+		if err := checkListenersApart(opts.listen, opts.publicListen); err != nil {
+			return serveOptions{}, err
+		}
+	}
 	if opts.loc, opts.zoneFallback, err = loadZone(*tz); err != nil {
 		return serveOptions{}, err
 	}
@@ -222,6 +259,8 @@ type hub struct {
 	hb       *heartbeat.Heartbeat
 	reload   *nodeops.Reloader
 	handler  http.Handler
+	// publicHandler 是公开监听的路由，opts.publicListen 为空时为 nil。
+	publicHandler http.Handler
 	// geoLog 是选定的国家查询后端，追加在启动行末尾。
 	geoLog []any
 	// gate 是启动更新门（update.Client.Gate）：本机有待确认的更新时，向本机更新器报告这个版本已就绪。run 在监听建立
@@ -234,12 +273,9 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	if opts.zoneFallback {
 		log.Warn("host time zone could not be resolved; using UTC; set --timezone explicitly")
 	}
-	if !isLoopback(opts.listen) {
-		// 判定只看监听地址，不探测容器或网络模式，也不承诺"发布到回环就一定没有旁路"：容器桥接网络里是否对外，
-		// 取决于发布端口绑定的宿主地址（如 -p 127.0.0.1:8080:8080 再经反代）；host 网络或裸机上取决于本监听地址与防火墙。
-		log.Warn("listening on a non-loopback address: direct access bypasses the proxy, and forwarded headers are trusted only from configured peers; "+
-			"exposure depends on deployment - in a container bridge network it follows the host address the published port binds to "+
-			"(e.g. -p 127.0.0.1:8080:8080 behind a reverse proxy), with host networking or on bare metal it follows this listen address and the firewall", "listen", opts.listen)
+	warnExposed(log, "listen", opts.listen)
+	if opts.publicListen != "" {
+		warnExposed(log, "public_listen", opts.publicListen)
 	}
 	// 通知渠道、国家查询与心跳外推共用一个出站客户端，三者不跟随重定向、带总时限的
 	// 行为因此是同一份。时限取 alert.NotifyTimeout，推导在通知投递一侧（见其注释）；国家查询与心跳都是应答至多读一个小上界的
@@ -340,47 +376,74 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, Location: loc},
 		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: log})
 
-	public := opts.publicPage
-	themes := web.ThemeHandler(st, public, admin.ThemePreviewAccess, log)
-	if opts.publicDir == "" {
-		public = themes
-	} else {
-		public = newMux(mountOf("/_heron/", themes), mountOf("/", public))
+	themes := web.NewThemes(st, log)
+	// page 组装一个监听根路径的公开面：内置页时主题接管根路径，--public-dir 时目录占根路径、主题只在 /_heron/ 下。
+	page := func(preview web.PreviewAccess) http.Handler {
+		h := themes.Handler(opts.publicPage, preview)
+		if opts.publicDir == "" {
+			return h
+		}
+		return newMux(mountOf("/_heron/", h), mountOf("/", opts.publicPage))
 	}
-	handler := newHandler(routes{
-		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: public,
+	r := routes{
+		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: page(admin.ThemePreviewAccess),
 		publicEnabled: st.PublicEnabled,
-	})
+	}
+	var publicHandler http.Handler
+	if opts.publicListen != "" {
+		r.publicPage = page(nil)
+		publicHandler = newPublicHandler(r)
+	}
 	return &hub{opts: opts, st: st, live: l, ingest: svc, updates: updateManager, relay: relay, book: book, alerts: alerts,
-		notifier: notifier, reports: reports, geo: geo.New(st, geoBackend, clk, log), backups: backups, hb: hb, reload: reload, handler: handler, geoLog: geoLog,
+		notifier: notifier, reports: reports, geo: geo.New(st, geoBackend, clk, log), backups: backups, hb: hb, reload: reload,
+		handler: newHandler(r), publicHandler: publicHandler, geoLog: geoLog,
 		gate: func(ctx context.Context) error { return update.NewClient("hub").Gate(ctx, version) }}, nil
+}
+
+// warnExposed 对绑在非回环地址上的监听告警，key 是启动行里这个监听的字段名。两个监听同一口径：公开监听只服务公开侧，
+// 但直连同样绕过反代的 TLS，转发头也同样只采信 --trusted-proxies 里的对端。
+// 判定只看监听地址，不探测容器或网络模式，也不承诺"发布到回环就一定没有旁路"：容器桥接网络里是否对外，
+// 取决于发布端口绑定的宿主地址（如 -p 127.0.0.1:8080:8080 再经反代）；host 网络或裸机上取决于本监听地址与防火墙。
+func warnExposed(log *slog.Logger, key, addr string) {
+	if isLoopback(addr) {
+		return
+	}
+	log.Warn("listening on a non-loopback address: direct access bypasses the proxy, and forwarded headers are trusted only from configured peers; "+
+		"exposure depends on deployment - in a container bridge network it follows the host address the published port binds to "+
+		"(e.g. -p 127.0.0.1:8080:8080 behind a reverse proxy), with host networking or on bare metal it follows this listen address and the firewall", key, addr)
 }
 
 // run 监听、过更新门、起后台循环并服务，直到 stopCtx 取消或 Serve 出错，然后排空并关停。它是 hub 唯一的生命周期
 // 所有者：从进入起，任何返回路径都由它停止已起的循环并关库。
 func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer func() { result = errors.Join(result, h.st.Close()) }()
+	// 两个监听都绑上才过更新门：门报告就绪即确认这个版本可用，任一端口绑不上的 hub 不能被确认。
 	listener, err := net.Listen("tcp", h.opts.listen)
 	if err != nil {
 		return err
 	}
+	var publicListener net.Listener
+	if h.publicHandler != nil {
+		if publicListener, err = net.Listen("tcp", h.opts.publicListen); err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("%s: %w", flagSource(publicListenFlag), err)
+		}
+	}
 	if err := h.gate(stopCtx); err != nil {
 		_ = listener.Close()
+		if publicListener != nil {
+			_ = publicListener.Close()
+		}
 		return fmt.Errorf("update startup gate: %w", err)
 	}
 	l := h.live
-	drain := &drainingHandler{next: h.handler, stopReceiving: func() { l.SetReceiving(false) }}
-	srv := &http.Server{
-		Addr: h.opts.listen, Handler: drain, ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
-		// 写侧没有超时：响应写阻塞在内核发送缓冲上，ReadTimeout 与 IdleTimeout（零值沿用 ReadTimeout）都管不到，
-		// 对端停止接收的连接会一直占着 goroutine 与描述符。上界由内核在连接层兜住（tcpstall），每条接受的连接都设。
-		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			if err := tcpstall.Bound(c, stallTimeout); err != nil {
-				log.Warn("stall timeout not set on a connection", "peer", c.RemoteAddr(), "err", err)
-			}
-			return ctx
-		},
+	drain := &drainGate{stopReceiving: func() { l.SetReceiving(false) }}
+	srv := newHTTPServer(drain, h.handler, log)
+	servers := []*http.Server{srv}
+	var publicSrv *http.Server
+	if publicListener != nil {
+		publicSrv = newHTTPServer(drain, h.publicHandler, log)
+		servers = append(servers, publicSrv)
 	}
 
 	retention := h.opts.retention
@@ -407,14 +470,24 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；delivery_retry_wait 只给出固定重试间隔的总和，不是投递
 	// 等待上界：Retry-After、排队、not_before 的整秒取整与存储退避还会增加等待（见 alert.DeliveryRetryWait）。
 	// scripts/e2e.sh 用不限节奏且总回 200 的 Webhook 接收器，从这一行读出其场景的等待预算。
-	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", h.opts.ttl, "interval", h.ingest.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", h.opts.loc.String(), "public_dir", h.opts.publicDir, "version", version, "agent_version", agentVersion}, h.geoLog...)...)
-	errCh := make(chan error, 1)
+	// public_listen 只在开了公开监听时出现，不开时启动行与此前逐字段相同。
+	addrs := []any{"listen", listener.Addr().String()}
+	if publicListener != nil {
+		addrs = append(addrs, "public_listen", publicListener.Addr().String())
+	}
+	log.Info("hub listening", append(append(addrs, "ttl", h.opts.ttl, "interval", h.ingest.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", h.opts.loc.String(), "public_dir", h.opts.publicDir, "version", version, "agent_version", agentVersion), h.geoLog...)...)
+	// 每个 Serve 恰好往 errCh 送一次；容量等于服务数，关停后才返回的那些 Serve 不会因没人接收而挂住。
+	errCh := make(chan error, len(servers))
 	go func() {
+		// 上报只挂在主监听上，上报准入跟随主监听的 Serve。
 		l.SetReceiving(true)
 		err := srv.Serve(listener)
 		l.SetReceiving(false)
 		errCh <- err
 	}()
+	if publicSrv != nil {
+		go func() { errCh <- publicSrv.Serve(publicListener) }()
+	}
 
 	select {
 	case <-stopCtx.Done():
@@ -424,13 +497,32 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 			err = nil
 		}
 	}
-	// 离线推断以上报准入开放为前提；drainingHandler 关闭准入后新上报一律 503，
+	// 离线推断以上报准入开放为前提；drainGate 关闭准入后新上报一律 503，
 	// unseen 的增长不再代表节点沉默。先停止巡检，避免把健康节点判为 firing 并投递，
 	// 随后重启又因上报补发 recovered。
 	stopSweep()
-	// HTTP 先停止准入并排空；超时则断开连接以中止慢请求体，仍等待已经进入的处理器。
+	// HTTP 先停止准入并排空；超时则断开连接以中止慢请求体，仍等待已经进入的处理器。任一监听的 Serve 出错也走这里，
+	// 另一个监听随之关停：hub 不在只剩半边监听的状态下继续运行。
 	// 最后由 defer 依次停止后台循环、关库，避免晚到的上报落在最后一次刷出之后。
-	return errors.Join(err, shutdownHTTP(srv, drain, drainTimeout))
+	return errors.Join(err, shutdownHTTP(drain, drainTimeout, servers...))
+}
+
+// newHTTPServer 是每个监听共用的服务配置：请求经 drain 准入，读侧时限、慢速对端的写侧上界与它们的理由对两个监听
+// 相同，公开监听不另开口子。准入在这里套上而不交给调用方：http.Server.Shutdown 到点断开连接后不再跟踪处理器，
+// 只有经 drain 准入的处理器才会被关停等到，漏套的监听会让库在它的处理器还在读写时关掉。
+func newHTTPServer(drain *drainGate, h http.Handler, log *slog.Logger) *http.Server {
+	return &http.Server{
+		Handler: drain.admit(h), ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
+		// 写侧没有超时：响应写阻塞在内核发送缓冲上，ReadTimeout 与 IdleTimeout（零值沿用 ReadTimeout）都管不到，
+		// 对端停止接收的连接会一直占着 goroutine 与描述符。上界由内核在连接层兜住（tcpstall），每条接受的连接都设。
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if err := tcpstall.Bound(c, stallTimeout); err != nil {
+				log.Warn("stall timeout not set on a connection", "peer", c.RemoteAddr(), "err", err)
+			}
+			return ctx
+		},
+	}
 }
 
 // stallTimeout 是对端连续不确认已发出数据的上界（tcpstall.Bound）。hub 没有流式响应，最大的响应是更新中转的二进制
@@ -505,30 +597,34 @@ func (h heartbeatSource) HeartbeatCounts(ctx context.Context) (heartbeat.Counts,
 	return counts, nil
 }
 
-// drainingHandler 将请求准入与关闭裁决串行化，Wait 前封住 Add，
-// 即使 http.Server 关闭连接后不再跟踪处理器，也不会提前刷出或关库。
-type drainingHandler struct {
-	next          http.Handler
+// drainGate 将请求准入与关闭裁决串行化，Wait 前封住 Add，即使 http.Server 关闭连接后不再跟踪处理器，也不会提前
+// 刷出或关库。各监听的处理器都经同一个 drainGate 准入（admit），一次关停裁决同时覆盖全部监听，active 计的是所有
+// 监听上的在途请求。
+type drainGate struct {
 	mu            sync.Mutex
 	stopping      bool
 	active        sync.WaitGroup
 	stopReceiving func()
 }
 
-func (d *drainingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	d.mu.Lock()
-	if d.stopping {
+func (d *drainGate) admit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d.mu.Lock()
+		if d.stopping {
+			d.mu.Unlock()
+			http.Error(w, "server shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		d.active.Add(1)
 		d.mu.Unlock()
-		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
-		return
-	}
-	d.active.Add(1)
-	d.mu.Unlock()
-	defer d.active.Done()
-	d.next.ServeHTTP(w, r)
+		defer d.active.Done()
+		next.ServeHTTP(w, r)
+	})
 }
 
-func shutdownHTTP(srv *http.Server, drain *drainingHandler, timeout time.Duration) error {
+// shutdownHTTP 关上准入后并发关停全部服务：各服务共用一个 timeout 期限，关停期间谁都不再接受新连接；到点仍未关完的
+// 服务断开连接，然后等全部已准入的处理器返回。
+func shutdownHTTP(drain *drainGate, timeout time.Duration, servers ...*http.Server) error {
 	drain.mu.Lock()
 	drain.stopping = true
 	if drain.stopReceiving != nil {
@@ -537,10 +633,16 @@ func shutdownHTTP(srv *http.Server, drain *drainingHandler, timeout time.Duratio
 	drain.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	err := srv.Shutdown(ctx)
-	if err != nil {
-		err = errors.Join(err, srv.Close())
+	errs := make([]error, len(servers))
+	var wg sync.WaitGroup
+	for i, srv := range servers {
+		wg.Go(func() {
+			if err := srv.Shutdown(ctx); err != nil {
+				errs[i] = errors.Join(err, srv.Close())
+			}
+		})
 	}
+	wg.Wait()
 	drain.active.Wait()
-	return err
+	return errors.Join(errs...)
 }

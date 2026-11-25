@@ -89,7 +89,7 @@ func newTestServicesOn(t *testing.T, st *store.Store, clk clock.Clock) (http.Han
 		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	return newHandler(routes{
 		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()),
-		page: web.ThemeHandler(st, web.PublicHandler(), admin.ThemePreviewAccess, slog.Default()), publicEnabled: st.PublicEnabled,
+		page: web.NewThemes(st, slog.Default()).Handler(web.PublicHandler(), admin.ThemePreviewAccess), publicEnabled: st.PublicEnabled,
 	}), admin
 }
 
