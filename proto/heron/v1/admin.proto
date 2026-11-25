@@ -1409,7 +1409,13 @@ message LoginNotify {
   repeated int64 channel_ids = 1;
 }
 message GetSettingsRequest {}
-message GetSettingsResponse { Settings settings = 1; }
+message GetSettingsResponse {
+  Settings settings = 1;
+  // hub 实际生效的 --timezone（IANA 名），与 GetTraffic.timezone、PublicSite.timezone 同一个值：流量周期、到期日、
+  // 维护静默与面板按日历切的时段（晚高峰 20:00–24:00 等）都按它判定，客户端不得改用浏览器本地时区。
+  // 只读：它是启动参数，不是可保存的设置，所以放在响应里而不在 Settings，UpdateSettings 的读改写不经过它。
+  string timezone = 2;
+}
 message GetBackupStatusRequest {}
 message GetBackupStatusResponse {
   // endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的

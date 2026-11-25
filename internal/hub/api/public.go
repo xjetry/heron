@@ -45,7 +45,8 @@ type PublicConfig struct {
 	ReportInterval time.Duration
 	// TrustedProxies 决定限流按哪个来源地址计：只有来自这些对端的 X-Forwarded-For 才被采信；空表示一个都不信。
 	TrustedProxies []netip.Prefix
-	// Location 是 hub 的 --timezone，days_left 按它的日历日算；NewPublic 要求非 nil。
+	// Location 是 hub 的 --timezone，days_left 按它的日历日算，GetSite.timezone 下发它的名字；NewPublic 要求非 nil，
+	// 且与 PublicDeps.Traffic 的时区是同一个对象。
 	Location *time.Location
 }
 
@@ -122,6 +123,11 @@ func NewPublic(cfg PublicConfig, deps PublicDeps) *Public {
 	}
 	if deps.Log == nil {
 		panic("api.PublicDeps.Log must be set")
+	}
+	// GetSite.timezone 与 days_left 读 cfg.Location，快照里的流量周期读账本的时区；公开页按前者切日历时段，
+	// 两者不是同一个区时访客看到的"晚间"与周期边界就不在同一张日历上。理由同 New。
+	if deps.Traffic.Zone() != cfg.Location {
+		panic("api.PublicConfig.Location must be the traffic book's zone")
 	}
 	projections := publicProjections()
 	p := &Public{
@@ -285,7 +291,7 @@ func (p *Public) GetSite(ctx context.Context, _ *connect.Request[heronv1.GetSite
 		return nil, internalError("reading settings failed")
 	}
 	adminPath, _ := ctx.Value(adminPathKey{}).(string)
-	return connect.NewResponse(&heronv1.PublicSite{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, AdminPath: adminPath}), nil
+	return connect.NewResponse(&heronv1.PublicSite{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, AdminPath: adminPath, Timezone: p.cfg.Location.String()}), nil
 }
 
 type adminPathKey struct{}

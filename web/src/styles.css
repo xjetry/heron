@@ -467,6 +467,10 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .chart-grid > .card.chart-card { margin: 0; padding: 12px 14px 8px; }
 .chart-card h2 { font-size: 13px; margin: 0 0 6px; }
 .coverage-note { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; }
+/* 探测卡片底部的窗口汇总：一行四项，窄卡片里折行；数值用表格数字对齐，与对比表同一组列。 */
+.probe-summary { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.probe-summary .num { color: var(--fg); font-variant-numeric: tabular-nums; }
+.probe-slice { margin-top: 4px; }
 
 /* 公开节点页页头里的系统信息行（public/NodePage.tsx）。 */
 .facts-inline { display: flex; flex-wrap: wrap; gap: 2px 16px; margin: 6px 0 0; font-size: 12px; }

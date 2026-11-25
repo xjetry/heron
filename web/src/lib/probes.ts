@@ -91,6 +91,30 @@ export const rttMeanMs: ProbeValue = (s) => (s.rttMeanUs === undefined ? null : 
 export const rttMinMs: ProbeValue = (s) => (s.rttMinUs === undefined ? null : s.rttMinUs / 1000);
 export const rttMaxMs: ProbeValue = (s) => (s.rttMaxUs === undefined ? null : s.rttMaxUs / 1000);
 
+// 一组样本在整个窗口上的汇总：单节点探测历史的每个任务、跨节点对比的每个节点都经它算，晚高峰切片只换喂进来的样本。
+// 每个桶的成功数可能不同，窗口均值按成功数加权，不能简单平均桶均值；最小 / 最大取各桶的最值。
+// ProbeSample 的 sent 包含超时与本地错误；丢包率按 lossOf 的口径（全是错误时没有丢包率），错误单独累计。
+// 没有成功探测时三个 RTT 都缺。
+export type ProbeSummary = { mean: number | null; min: number | null; max: number | null; lossPercent: number | null; errors: number };
+
+export function summarizeProbes(samples: readonly ProbeSample[]): ProbeSummary {
+  let sent = 0, lost = 0, errors = 0, weighted = 0, ok = 0;
+  let min: number | null = null, max: number | null = null;
+  for (const s of samples) {
+    sent += s.sent;
+    lost += s.lost;
+    errors += s.errors;
+    const succeeded = s.sent - s.lost - s.errors;
+    if (s.rttMeanUs !== undefined && succeeded > 0) {
+      weighted += (s.rttMeanUs / 1000) * succeeded;
+      ok += succeeded;
+    }
+    if (s.rttMinUs !== undefined) min = min === null ? s.rttMinUs / 1000 : Math.min(min, s.rttMinUs / 1000);
+    if (s.rttMaxUs !== undefined) max = max === null ? s.rttMaxUs / 1000 : Math.max(max, s.rttMaxUs / 1000);
+  }
+  return { mean: ok > 0 ? weighted / ok : null, min, max, lossPercent: lossOf(sent, lost, errors), errors };
+}
+
 // 同一任务的取值共用时间网格，Chart 据此对齐均值与最小 / 最大之间的填充带。
 export function toProbeTaskAligned(resp: QueryProbesResponse, taskId: bigint, from: number, to: number, values: readonly ProbeValue[]): AlignedData {
   const xs = gridOf(resp.stepS, from, to);

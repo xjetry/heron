@@ -15,6 +15,7 @@ import { NodeAddresses, addressText } from "../components/NodeAddresses";
 import { NowGrid } from "../components/NowGrid";
 import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
+import { useHubTimeZone } from "../api/useHubTimeZone";
 import { useNodeList } from "../api/useNodeList";
 import { liveStatus } from "../lib/adminStatus";
 import { nodeListReturnPath } from "../lib/nodeFilters";
@@ -50,7 +51,8 @@ export function NodeDetail() {
   // 流量响应同时携带历史窗口要用的 hub now；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
   // 历史与 tab 无关：hook 留在页面顶层，切 tab 不卸载，查询键不变、不重发；hub now 到达前它不发请求。
-  const history = useHistory(ADMIN_HISTORY, nodeId, validId && traffic.data ? Number(traffic.data.now) : undefined);
+  const timeZone = useHubTimeZone();
+  const history = useHistory(ADMIN_HISTORY, nodeId, validId && traffic.data ? Number(traffic.data.now) : undefined, timeZone);
   const nodeTraffic = traffic.data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
   const daily = useDailyTraffic(nodeId, nodeTraffic?.periodStart, traffic.data ? Number(traffic.data.now) : undefined, validId && tab === "traffic");
   // 事件 tab 才取事件：它是低频内容，不该随每次打开详情多发一条请求。

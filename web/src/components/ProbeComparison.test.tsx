@@ -50,7 +50,7 @@ function advanceHub() {
 function TimedComparison({ nodes = names }: { nodes?: typeof names }) {
   const [now, setNow] = useState(HUB_NOW);
   useImperativeHandle(hubClock, () => ({ advance: () => setNow((previous) => previous + 60) }), []);
-  return <ProbeComparison taskId={9n} methods={methods} nodes={nodes} now={now} />;
+  return <ProbeComparison taskId={9n} methods={methods} nodes={nodes} now={now} timeZone={undefined} />;
 }
 
 function pinClock() {
