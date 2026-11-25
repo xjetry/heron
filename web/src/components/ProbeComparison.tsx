@@ -9,6 +9,7 @@ import { formatUnit, percent } from "../lib/format";
 import { assembleComparison, chunkNodeIds, summarizeComparison, sortRows, type SortKey, type ComparisonChunk } from "../lib/probeComparison";
 import { kindLabel } from "../lib/probes";
 import { Chart } from "./Chart";
+import { PeakNotice, SliceButtons, peakCoverage, slicedSamples, usePeakSlice } from "./EveningPeak";
 import { HISTORY_MAX_POINTS, RangeButtons, RangeStatus, useTimeWindow } from "./History";
 
 // 同时在飞的分块数。这不是块的大小：块的大小只来自 List 的 max_nodes_per_query。
@@ -84,10 +85,11 @@ function TaskHeading({ taskId, hold }: { taskId: bigint; hold: Hold | null }) {
   return <h1><span className="kind-badge">{kindLabel(hold.kind)}</span> {hold.target}</h1>;
 }
 
-// 管理端与公开页同一份。节点名由调用方给：管理端来自 ListNodes，公开端来自 GetSnapshot。
+// 管理端与公开页同一份。节点名由调用方给：管理端来自 ListNodes，公开端来自 GetSnapshot；timeZone 是 hub 下发的时区
+// （管理端 GetSettings.timezone、公开端 GetSite.timezone），晚高峰切片按它判定，没有时只提供全时段。
 // 一次查询是 (taskId, from, to, maxPoints)。List 的 max_nodes_per_query 决定块大小；全部块到齐才替换画面。
 // 刷新、换窗口、换任务或离开页面都会取消还没回来的块。刷新期间留着上一张完整的图，并标成更新中。
-export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigint; methods: ProbeComparisonMethods; nodes: readonly { id: bigint; name: string }[]; now: number }) {
+export function ProbeComparison({ taskId, methods, nodes, now, timeZone }: { taskId: bigint; methods: ProbeComparisonMethods; nodes: readonly { id: bigint; name: string }[]; now: number; timeZone: string | undefined }) {
   const transport = useTransport();
   const { range, setRange, from, to } = useTimeWindow(now);
   const rangeLabel = range.label;
@@ -124,11 +126,19 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
   }
   const shown = holdTask === taskId ? hold : null;
   const names = useMemo(() => new Map(nodes.map((node) => [node.id, node.name])), [nodes]);
-  const view = useMemo(
-    () => (shown ? assembleComparison(shown.nodeIds, names, shown.chunks, shown.from, shown.to) : null),
-    [shown, names],
+  const peak = usePeakSlice(timeZone);
+  // 图与汇总表都取同一份切片后的块：晚高峰下只留整桶命中的样本，切换只重算已到齐的块，不另发请求。块的成员
+  // （series 与 unavailable）不变，assembleComparison 的完整性判定与全时段相同。
+  const chunks = useMemo(
+    () => (shown ? shown.chunks.map((chunk) => ({ ...chunk, series: chunk.series.map((s) => ({ ...s, samples: slicedSamples(peak, s.samples, chunk.stepS) })) })) : []),
+    [shown, peak],
   );
-  const rows = useMemo(() => (shown ? sortRows(summarizeComparison(shown.nodeIds, names, shown.chunks), sortKey, sortDir) : []), [shown, names, sortKey, sortDir]);
+  const view = useMemo(
+    () => (shown ? assembleComparison(shown.nodeIds, names, chunks, shown.from, shown.to) : null),
+    [shown, names, chunks],
+  );
+  const rows = useMemo(() => (shown ? sortRows(summarizeComparison(shown.nodeIds, names, chunks), sortKey, sortDir) : []), [shown, names, chunks, sortKey, sortDir]);
+  const coverage = shown ? peakCoverage(peak, shown.from, shown.to, shown.stepS) : null;
 
   useEffect(() => {
     const ac = new AbortController();
@@ -230,7 +240,8 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
         <TaskHeading taskId={taskId} hold={shown} />
         {shown && <span className="muted">{shown.nodeIds.length} 个节点执行此探测</span>}
         <RangeButtons range={range} setRange={setRange} />
-        <RangeStatus shown={shown} stale={stale} rangeLabel={rangeLabel} updating={updating} note="均值是时间桶内成功探测的 RTT 均值；表格按整个窗口汇总。" />
+        <RangeStatus shown={shown} stale={stale} rangeLabel={rangeLabel} updating={updating} note="均值是时间桶内成功探测的 RTT 均值；表格按整个窗口（或切出的晚高峰）汇总。" />
+        <SliceButtons peak={peak} />
       </header>
       {error && (
         <p role="alert" className="error">
@@ -239,7 +250,8 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
       )}
       {!shown && updating && !error && !notFound && <p className="muted">加载中…</p>}
       {notFound && !updating && <p className="muted">{NO_COMPARISON_NODES}</p>}
-      {view?.complete && !notFound && (
+      {view?.complete && !notFound && <PeakNotice coverage={coverage} stepS={view.stepS} />}
+      {view?.complete && !notFound && (coverage === null || coverage === "covered") && (
         <>
           <div className="card compare-chart">
             {view.rtt.labels.length > 0

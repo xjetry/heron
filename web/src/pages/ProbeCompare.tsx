@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { ProbeComparison, type ProbeComparisonMethods } from "../components/ProbeComparison";
 import { AdminService } from "../gen/heron/v1/admin_pb";
+import { useHubTimeZone } from "../api/useHubTimeZone";
 import { useNodeList } from "../api/useNodeList";
 import { taskIdParam } from "../lib/probeComparison";
 import { TRAFFIC_MS } from "../lib/poll";
@@ -18,6 +19,7 @@ export function ProbeCompare() {
   const taskId = taskIdParam(id);
   const nodes = useNodeList({}, { enabled: taskId !== undefined });
   const snap = useQuery(AdminService.method.getSnapshot, {}, { enabled: taskId !== undefined, refetchInterval: TRAFFIC_MS });
+  const timeZone = useHubTimeZone();
   const named = useMemo(() => (nodes.data?.nodes ?? []).map((node) => ({ id: node.id, name: node.name })), [nodes.data]);
   if (taskId === undefined) return <p role="alert" className="error">任务编号无效。</p>;
   const gate = queryGateAll(nodes, snap);
@@ -26,7 +28,7 @@ export function ProbeCompare() {
     <>
       {gate.banner}
       <p><Link to="/probes">返回探测任务</Link></p>
-      <ProbeComparison taskId={taskId} methods={METHODS} nodes={named} now={Number(gate.data[1].now)} />
+      <ProbeComparison taskId={taskId} methods={METHODS} nodes={named} now={Number(gate.data[1].now)} timeZone={timeZone} />
     </>
   );
 }

@@ -39,3 +39,5 @@ heron-hub restore --db heron.db --config config.db --themes ./theme-packages --y
 ## 主题开发
 
 SDK、公开数据字段、沙箱约束、包格式与清单、构建与预览写在[主题开发指南](../web/src/assets/heron-theme-skill.md)（skill 格式，AI agent 与人共用）。面板「主题」页的「下载主题开发指南」给出 hub 地址已填成当前站点的版本。
+
+沙箱桥接转交 `getSite()` 的站点时区 `timezone`（hub 的 `--timezone`），主题按日历切时段（如探测晚高峰 20:00–24:00）应以它为准，与内置公开页、面板、流量周期对齐；改 `--timezone` 并重启 hub 后主题读到的值随之改变，无需重新上传（浏览器对 `GetSite` 可能再用最多 5 分钟的缓存）。`adminPath` 不经桥接转交。

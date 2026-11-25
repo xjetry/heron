@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
 import type { ProbeSample } from "../gen/heron/v1/query_pb";
-import { disambiguate, lossPercent, rttMeanMs, type ProbeValue } from "./probes";
+import { disambiguate, lossPercent, rttMeanMs, summarizeProbes, type ProbeSummary, type ProbeValue } from "./probes";
 import { gridOf } from "./series";
 
 // 一次对比先 List 再按 List 给出的上限切块。上限缺席即 0（proto3 标量），0 不是“不限制”：
@@ -121,15 +121,9 @@ export function assembleComparison(
   };
 }
 
-export type ComparisonRow = {
-  id: bigint; label: string;
-  mean: number | null; min: number | null; max: number | null;
-  lossPercent: number | null; errors: number;
-  unavailable: boolean;
-};
+export type ComparisonRow = ProbeSummary & { id: bigint; label: string; unavailable: boolean };
 
-// 每个桶的成功数可能不同，窗口均值按成功数加权，不能简单平均桶均值。
-// ProbeSample 的 sent 包含超时与本地错误；丢包只计 lost，错误单独累计。
+// 汇总口径见 summarizeProbes。
 export function summarizeComparison(nodeIds: readonly bigint[], names: ReadonlyMap<bigint, string>, chunks: readonly ComparisonChunk[]): ComparisonRow[] {
   const seriesById = new Map<bigint, readonly ProbeSample[]>();
   const unavailable = new Set<bigint>();
@@ -138,29 +132,7 @@ export function summarizeComparison(nodeIds: readonly bigint[], names: ReadonlyM
     for (const id of chunk.unavailableNodeIds) unavailable.add(id);
   }
   const labels = disambiguate(nodeIds.map((id) => labelOf(id, names)), nodeIds);
-  return nodeIds.map((id, i) => {
-    const samples = seriesById.get(id) ?? [];
-    let sent = 0, lost = 0, errors = 0, weighted = 0, ok = 0;
-    let min: number | null = null, max: number | null = null;
-    for (const s of samples) {
-      sent += s.sent;
-      lost += s.lost;
-      errors += s.errors;
-      const succeeded = s.sent - s.lost - s.errors;
-      if (s.rttMeanUs !== undefined && succeeded > 0) {
-        weighted += (s.rttMeanUs / 1000) * succeeded;
-        ok += succeeded;
-      }
-      if (s.rttMinUs !== undefined) min = min === null ? s.rttMinUs / 1000 : Math.min(min, s.rttMinUs / 1000);
-      if (s.rttMaxUs !== undefined) max = max === null ? s.rttMaxUs / 1000 : Math.max(max, s.rttMaxUs / 1000);
-    }
-    return {
-      id, label: labels[i],
-      mean: ok > 0 ? weighted / ok : null, min, max,
-      lossPercent: sent > 0 ? (lost / sent) * 100 : null, errors,
-      unavailable: unavailable.has(id),
-    };
-  });
+  return nodeIds.map((id, i) => ({ ...summarizeProbes(seriesById.get(id) ?? []), id, label: labels[i], unavailable: unavailable.has(id) }));
 }
 
 export type SortKey = "label" | "mean" | "min" | "max" | "lossPercent" | "errors";
