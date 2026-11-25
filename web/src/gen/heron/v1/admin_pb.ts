@@ -659,7 +659,9 @@ export type Node = Message<"heron.v1.Node"> & {
   factsUpdatedAt?: bigint | undefined;
 
   /**
-   * 周期重置日 1–28：周期在 hub 时区的该日零点重置。改动后周期起点按新日子重算，当前周期用量随之按分钟桶重算
+   * 周期重置日 1–31：周期在 hub 时区该日的第一个时刻（通常是零点，零点因夏令时跳过时取跳变后的时刻）重置。当月不足
+   * 该日（如 31 遇到 4 月或 2 月）时在当月最后一日重置，不顺延到次月一日，之后的月份仍按原日号，每年恰好 12 个周期；
+   * 这里回显的始终是配置的原值。改动后周期起点按新日子重算，当前周期用量随之按分钟桶重算
    * （口径见 Traffic.period_rx）。
    *
    * @generated from field: uint32 traffic_reset_day = 10;
@@ -1037,8 +1039,8 @@ export type UpdateNodeRequest = Message<"heron.v1.UpdateNodeRequest"> & {
   note: string;
 
   /**
-   * 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。改动让周期起点移动时，当前周期用量
-   * 按分钟桶重算（口径见 Traffic.period_rx），此前的校正不再算数。
+   * 1–31（不足该日的月份见 Node.traffic_reset_day），必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作
+   * "不改"。改动让周期起点移动时，当前周期用量按分钟桶重算（口径见 Traffic.period_rx），此前的校正不再算数。
    *
    * @generated from field: uint32 traffic_reset_day = 5;
    */

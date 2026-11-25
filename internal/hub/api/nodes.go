@@ -16,6 +16,7 @@ import (
 	"github.com/xjetry/heron/internal/hub/alert"
 	"github.com/xjetry/heron/internal/hub/sanitize"
 	"github.com/xjetry/heron/internal/hub/store"
+	"github.com/xjetry/heron/internal/hub/traffic"
 )
 
 const (
@@ -25,9 +26,6 @@ const (
 	minWindowTTL         = 60 * time.Second
 	maxWindowTTL         = 7 * 24 * time.Hour
 	maxWindowNodes       = 1000
-	minResetDay          = 1
-	// 28 是每个月都有的最大日；更大的日子在短月里没有零点可对齐。
-	maxResetDay = 28
 )
 
 // billingCycles 是协议枚举与库里周期文本的一一对应，未指定对应"没有周期"；TestBillingCyclesMapEveryValue 按两侧全集核对。
@@ -255,8 +253,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 		return nil, err
 	}
 	day := int(req.Msg.GetTrafficResetDay())
-	if day < minResetDay || day > maxResetDay {
-		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
+	if day < traffic.MinResetDay || day > traffic.MaxResetDay {
+		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", traffic.MinResetDay, traffic.MaxResetDay, day)
 	}
 	quota := req.Msg.GetTrafficQuotaBytes()
 	if quota >= 1<<62 {

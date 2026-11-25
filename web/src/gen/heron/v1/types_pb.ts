@@ -844,7 +844,7 @@ export type Traffic = Message<"heron.v1.Traffic"> & {
   nextResetAt: bigint;
 
   /**
-   * 周期重置日 1–28。
+   * 周期重置日 1–31，配置的原值；不足该日的月份在当月最后一日重置（见 Node.traffic_reset_day）。
    *
    * @generated from field: uint32 reset_day = 7;
    */

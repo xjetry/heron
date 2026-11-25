@@ -1031,7 +1031,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 	if tr := all.Msg.Nodes[0].GetTraffic(); tr.GetResetDay() != 15 || tr.GetNextResetAt() != jan15 {
 		t.Fatalf("traffic after changing the reset day: %v", tr)
 	}
-	for _, day := range []uint32{0, 29} {
+	for _, day := range []uint32{0, 32} {
 		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day, OfflineGraceS: proto.Uint32(0)}))
 		if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "traffic_reset_day") {
 			t.Fatalf("reset day %d: %v, want InvalidArgument naming the field", day, err)
