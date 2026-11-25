@@ -542,6 +542,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 					return fmt.Errorf("migrate config snapshot to 49: %w", err)
 				}
 			}
+		case 50:
+			// 与迁移 50 同源：probe_task 加地址族与记录类型两列，只在配置层。
+			if layer == "config" {
+				statements = migrationV50Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

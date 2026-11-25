@@ -75,6 +75,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	47: execAll(migrationV47),
 	48: migrateV48Config,
 	49: migrateV49Config,
+	50: execAll(migrationV50Config),
 }
 
 // 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。
@@ -155,6 +156,13 @@ func migrateV49Config(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v50：探测任务的探测地址族与 DNS 记录类型。旧任务取缺省 0（自动、A 记录），与升级前 agent 的执行方式相同，
+// 不能迁出别的值：那会让已有任务在调用方不知情时改测另一件事。只在配置层，迁移与配置快照共用。
+var migrationV50Config = []string{
+	`ALTER TABLE probe_task ADD COLUMN ip_family INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE probe_task ADD COLUMN dns_record_type INTEGER NOT NULL DEFAULT 0`,
 }
 
 // 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。

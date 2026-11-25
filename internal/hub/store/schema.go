@@ -488,7 +488,11 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   cert_spki_sha256 BLOB,
   -- 配置身份，16 字节随机数。任务内容（除 id 与本列外的列，含 pin）变化时重新生成；只比较相等。
   -- 不用 probe_meta.version：那是清单计数，备份恢复后可以重新走到同一个值却对应另一份配置。
-  config_id BLOB NOT NULL
+  config_id BLOB NOT NULL,
+  -- ProbeTask.ip_family 与 dns_record_type 的枚举值，0 是缺省（自动、A 记录）。取值与适用种类由 SaveProbeTask 经
+  -- probelimit.CheckTask 裁决，这里不另设 CHECK。列序与迁移 50 的 ADD COLUMN 结果一致。
+  ip_family INTEGER NOT NULL DEFAULT 0,
+  dns_record_type INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (

@@ -70,6 +70,8 @@ func TestCertAlertStateAfterIdentityCleanup(t *testing.T) {
 		must(t, err)
 	}
 	_, err = db.Exec(`DROP TABLE node_list_revision;
+		ALTER TABLE probe_task DROP COLUMN ip_family;
+		ALTER TABLE probe_task DROP COLUMN dns_record_type;
 		DROP TABLE silence_rule;
 		ALTER TABLE silence DROP COLUMN all_rules;
 		ALTER TABLE traffic DROP COLUMN observed_at;

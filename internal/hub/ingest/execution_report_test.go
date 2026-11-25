@@ -181,7 +181,7 @@ func TestRestoredOldFactsAreRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec("DROP TABLE silence_rule; ALTER TABLE silence DROP COLUMN all_rules; ALTER TABLE traffic DROP COLUMN observed_at"); err != nil {
+	if _, err := raw.Exec("ALTER TABLE probe_task DROP COLUMN ip_family; ALTER TABLE probe_task DROP COLUMN dns_record_type; DROP TABLE silence_rule; ALTER TABLE silence DROP COLUMN all_rules; ALTER TABLE traffic DROP COLUMN observed_at"); err != nil {
 		t.Fatal(err)
 	}
 	// 迁移 47 的 api_token 失效时刻列同理，否则回填 33 后迁移 47 撞上已有的列。
