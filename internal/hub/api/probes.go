@@ -77,7 +77,7 @@ var saveProbeTaskClass = map[string]string{
 	"task": "descend", "node_ids": "editable", "all_nodes": "editable", "selector_tags": "editable",
 	"cert_pin": "action", "expected_config_id": "action",
 	"task.id": "identity", "task.kind": "editable", "task.target": "editable", "task.interval_s": "editable",
-	"task.timeout_ms": "editable", "task.dns_server": "editable",
+	"task.timeout_ms": "editable", "task.dns_server": "editable", "task.ip_family": "editable", "task.dns_record_type": "editable",
 	"task.cert_spki_sha256": "output", "task.config_id": "output",
 }
 

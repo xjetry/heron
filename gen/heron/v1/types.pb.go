@@ -539,6 +539,107 @@ func (ProbeKind) EnumDescriptor() ([]byte, []int) {
 	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
 }
 
+// 探测地址族。缺省（UNSPECIFIED）即自动：agent 只在本机具备的地址族里选，本机两族都具备时名字优先取 IPv4。
+// 本机具备某族 ⇔ 本机接口上有该族的非回环、非链路本地地址（ICMP 还要求该族的套接字可用）。显式要求本机
+// 不具备的地址族，或目标字面量属于本机不具备的地址族时，agent 每个周期上报 ProbeError（不计入丢包），不静默跳过。
+type ProbeIpFamily int32
+
+const (
+	ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED ProbeIpFamily = 0
+	// 只解析 A 记录、只经 IPv4 发起。
+	ProbeIpFamily_PROBE_IP_FAMILY_IPV4 ProbeIpFamily = 1
+	// 只解析 AAAA 记录、只经 IPv6 发起。
+	ProbeIpFamily_PROBE_IP_FAMILY_IPV6 ProbeIpFamily = 2
+)
+
+// Enum value maps for ProbeIpFamily.
+var (
+	ProbeIpFamily_name = map[int32]string{
+		0: "PROBE_IP_FAMILY_UNSPECIFIED",
+		1: "PROBE_IP_FAMILY_IPV4",
+		2: "PROBE_IP_FAMILY_IPV6",
+	}
+	ProbeIpFamily_value = map[string]int32{
+		"PROBE_IP_FAMILY_UNSPECIFIED": 0,
+		"PROBE_IP_FAMILY_IPV4":        1,
+		"PROBE_IP_FAMILY_IPV6":        2,
+	}
+)
+
+func (x ProbeIpFamily) Enum() *ProbeIpFamily {
+	p := new(ProbeIpFamily)
+	*p = x
+	return p
+}
+
+func (x ProbeIpFamily) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProbeIpFamily) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[8].Descriptor()
+}
+
+func (ProbeIpFamily) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[8]
+}
+
+func (x ProbeIpFamily) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProbeIpFamily.Descriptor instead.
+func (ProbeIpFamily) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
+}
+
+// DNS 探测查询的资源记录类型。缺省（UNSPECIFIED）即 A；应答里带有所查类型的记录才算解析成功。
+type DnsRecordType int32
+
+const (
+	DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED DnsRecordType = 0
+	DnsRecordType_DNS_RECORD_TYPE_AAAA        DnsRecordType = 1
+)
+
+// Enum value maps for DnsRecordType.
+var (
+	DnsRecordType_name = map[int32]string{
+		0: "DNS_RECORD_TYPE_UNSPECIFIED",
+		1: "DNS_RECORD_TYPE_AAAA",
+	}
+	DnsRecordType_value = map[string]int32{
+		"DNS_RECORD_TYPE_UNSPECIFIED": 0,
+		"DNS_RECORD_TYPE_AAAA":        1,
+	}
+)
+
+func (x DnsRecordType) Enum() *DnsRecordType {
+	p := new(DnsRecordType)
+	*p = x
+	return p
+}
+
+func (x DnsRecordType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DnsRecordType) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[9].Descriptor()
+}
+
+func (DnsRecordType) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[9]
+}
+
+func (x DnsRecordType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DnsRecordType.Descriptor instead.
+func (DnsRecordType) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
+}
+
 // 周期流量计入口径；启用配额时必须显式指定。
 type TrafficQuotaMode int32
 
@@ -579,11 +680,11 @@ func (x TrafficQuotaMode) String() string {
 }
 
 func (TrafficQuotaMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[8].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[10].Descriptor()
 }
 
 func (TrafficQuotaMode) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[8]
+	return &file_heron_v1_types_proto_enumTypes[10]
 }
 
 func (x TrafficQuotaMode) Number() protoreflect.EnumNumber {
@@ -592,7 +693,7 @@ func (x TrafficQuotaMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TrafficQuotaMode.Descriptor instead.
 func (TrafficQuotaMode) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 // 节点的计费周期。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -652,11 +753,11 @@ func (x BillingCycle) String() string {
 }
 
 func (BillingCycle) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[9].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[11].Descriptor()
 }
 
 func (BillingCycle) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[9]
+	return &file_heron_v1_types_proto_enumTypes[11]
 }
 
 func (x BillingCycle) Number() protoreflect.EnumNumber {
@@ -665,7 +766,7 @@ func (x BillingCycle) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use BillingCycle.Descriptor instead.
 func (BillingCycle) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{11}
 }
 
 // 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -1985,11 +2086,17 @@ type ProbeTask struct {
 	DnsServer string `protobuf:"bytes,6,opt,name=dns_server,json=dnsServer,proto3" json:"dns_server,omitempty"`
 	// 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
 	// 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
-	// 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
 	CertSpkiSha256 []byte `protobuf:"bytes,7,opt,name=cert_spki_sha256,json=certSpkiSha256,proto3" json:"cert_spki_sha256,omitempty"`
 	// 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
 	// 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
-	ConfigId      []byte `protobuf:"bytes,8,opt,name=config_id,json=configId,proto3" json:"config_id,omitempty"`
+	ConfigId []byte `protobuf:"bytes,8,opt,name=config_id,json=configId,proto3" json:"config_id,omitempty"`
+	// 探测地址族，只对 ICMP、TCP、HTTP 任务有意义。DNS 任务携带非缺省值即 InvalidArgument：连向解析器的地址族
+	// 已由 dns_server 的字面量唯一决定，查什么记录另由 dns_record_type 表达，两者正交。
+	// 目标（ICMP 的 target、TCP 的 host、HTTP URL 的主机）是 IP 字面量时，显式地址族必须与字面量同族，否则
+	// InvalidArgument；hub 保存与 agent 应用调用同一份校验。
+	IpFamily ProbeIpFamily `protobuf:"varint,9,opt,name=ip_family,json=ipFamily,proto3,enum=heron.v1.ProbeIpFamily" json:"ip_family,omitempty"`
+	// DNS 任务查询的记录类型，缺省即 A。其他种类携带非缺省值即 InvalidArgument。
+	DnsRecordType DnsRecordType `protobuf:"varint,10,opt,name=dns_record_type,json=dnsRecordType,proto3,enum=heron.v1.DnsRecordType" json:"dns_record_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2078,6 +2185,20 @@ func (x *ProbeTask) GetConfigId() []byte {
 		return x.ConfigId
 	}
 	return nil
+}
+
+func (x *ProbeTask) GetIpFamily() ProbeIpFamily {
+	if x != nil {
+		return x.IpFamily
+	}
+	return ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED
+}
+
+func (x *ProbeTask) GetDnsRecordType() DnsRecordType {
+	if x != nil {
+		return x.DnsRecordType
+	}
+	return DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED
 }
 
 type ProbeTasks struct {
@@ -2520,7 +2641,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\aTimeout\"&\n" +
 	"\n" +
 	"ProbeError\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\"\x80\x02\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"\xf7\x02\n" +
 	"\tProbeTask\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12'\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x13.heron.v1.ProbeKindR\x04kind\x12\x16\n" +
@@ -2532,7 +2653,10 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"dns_server\x18\x06 \x01(\tR\tdnsServer\x12(\n" +
 	"\x10cert_spki_sha256\x18\a \x01(\fR\x0ecertSpkiSha256\x12\x1b\n" +
-	"\tconfig_id\x18\b \x01(\fR\bconfigId\"Q\n" +
+	"\tconfig_id\x18\b \x01(\fR\bconfigId\x124\n" +
+	"\tip_family\x18\t \x01(\x0e2\x17.heron.v1.ProbeIpFamilyR\bipFamily\x12?\n" +
+	"\x0fdns_record_type\x18\n" +
+	" \x01(\x0e2\x17.heron.v1.DnsRecordTypeR\rdnsRecordType\"Q\n" +
 	"\n" +
 	"ProbeTasks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12)\n" +
@@ -2625,7 +2749,14 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
 	"\x0ePROBE_KIND_TCP\x10\x02\x12\x13\n" +
 	"\x0fPROBE_KIND_HTTP\x10\x03\x12\x12\n" +
-	"\x0ePROBE_KIND_DNS\x10\x04*\xa4\x01\n" +
+	"\x0ePROBE_KIND_DNS\x10\x04*d\n" +
+	"\rProbeIpFamily\x12\x1f\n" +
+	"\x1bPROBE_IP_FAMILY_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14PROBE_IP_FAMILY_IPV4\x10\x01\x12\x18\n" +
+	"\x14PROBE_IP_FAMILY_IPV6\x10\x02*J\n" +
+	"\rDnsRecordType\x12\x1f\n" +
+	"\x1bDNS_RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14DNS_RECORD_TYPE_AAAA\x10\x01*\xa4\x01\n" +
 	"\x10TrafficQuotaMode\x12\"\n" +
 	"\x1eTRAFFIC_QUOTA_MODE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TRAFFIC_QUOTA_MODE_SUM\x10\x01\x12\x19\n" +
@@ -2654,7 +2785,7 @@ func file_heron_v1_types_proto_rawDescGZIP() []byte {
 	return file_heron_v1_types_proto_rawDescData
 }
 
-var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
+var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
 var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_heron_v1_types_proto_goTypes = []any{
 	(ScopeKind)(0),                // 0: heron.v1.ScopeKind
@@ -2665,30 +2796,32 @@ var file_heron_v1_types_proto_goTypes = []any{
 	(AddressDetectionState)(0),    // 5: heron.v1.AddressDetectionState
 	(PresentedReason)(0),          // 6: heron.v1.PresentedReason
 	(ProbeKind)(0),                // 7: heron.v1.ProbeKind
-	(TrafficQuotaMode)(0),         // 8: heron.v1.TrafficQuotaMode
-	(BillingCycle)(0),             // 9: heron.v1.BillingCycle
-	(*Metrics)(nil),               // 10: heron.v1.Metrics
-	(*NetInterfaceCounter)(nil),   // 11: heron.v1.NetInterfaceCounter
-	(*DiskMountUsage)(nil),        // 12: heron.v1.DiskMountUsage
-	(*Facts)(nil),                 // 13: heron.v1.Facts
-	(*ExecutionScope)(nil),        // 14: heron.v1.ExecutionScope
-	(*AgentDiagnostics)(nil),      // 15: heron.v1.AgentDiagnostics
-	(*NetStructureExclusion)(nil), // 16: heron.v1.NetStructureExclusion
-	(*NetworkInfo)(nil),           // 17: heron.v1.NetworkInfo
-	(*AddressDetection)(nil),      // 18: heron.v1.AddressDetection
-	(*ProbeResult)(nil),           // 19: heron.v1.ProbeResult
-	(*PresentedCertificate)(nil),  // 20: heron.v1.PresentedCertificate
-	(*Timeout)(nil),               // 21: heron.v1.Timeout
-	(*ProbeError)(nil),            // 22: heron.v1.ProbeError
-	(*ProbeTask)(nil),             // 23: heron.v1.ProbeTask
-	(*ProbeTasks)(nil),            // 24: heron.v1.ProbeTasks
-	(*Traffic)(nil),               // 25: heron.v1.Traffic
-	(*Billing)(nil),               // 26: heron.v1.Billing
+	(ProbeIpFamily)(0),            // 8: heron.v1.ProbeIpFamily
+	(DnsRecordType)(0),            // 9: heron.v1.DnsRecordType
+	(TrafficQuotaMode)(0),         // 10: heron.v1.TrafficQuotaMode
+	(BillingCycle)(0),             // 11: heron.v1.BillingCycle
+	(*Metrics)(nil),               // 12: heron.v1.Metrics
+	(*NetInterfaceCounter)(nil),   // 13: heron.v1.NetInterfaceCounter
+	(*DiskMountUsage)(nil),        // 14: heron.v1.DiskMountUsage
+	(*Facts)(nil),                 // 15: heron.v1.Facts
+	(*ExecutionScope)(nil),        // 16: heron.v1.ExecutionScope
+	(*AgentDiagnostics)(nil),      // 17: heron.v1.AgentDiagnostics
+	(*NetStructureExclusion)(nil), // 18: heron.v1.NetStructureExclusion
+	(*NetworkInfo)(nil),           // 19: heron.v1.NetworkInfo
+	(*AddressDetection)(nil),      // 20: heron.v1.AddressDetection
+	(*ProbeResult)(nil),           // 21: heron.v1.ProbeResult
+	(*PresentedCertificate)(nil),  // 22: heron.v1.PresentedCertificate
+	(*Timeout)(nil),               // 23: heron.v1.Timeout
+	(*ProbeError)(nil),            // 24: heron.v1.ProbeError
+	(*ProbeTask)(nil),             // 25: heron.v1.ProbeTask
+	(*ProbeTasks)(nil),            // 26: heron.v1.ProbeTasks
+	(*Traffic)(nil),               // 27: heron.v1.Traffic
+	(*Billing)(nil),               // 28: heron.v1.Billing
 }
 var file_heron_v1_types_proto_depIdxs = []int32{
-	17, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
-	15, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
-	14, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
+	19, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
+	17, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
+	16, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
 	0,  // 3: heron.v1.ExecutionScope.kind:type_name -> heron.v1.ScopeKind
 	1,  // 4: heron.v1.ExecutionScope.cpu:type_name -> heron.v1.ResourceScope
 	1,  // 5: heron.v1.ExecutionScope.memory:type_name -> heron.v1.ResourceScope
@@ -2696,24 +2829,26 @@ var file_heron_v1_types_proto_depIdxs = []int32{
 	1,  // 7: heron.v1.ExecutionScope.load:type_name -> heron.v1.ResourceScope
 	2,  // 8: heron.v1.ExecutionScope.notes:type_name -> heron.v1.ScopeNote
 	4,  // 9: heron.v1.AgentDiagnostics.failed_collectors:type_name -> heron.v1.CollectionComponent
-	16, // 10: heron.v1.AgentDiagnostics.net_structure_excluded:type_name -> heron.v1.NetStructureExclusion
+	18, // 10: heron.v1.AgentDiagnostics.net_structure_excluded:type_name -> heron.v1.NetStructureExclusion
 	3,  // 11: heron.v1.NetStructureExclusion.reason:type_name -> heron.v1.NetStructureReason
-	18, // 12: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
-	18, // 13: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
+	20, // 12: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
+	20, // 13: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
 	5,  // 14: heron.v1.AddressDetection.state:type_name -> heron.v1.AddressDetectionState
-	21, // 15: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
-	22, // 16: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
-	20, // 17: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
+	23, // 15: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
+	24, // 16: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
+	22, // 17: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
 	6,  // 18: heron.v1.PresentedCertificate.reason:type_name -> heron.v1.PresentedReason
 	7,  // 19: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
-	23, // 20: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
-	8,  // 21: heron.v1.Traffic.quota_mode:type_name -> heron.v1.TrafficQuotaMode
-	9,  // 22: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
-	23, // [23:23] is the sub-list for method output_type
-	23, // [23:23] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	8,  // 20: heron.v1.ProbeTask.ip_family:type_name -> heron.v1.ProbeIpFamily
+	9,  // 21: heron.v1.ProbeTask.dns_record_type:type_name -> heron.v1.DnsRecordType
+	25, // 22: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
+	10, // 23: heron.v1.Traffic.quota_mode:type_name -> heron.v1.TrafficQuotaMode
+	11, // 24: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_types_proto_init() }
@@ -2735,7 +2870,7 @@ func file_heron_v1_types_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_types_proto_rawDesc), len(file_heron_v1_types_proto_rawDesc)),
-			NumEnums:      10,
+			NumEnums:      12,
 			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,

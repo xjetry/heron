@@ -120,12 +120,7 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 			}
 			next, transition := NextResource(e.current(stateKey{rule.ID, node.ID}), samples, rule.RecoveryThreshold)
 			value := samples[len(samples)-1].Value
-			label := resourceLabel(rule.ResourceMetric)
-			summary := fmt.Sprintf("节点 %s %s持续 %d 分钟达到 %s（规则 %s）", node.Name, label, rule.ForMinutes, resourceValueText(rule.ResourceMetric, rule.Threshold), rule.Name)
-			if transition != nil && *transition == store.TransitionRecovered {
-				summary = fmt.Sprintf("节点 %s %s持续 %d 分钟不高于 %s，已恢复（规则 %s）", node.Name, label, rule.ForMinutes, resourceValueText(rule.ResourceMetric, rule.RecoveryThreshold), rule.Name)
-			}
-			if err := e.apply(ctx, cy, rule, node.ID, next, false, node.Maintenance, "", transition, summary, value); err != nil {
+			if err := e.apply(ctx, cy, rule, node.ID, next, false, node.Maintenance, "", transition, resourceSummary(node, rule, transition), value); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -134,4 +129,13 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// resourceSummary 是资源规则的文案：触发写阈值，恢复写恢复阈值，都按指标的单位写（resourceValueText）。
+func resourceSummary(n store.Node, r store.AlertRule, tr *store.Transition) string {
+	label := resourceLabel(r.ResourceMetric)
+	if tr != nil && *tr == store.TransitionRecovered {
+		return fmt.Sprintf("节点 %s %s持续 %d 分钟不高于 %s，已恢复（规则 %s）", n.Name, label, r.ForMinutes, resourceValueText(r.ResourceMetric, r.RecoveryThreshold), r.Name)
+	}
+	return fmt.Sprintf("节点 %s %s持续 %d 分钟达到 %s（规则 %s）", n.Name, label, r.ForMinutes, resourceValueText(r.ResourceMetric, r.Threshold), r.Name)
 }

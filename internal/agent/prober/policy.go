@@ -2,11 +2,14 @@ package prober
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"slices"
 	"strings"
+
+	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 )
 
 // defaultDeny 是本地策略的固定默认拒绝集（规则见 Policy）：本机、链路本地（含云厂商的 metadata 地址 169.254.169.254）、组播、
@@ -125,11 +128,13 @@ func (p Policy) String() string {
 	return "default_deny=" + join(defaultDeny) + "+host_addresses probe_deny=" + join(p.deny) + " probe_allow=" + join(p.allow)
 }
 
-// Targets 是探测引擎取目标地址的唯一入口：解析与本地策略检查在同一处，今后新增的探测种类经过它即受策略约束（规则见 Policy）。
-// 检查的是解析后实际要连的地址，所以名字无法绕过；首选地址被拒时不换用其他地址，否则攻击者可以借 DNS 挑选。
+// Targets 是探测引擎取目标地址的唯一入口：地址族选择、解析与本地策略检查在同一处，今后新增的探测种类经过它即受
+// 同样的约束（策略规则见 Policy，地址族规则见 Resolve）。检查的是解析后实际要连的地址，所以名字无法绕过；首选地址
+// 被拒时不换用其他地址，否则攻击者可以借 DNS 挑选。
 //
 // 宿主机的接口地址每次探测前重新枚举：地址会随 DHCP、网卡增删而变，启动时取一次的快照会漏掉之后加上的地址。
 // 连本机的非回环地址走本地路由，常能绕过只挡外部入站的防火墙，所以它们与回环同样默认拒绝。枚举失败时拒绝这次探测。
+// 本机具备哪些地址族也从同一次枚举得出（hostStack），与策略看到的是同一份地址。
 type Targets struct {
 	Resolver *net.Resolver
 	Policy   Policy
@@ -137,11 +142,70 @@ type Targets struct {
 	HostAddrs func() ([]netip.Addr, error)
 }
 
-func (t Targets) Resolve(ctx context.Context, host string, v4, v6 bool) (netip.Addr, error) {
-	ip, err := resolve(ctx, t.Resolver, host, v4, v6)
-	if err != nil {
-		return netip.Addr{}, err
+// stack 是一组地址族。
+type stack struct{ v4, v6 bool }
+
+// bothStacks 是不受套接字限制的引擎（TCP、HTTP、DNS）能发起的地址族。
+var bothStacks = stack{v4: true, v6: true}
+
+func (s stack) has(a netip.Addr) bool {
+	if a.Unmap().Is4() {
+		return s.v4
 	}
+	return s.v6
+}
+
+func (s stack) and(o stack) stack { return stack{v4: s.v4 && o.v4, v6: s.v6 && o.v6} }
+
+// hostStack 判定本机具备的地址族：接口上有该族的非回环、非链路本地地址。只有回环与链路本地地址的族
+// 到不了远端，向它发起的探测必然失败；把这种失败计成丢包，会把本机能力缺失记成目标不可达。
+func hostStack(own []netip.Addr) stack {
+	var s stack
+	for _, a := range own {
+		a = a.Unmap()
+		if a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsUnspecified() {
+			continue
+		}
+		if a.Is4() {
+			s.v4 = true
+		} else {
+			s.v6 = true
+		}
+	}
+	return s
+}
+
+// familyStack 是任务的探测地址族允许的族；缺省（自动）两族都允许。CheckTask 只放行定义过的取值。
+func familyStack(f heronv1.ProbeIpFamily) stack {
+	switch f {
+	case heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV4:
+		return stack{v4: true}
+	case heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6:
+		return stack{v6: true}
+	}
+	return bothStacks
+}
+
+// missingStack 说明 want 里本机缺的地址族。文本以原因开头、不带目标名：上报时截断到 MaxErrorMessageLen，原因必须留在前面。
+func missingStack(want stack) error {
+	switch {
+	case want.v4 && want.v6:
+		return errors.New("this host has no IPv4 or IPv6 address other than loopback and link-local")
+	case want.v6:
+		return errors.New("this host has no IPv6 address other than loopback and link-local")
+	}
+	return errors.New("this host has no IPv4 address other than loopback and link-local")
+}
+
+// Resolve 取出这次探测要连的地址。family 是任务的探测地址族，engine 是引擎自身能发起的族（ICMP 由套接字决定，
+// 其余引擎是 bothStacks）。可用的族 = 任务允许 ∩ 本机具备 ∩ 引擎能用；名字只在可用的族里解析，两族都可用时取 IPv4，
+// 所以纯 IPv6 节点探测双栈名字时得到 AAAA，而不是连向一个本机发不出去的 IPv4 地址。
+//
+// 任务要求的族本机不具备，或字面量属于本机不具备的族时返回错误：探测错误按周期上报，不计入丢包，也不静默跳过——
+// 缺结果会被误读成任务没下发或调度停了。字面量与显式地址族不同族的任务已被 probelimit.CheckTask 拒于准入之外，
+// 这里仍核对，因为解析器地址（DNS 的 dns_server）以自动地址族走同一个入口，字面量的族只能在这里比对本机能力。
+// 字面量所属族的引擎能力不在这里判：ICMP 自己报出该族套接字的初始化诊断，比笼统的"不可用"更能说明原因。
+func (t Targets) Resolve(ctx context.Context, host string, family heronv1.ProbeIpFamily, engine stack) (netip.Addr, error) {
 	list := t.HostAddrs
 	if list == nil {
 		list = interfaceAddrs
@@ -150,10 +214,43 @@ func (t Targets) Resolve(ctx context.Context, host string, v4, v6 bool) (netip.A
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("list this host's addresses: %w", err)
 	}
+	have, want := hostStack(own), familyStack(family)
+	if lit, err := netip.ParseAddr(host); err == nil {
+		if !want.has(lit) {
+			return netip.Addr{}, fmt.Errorf("target address %s is outside ip_family %s", lit, family)
+		}
+		if !have.has(lit) {
+			return netip.Addr{}, missingStack(stack{v4: lit.Unmap().Is4(), v6: !lit.Unmap().Is4()})
+		}
+	} else {
+		if usable := want.and(have); !usable.v4 && !usable.v6 {
+			return netip.Addr{}, missingStack(want)
+		}
+		if usable := want.and(have).and(engine); !usable.v4 && !usable.v6 {
+			return netip.Addr{}, fmt.Errorf("no address family usable for this probe: this host has %s, the probe engine %s", stackName(have), stackName(engine))
+		}
+	}
+	usable := want.and(have).and(engine)
+	ip, err := resolve(ctx, t.Resolver, host, usable.v4, usable.v6)
+	if err != nil {
+		return netip.Addr{}, err
+	}
 	if err := t.Policy.Check(ip, own); err != nil {
 		return netip.Addr{}, err
 	}
 	return ip, nil
+}
+
+func stackName(s stack) string {
+	switch {
+	case s.v4 && s.v6:
+		return "IPv4 and IPv6"
+	case s.v4:
+		return "IPv4 only"
+	case s.v6:
+		return "IPv6 only"
+	}
+	return "neither family"
 }
 
 func interfaceAddrs() ([]netip.Addr, error) {

@@ -58,15 +58,17 @@ describe("toProbeAligned", () => {
     const loss = toProbeAligned(resp, [3n, 7n], 100, 300, lossPercent);
     expect(loss[0]).toEqual([60, 120, 180, 240]);
     expect(loss[1]).toEqual([null, 20, null, 100]);
-    expect(loss[2]).toEqual([null, null, 0, null]);
+    expect(loss[2]).toEqual([null, null, null, null]);
     const rtt = toProbeAligned(resp, [3n, 7n], 100, 300, rttMeanMs);
     expect(rtt[1]).toEqual([null, 12.5, null, null]);
     expect(rtt[2]).toEqual([null, null, null, null]);
   });
-  it("全部失败的点丢包率为 0、rtt 为空：error 不计入丢包", () => {
+  it("全是错误的点没有丢包率、rtt 为空：error 是本机没能发起测量，不是可达性读数，不能画成 0%", () => {
     const s = resp.series[1].samples[0];
-    expect(lossPercent(s)).toBe(0);
+    expect(lossPercent(s)).toBeNull();
     expect(rttMeanMs(s)).toBeNull();
+    // 有一次有效测量就有读数，分母仍是全部结果。
+    expect(lossPercent({ ...s, sent: 6, lost: 1, errors: 4 })).toBeCloseTo(100 / 6);
   });
   it("taskIdsOf 保持响应顺序", () => {
     expect(taskIdsOf(resp)).toEqual([3n, 7n]);

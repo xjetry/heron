@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
 import type { ProbeSample } from "../gen/heron/v1/query_pb";
-import { disambiguate, lossPercent, rttMeanMs, type ProbeValue } from "./probes";
+import { disambiguate, lossOf, lossPercent, rttMeanMs, type ProbeValue } from "./probes";
 import { gridOf } from "./series";
 
 // 一次对比先 List 再按 List 给出的上限切块。上限缺席即 0（proto3 标量），0 不是“不限制”：
@@ -71,7 +71,7 @@ function isPlotted(v: number | null): v is number {
 }
 
 // nodeIds 是 List 的全序。chunks 只含已经返回的块：没出现在任何块里的节点既不画线，也不进“没有读数”。
-// 丢包率只用 lossPercent（lost/sent），不因缺少 RTT 另记成 100%。RTT 图只保留至少有一个 RTT 的节点。
+// 丢包率只用 lossPercent（lost/sent，全是错误的点没有读数），不因缺少 RTT 另记成 100%。RTT 图只保留至少有一个 RTT 的节点。
 export function assembleComparison(
   nodeIds: readonly bigint[],
   names: ReadonlyMap<bigint, string>,
@@ -157,7 +157,7 @@ export function summarizeComparison(nodeIds: readonly bigint[], names: ReadonlyM
     return {
       id, label: labels[i],
       mean: ok > 0 ? weighted / ok : null, min, max,
-      lossPercent: sent > 0 ? (lost / sent) * 100 : null, errors,
+      lossPercent: lossOf(sent, lost, errors), errors,
       unavailable: unavailable.has(id),
     };
   });
