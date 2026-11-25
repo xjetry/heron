@@ -28,6 +28,7 @@ const STRUCTURE_REASONS: Record<NetStructureReason, string> = {
 
 export function AgentDiagnostics({ diagnostics, updatedAt }: { diagnostics?: Diagnostics; updatedAt?: bigint }) {
   const networkFailed = diagnostics?.failedCollectors.includes(CollectionComponent.NET);
+  const disksFailed = diagnostics?.failedCollectors.includes(CollectionComponent.DISK_MOUNTS);
   return <section className="card" aria-label="Agent 运行诊断">
     <h2>Agent 运行诊断</h2>
     {!diagnostics ? <p className="muted">Agent 未提供诊断信息，请更新 Agent 后等待上报。</p> : <>
@@ -49,6 +50,9 @@ export function AgentDiagnostics({ diagnostics, updatedAt }: { diagnostics?: Dia
             <div className="muted">已启用，排除 {diagnostics.netStructureExcludedTotal} 个{diagnostics.netStructureExcludedTotal > diagnostics.netStructureExcluded.length && `，仅展示前 ${diagnostics.netStructureExcluded.length} 个`}</div>
             {diagnostics.netStructureExcluded.map((e) => <code className="tag" key={e.name}>{e.name} · {STRUCTURE_REASONS[e.reason] ?? "未知原因"}</code>)}
           </>}</dd>
+        {/* 纳入盘数为 0 有两种来源：逐盘采集失败（failedCollectors 带 DISK_MOUNTS）与 agent 版本不提供；成功采集至少有根盘一块。 */}
+        <dt>磁盘排除规则</dt><dd>{diagnostics.diskExclude.length ? <code>{diagnostics.diskExclude.join(" ")}</code> : "无"}</dd>
+        <dt>纳入监测的磁盘</dt><dd>{disksFailed ? <span className="warn">本次逐盘采集失败，磁盘数量不可用</span> : diagnostics.diskMountsTotal === 0 ? "未上报（Agent 版本不提供）" : `${diagnostics.diskMountsTotal} 块（含根盘）`}</dd>
         <dt>采集失败项</dt><dd>{diagnostics.failedCollectors.length ? <span className="warn">{diagnostics.failedCollectors.map((component) => COLLECTORS[component] ?? "未知类别").join("、")}</span> : "最近采集未报告失败"}</dd>
       </dl>
     </>}
