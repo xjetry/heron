@@ -2340,7 +2340,7 @@ type Traffic struct {
 	// 当前周期起点与下次重置时刻，Unix 秒。
 	PeriodStart int64 `protobuf:"varint,5,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
 	NextResetAt int64 `protobuf:"varint,6,opt,name=next_reset_at,json=nextResetAt,proto3" json:"next_reset_at,omitempty"`
-	// 周期重置日 1–28。
+	// 周期重置日 1–31，配置的原值；不足该日的月份在当月最后一日重置（见 Node.traffic_reset_day）。
 	ResetDay uint32 `protobuf:"varint,7,opt,name=reset_day,json=resetDay,proto3" json:"reset_day,omitempty"`
 	// 周期配额，0 表示未设配额；随公开节点一起公开。
 	QuotaBytes uint64           `protobuf:"varint,8,opt,name=quota_bytes,json=quotaBytes,proto3" json:"quota_bytes,omitempty"`

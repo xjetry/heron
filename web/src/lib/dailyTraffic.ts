@@ -1,7 +1,7 @@
 import type { QueryMetricsResponse } from "../gen/heron/v1/query_pb";
 import { TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { clockParts, day } from "./format";
-import { addDays, addMonths } from "./ymd";
+import { addDays, dayInMonth } from "./ymd";
 
 // 每日流量由 QueryMetrics 的 rx_bytes / tx_bytes 按 hub 时区的日界相加得出，是粗略定位用的估算，不是账本口径：
 // ingest 只把相邻上报间隔小于 TTL 的增量记进分钟桶（hub 重启后的首次上报同样不记），跨过离线的那笔只进周期用量；
@@ -26,11 +26,12 @@ function span(first: string, last: string): string[] {
   return out;
 }
 
-// 周期起点是重置日在 hub 时区的零点（traffic.PeriodStart），重置日不超过 28，前推一个月不会被夹到月末。
-// 本周期只列到 hub 时区的今天；上周期从前推一个月的那天到本周期起点前一天。
-export function periodDays(periodStart: bigint, now: number, timeZone: string): { current: string[]; previous: string[] } {
+// 周期起点是重置日在 hub 时区的那一日（traffic.PeriodStart），当月不足重置日时钳到当月最后一日。本周期只列到 hub
+// 时区的今天；上周期从上个月的重置日（同样钳到月末）到本周期起点前一天。上周期起点不能由本周期起点前推一个月：
+// 重置日 31 时本周期起点 4 月 30 日是钳过的，前推得到 3 月 30 日，而 hub 的上周期从 3 月 31 日起。
+export function periodDays(periodStart: bigint, resetDay: number, now: number, timeZone: string): { current: string[]; previous: string[] } {
   const start = day(periodStart, timeZone);
-  return { current: span(start, day(now, timeZone)), previous: span(addMonths(start, -1), addDays(start, -1)) };
+  return { current: span(start, day(now, timeZone)), previous: span(dayInMonth(start, -1, resetDay), addDays(start, -1)) };
 }
 
 export type DayTraffic = { day: string; rx: number; tx: number; known: boolean };

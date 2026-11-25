@@ -262,6 +262,88 @@ func TestPeriodBoundaries(t *testing.T) {
 	}
 }
 
+// 重置日大于当月天数时边界钳到当月最后一日零点，不跨进次月一日；之后的大月仍按原日号对齐。
+func TestPeriodBoundariesClampToMonthEnd(t *testing.T) {
+	d := func(y int, m time.Month, day int) time.Time { return time.Date(y, m, day, 0, 0, 0, 0, shanghai) }
+	cases := []struct {
+		now             time.Time
+		day             int
+		wantStart, next time.Time
+	}{
+		{d(2026, 4, 15), 31, d(2026, 3, 31), d(2026, 4, 30)},
+		{d(2026, 4, 30), 31, d(2026, 4, 30), d(2026, 5, 31)},
+		{d(2026, 5, 1), 31, d(2026, 4, 30), d(2026, 5, 31)},
+		{d(2026, 3, 1), 31, d(2026, 2, 28), d(2026, 3, 31)},
+		{d(2028, 3, 1), 31, d(2028, 2, 29), d(2028, 3, 31)},
+		{d(2028, 2, 29), 30, d(2028, 2, 29), d(2028, 3, 30)},
+		{d(2026, 2, 28).Add(-time.Second), 29, d(2026, 1, 29), d(2026, 2, 28)},
+		{d(2026, 12, 31), 31, d(2026, 12, 31), d(2027, 1, 31)},
+		{d(2027, 1, 30), 31, d(2026, 12, 31), d(2027, 1, 31)},
+		// 绕过准入写进库的日号同样夹取：账本、告警引擎、流量报告都把库值原样传进来，三者必须得到同一边界。
+		{d(2026, 4, 15), 0, d(2026, 4, 1), d(2026, 5, 1)},
+		{d(2026, 4, 15), 40, d(2026, 3, 31), d(2026, 4, 30)},
+	}
+	for _, c := range cases {
+		if got := PeriodStart(c.now, c.day, shanghai); !got.Equal(c.wantStart) {
+			t.Errorf("PeriodStart(%v, %d) = %v, want %v", c.now, c.day, got, c.wantStart)
+		}
+		if got := NextResetAfter(c.wantStart, c.day, shanghai); !got.Equal(c.next) {
+			t.Errorf("NextResetAfter(%v, %d) = %v, want %v", c.wantStart, c.day, got, c.next)
+		}
+	}
+}
+
+// 每个日号在一年里恰好 12 个边界，每月一个：从 1 月 1 日所在周期的起点起连续取下次重置，收集落在当年的那些。
+func TestEveryResetDayYieldsTwelvePeriodsAYear(t *testing.T) {
+	for day := 1; day <= 31; day++ {
+		var months []time.Month
+		for at := PeriodStart(time.Date(2026, 1, 1, 0, 0, 0, 0, shanghai), day, shanghai); at.Year() <= 2026; at = NextResetAfter(at, day, shanghai) {
+			if got := PeriodStart(at, day, shanghai); !got.Equal(at) {
+				t.Fatalf("day %d: boundary %v is not its own period start (%v)", day, at, got)
+			}
+			if at.Year() == 2026 {
+				months = append(months, at.Month())
+			}
+		}
+		if len(months) != 12 {
+			t.Fatalf("day %d: boundaries in 2026 fall in months %v, want one per month", day, months)
+		}
+		for i, m := range months {
+			if m != time.Month(i+1) {
+				t.Fatalf("day %d: boundaries in 2026 fall in months %v, want January through December", day, months)
+			}
+		}
+	}
+}
+
+// 零点因夏令时跳变不存在的日子（圣地亚哥 2026-09-06 00:00 直接跳到 01:00），边界是这一天的第一个时刻，
+// 而不是前一天的 23:00（哈瓦那 2026-03-08 同样在零点跳到 01:00）。
+func TestPeriodBoundaryOnSkippedMidnightIsTheFirstInstantOfThatDay(t *testing.T) {
+	for _, c := range []struct {
+		zone       string
+		day        int
+		now        time.Time
+		wantString string
+	}{
+		{"America/Santiago", 6, time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC), "2026-09-06 01:00:00 -0300"},
+		{"America/Santiago", 6, time.Date(2026, 9, 6, 3, 30, 0, 0, time.UTC), "2026-08-06 00:00:00 -0400"},
+		{"America/Havana", 8, time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC), "2026-03-08 01:00:00 -0400"},
+	} {
+		loc := mustZone(c.zone)
+		got := PeriodStart(c.now, c.day, loc)
+		if s := got.Format("2006-01-02 15:04:05 -0700"); s != c.wantString {
+			t.Errorf("%s PeriodStart(%v, %d) = %s, want %s", c.zone, c.now, c.day, s, c.wantString)
+		}
+		if !PeriodStart(got, c.day, loc).Equal(got) {
+			t.Errorf("%s: boundary %v is not its own period start", c.zone, got)
+		}
+		prev := PeriodStart(got.Add(-time.Nanosecond), c.day, loc)
+		if next := NextResetAfter(prev, c.day, loc); !next.Equal(got) {
+			t.Errorf("%s: NextResetAfter(%v) = %v, want %v", c.zone, prev, next, got)
+		}
+	}
+}
+
 func TestPeriodRollsOverAtResetDayMidnightKeepingTotals(t *testing.T) {
 	st := newMem()
 	b, clk := newBook(t, st)
@@ -329,6 +411,58 @@ func TestResetDayMovedEarlierExtendsThePeriod(t *testing.T) {
 	}
 	b.Get(1)
 	queried(t, st, byteRange{1, start, old})
+}
+
+// 重置日在 29–31 与其他日号之间切换：钳到月末的边界与普通边界走同一套重算规则。9 月只有 30 天，31 日的边界钳到 30 日。
+func TestResetDaySwitchAcrossMonthEndClampRecomputesThePeriod(t *testing.T) {
+	st := newMem()
+	st.bytesBetween = func(int64, time.Time, time.Time) (int64, int64, error) { return 40, 10, nil }
+	aug31 := time.Date(2026, 8, 31, 0, 0, 0, 0, shanghai)
+	st.recs[1] = store.TrafficRecord{NodeID: 1, BootID: "b1", Baseline: []store.TrafficCounter{{Rx: 1000, Tx: 1000}}, TotalRx: 5000, TotalTx: 5000, PeriodRx: 100, PeriodTx: 100, PeriodStart: aug31}
+	st.days[1] = 31
+	b, clk := newBook(t, st) // 9 月 15 日 12:00
+	sep30 := time.Date(2026, 9, 30, 0, 0, 0, 0, shanghai)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug31) || !e.NextReset.Equal(sep30) || e.ResetDay != 31 || e.PeriodRx != 100 {
+		t.Fatalf("reset day 31 in September: %+v", e)
+	}
+	queried(t, st)
+
+	b.SetResetDay(1, 30)
+	aug30 := time.Date(2026, 8, 30, 0, 0, 0, 0, shanghai)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug30) || !e.NextReset.Equal(sep30) || e.PeriodRx != 140 || e.PeriodTx != 110 {
+		t.Fatalf("after switching 31 -> 30: %+v", e)
+	}
+	queried(t, st, byteRange{1, aug30, aug31})
+
+	b.SetResetDay(1, 31)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug31) || !e.NextReset.Equal(sep30) || e.PeriodRx != 40 || e.PeriodTx != 10 || e.TotalRx != 5000 {
+		t.Fatalf("after switching 30 -> 31: %+v", e)
+	}
+	queried(t, st, byteRange{1, aug30, aug31}, byteRange{1, aug31, clk.Now()})
+
+	clk.Advance(16 * 24 * time.Hour) // 10 月 1 日 12:00：9 月 30 日的钳位边界已过，10 月回到 31 日
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(sep30) || !e.NextReset.Equal(time.Date(2026, 10, 31, 0, 0, 0, 0, shanghai)) || e.ResetDay != 31 {
+		t.Fatalf("after the clamped September boundary: %+v", e)
+	}
+}
+
+// 换时区后落盘的钳位起点（上海 2 月 28 日零点）不是新时区的边界，按同一规则收敛到新时区的 2 月 28 日零点。
+func TestTimezoneChangeRealignsAClampedPeriodStart(t *testing.T) {
+	st := newMem()
+	st.bytesBetween = func(int64, time.Time, time.Time) (int64, int64, error) { return 70, 30, nil }
+	old := time.Date(2026, 2, 28, 0, 0, 0, 0, shanghai)
+	st.recs[1] = store.TrafficRecord{NodeID: 1, BootID: "b1", Baseline: []store.TrafficCounter{{Rx: 1000, Tx: 1000}}, TotalRx: 5000, TotalTx: 5000, PeriodRx: 100, PeriodTx: 100, PeriodStart: old}
+	st.days[1] = 31
+	clk := clock.NewFake(time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC))
+	b := New(st, clk, time.UTC, slog.Default())
+	if err := b.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(want) || !e.NextReset.Equal(time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)) || e.PeriodRx != 70 || e.PeriodTx != 30 || e.ResetDay != 31 {
+		t.Fatalf("after moving the hub to UTC: %+v", e)
+	}
+	queried(t, st, byteRange{1, want, clk.Now()})
 }
 
 // 墙钟回拨越过边界：落盘起点仍是当前重置日下的边界，不是配置改动，周期保持原状、不查桶；起点留在未来，

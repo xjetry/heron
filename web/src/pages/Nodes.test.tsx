@@ -485,20 +485,23 @@ describe("Nodes", () => {
     await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByLabelText("名称 a（#1）")).toBeNull());
   });
-  it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
+  it.each(["", "0", "32", "1.5", "1", "15", "29", "31"])("重置日 %s 只有 1–31 的整数能保存", async (value) => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     openRowAction("a（#1）", "编辑");
-    fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value } });
-    if (value === "15") expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    const input = screen.getByLabelText("重置日 a（#1）");
+    expect(input).toHaveAttribute("min", "1");
+    expect(input).toHaveAttribute("max", "31");
+    fireEvent.change(input, { target: { value } });
+    if (["1", "15", "29", "31"].includes(value)) expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
     else expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
-  it("编辑重置日说明周期量清零的后果", async () => {
+  it("编辑重置日说明月末钳位与周期量清零的后果", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     openRowAction("a（#1）", "编辑");
-    expect(screen.getByText("若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
+    expect(screen.getByText("当月不足该日时在当月最后一日重置，之后的月份仍按该日。若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
   });
 
   it("编辑回显重置日", async () => {

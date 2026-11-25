@@ -326,6 +326,14 @@ describe("NodeDetail", () => {
     expect(screen.getByText(`${next}（每月 1 日，${timezone}）`)).toBeInTheDocument();
   });
 
+  it("重置日大于 28 时说明短月取月末，日号仍显示配置值", async () => {
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } }),
+      getTraffic: async () => { const r = await getTraffic(); return { ...r, timezone: "UTC", nodes: r.nodes.map((n) => ({ ...n, traffic: n.traffic && { ...n.traffic, resetDay: 31 } })) }; } },
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
+    const next = dateTime(trafficOf(7n).traffic.nextResetAt, "UTC");
+    expect(await screen.findByText(`${next}（每月 31 日，不足该日的月份取最后一日，UTC）`)).toBeInTheDocument();
+  });
+
   it("流量卡显示周期与总量，并按 GiB 提交校正后刷新", async () => {
     const adjustTraffic = vi.fn(async () => ({ traffic: trafficOf(7n).traffic }));
     const traffic = vi.fn(getTraffic);

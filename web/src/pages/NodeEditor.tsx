@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import type { Node, Tag } from "../gen/heron/v1/admin_pb";
 import { BillingCycle, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
-import { parseQuota, quotaInput, QUOTA_UNITS, type QuotaUnit } from "../lib/traffic";
+import { parseQuota, quotaInput, QUOTA_UNITS, type QuotaUnit, RESET_DAY_MAX, RESET_DAY_MIN } from "../lib/traffic";
 import { errorBanner } from "../api/queryGate";
 import { withId } from "../lib/ids";
 import { literalPattern } from "../lib/fold";
@@ -47,7 +47,7 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
   const [quotaTouched, setQuotaTouched] = useState(false);
   const quotaBytes = quotaTouched ? parseQuota(quota, unit) : node.trafficQuotaBytes;
   const label = withId(node.name, node.id);
-  const valid = quotaBytes !== null && draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= 1 && draft.trafficResetDay <= 28 && /^\d+$/.test(draft.offlineGraceS);
+  const valid = quotaBytes !== null && draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= RESET_DAY_MIN && draft.trafficResetDay <= RESET_DAY_MAX && /^\d+$/.test(draft.offlineGraceS);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!saving && valid && quotaBytes !== null) onSave({ ...draft, ipv4Pin: draft.ipv4Pin.trim(), ipv6Pin: draft.ipv6Pin.trim(), trafficQuotaBytes: quotaBytes, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
@@ -85,7 +85,7 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
             <label>周期流量配额<input aria-label={`流量配额 ${label}`} inputMode="decimal" value={quota} onChange={(e) => { setQuota(e.target.value); setQuotaTouched(true); }} /><span className="muted">留空为未设配额；小数换算后四舍五入到整数字节，须在 1 至 2^62 字节（不含）之间。</span>{quotaBytes === null && <span role="alert">配额无效，换算后必须是有效的正整数字节数。</span>}</label>
             <Select label={`配额单位 ${label}`} caption="配额单位" value={unit} options={QUOTA_UNIT_OPTIONS} onChange={(next) => { setUnit(next); setQuotaTouched(true); }} />
             <Select label={`流量口径 ${label}`} caption="流量口径" value={String(draft.trafficQuotaMode)} options={QUOTA_MODE_OPTIONS} onChange={(next) => setDraft({ ...draft, trafficQuotaMode: Number(next) })} />
-            <label>每月流量重置日<input type="number" min={1} max={28} aria-label={`重置日 ${label}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><span className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</span></label>
+            <label>每月流量重置日<input type="number" min={RESET_DAY_MIN} max={RESET_DAY_MAX} aria-label={`重置日 ${label}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><span className="muted">当月不足该日时在当月最后一日重置，之后的月份仍按该日。若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</span></label>
             <label>离线宽限期（秒）<input type="number" min={0} aria-label={`离线宽限期（秒） ${label}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><span className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。</span></label>
             <label className="switch-field"><span>维护中<small>告警事件照常记录但不投递，关闭后仍未恢复、且不在维护静默窗口内的告警补发通知；在线状态照实显示；到期的提醒不受影响；与已出租互斥</small></span><input type="checkbox" aria-label={`维护 ${label}`} checked={draft.maintenance} disabled={draft.rented} onChange={(e) => setDraft({ ...draft, maintenance: e.target.checked })} /></label>
             <label className="switch-field"><span>已出租<small>机器租给了别人、不会有上报：离线与到期都不评估，不参与 agent 更新；与维护中互斥</small></span><input type="checkbox" aria-label={`已出租 ${label}`} checked={draft.rented} disabled={draft.maintenance} onChange={(e) => setDraft({ ...draft, rented: e.target.checked })} /></label>

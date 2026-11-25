@@ -23,6 +23,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 ## 预授权写入
 
+`updateNode` 的 `trafficResetDay` 取 1–31，越界被拒绝；当月不足该日（如 31 遇到 4 月或 2 月）时在当月最后一日重置，之后的月份仍按原日号，读回的始终是配置的原值。
 `updateNode` 支持 `trafficQuotaBytes`（[0, 2^62) 字节，0 停用）、`trafficQuotaMode`（SUM/RX/TX/MAX，非零配额必须指定）与 `rented`（已出租开关；与 `maintenance` 同真被拒绝），按 updateMask 只改指定字段。
 `saveAlertRule.rule.kind = ALERT_KIND_TRAFFIC` 只接受 `threshold`（用量占配额的百分比，范围 (0, 100]），不带持续分钟或探测字段。
 

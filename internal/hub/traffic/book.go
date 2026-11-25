@@ -158,8 +158,10 @@ func satAdd(a, d int64) int64 {
 	return a + d
 }
 
+// day 是节点配置的重置日原值；Load 之后新建、尚未 SetResetDay 的节点取列默认值。原值不在准入范围内时由 PeriodStart
+// 等夹取，与告警引擎、流量报告直接读库得到的边界相同。
 func (b *Book) day(nodeID int64) int {
-	if d, ok := b.resetDay[nodeID]; ok && d >= 1 && d <= 28 {
+	if d, ok := b.resetDay[nodeID]; ok {
 		return d
 	}
 	return DefaultResetDay

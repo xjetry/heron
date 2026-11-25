@@ -165,7 +165,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `periodRx`、`periodTx` | 本周期收、发字节 |
 | `totalRx`、`totalTx` | 自首次上报累计字节 |
 | `periodStart`、`nextResetAt` | 本周期起点、下次重置（Unix 秒） |
-| `resetDay` | 每月重置日 1–28 |
+| `resetDay` | 每月重置日 1–31；当月不足该日时在当月最后一日重置 |
 | `quotaBytes` | 周期配额字节；缺失或 0 表示未设配额 |
 | `quotaMode` | 配额口径：`TRAFFIC_QUOTA_MODE_SUM`（收+发）、`RX`、`TX`、`MAX`（取大者） |
 | `quotaUsedBytes` | 按配额口径算的本周期用量（没设配额也有值） |

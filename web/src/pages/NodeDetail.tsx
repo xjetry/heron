@@ -22,7 +22,7 @@ import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { ago, bytes, dateTime } from "../lib/format";
 import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
-import { trafficDetail, trafficText } from "../lib/traffic";
+import { resetDayClamps, trafficDetail, trafficText } from "../lib/traffic";
 import { laggingNode } from "../lib/lagging";
 import { NodeEditor } from "./NodeEditor";
 
@@ -170,7 +170,7 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
         <dt>本周期</dt><dd><span className="num">{trafficText(t)}</span> <span className="muted">{trafficDetail(t)}</span></dd>
         <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
         <dt>周期起点</dt><dd>{dateTime(t.periodStart, timeZone)}</dd>
-        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, timeZone)}（每月 {t.resetDay} 日，{timeZone}）</dd>
+        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, timeZone)}（每月 {t.resetDay} 日{resetDayClamps(t.resetDay) ? "，不足该日的月份取最后一日" : ""}，{timeZone}）</dd>
       </dl>
       <form onSubmit={onSubmit} className="row">
         <label>本周期下行 (GiB)<input value={form.rx} onChange={(e) => setDraft({ ...form, rx: e.target.value })} inputMode="decimal" /></label>
