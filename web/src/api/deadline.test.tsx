@@ -25,7 +25,7 @@ const others = [
   "DeleteNode", "RotateNodeToken", "ReorderNodes", "MoveNodes", "DeleteTag", "OpenRegisterWindow", "CloseRegisterWindow",
   "AdjustTraffic", "SaveProbeTask", "DeleteProbeTask", "ReorderProbeTasks", "SaveAlertRule", "DeleteAlertRule",
   "SaveSilence", "DeleteSilence", "GetAlertDeliveryError", "ListNotifyChannels", "SaveNotifyChannel", "DeleteNotifyChannel",
-  "TestNotifyChannel", "UpdateSettings", "UploadTheme", "ListThemes", "EnableTheme", "DeleteTheme", "GetThemePreview",
+  "TestNotifyChannel", "PreviewAlertNotification", "TestAlertNotification", "UpdateSettings", "UploadTheme", "ListThemes", "EnableTheme", "DeleteTheme", "GetThemePreview",
   "DeleteThemeVersion", "ListThemeReleases", "InstallThemeRelease", "PreviewTheme", "GetThemePackage", "ListApiTokens",
   "CreateApiToken", "UpdateApiToken", "DeleteApiToken",
 ];
