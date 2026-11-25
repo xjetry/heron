@@ -149,6 +149,7 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 - 节点探测自己网卡上的地址会被拒：要放行就写出该地址的 `/32`（IPv6 为 `/128`）；回环与链路本地地址按整段放行（如 `127.0.0.0/8`）。
 - 规则按最长前缀匹配；前缀一样长时本地规则优先于默认规则。前缀必须写成规范形式（`10.0.0.0/8`，不能写 `10.1.2.3/8`）；同一前缀不能同时出现在两个列表里。配置文件里有不认识的字段时 agent 拒绝启动，免得拼错的规则被静默忽略。
 - 计入流量与速率的网卡由 `heron-agent run` 的 `--net-include` / `--net-exclude` 控制（逗号分隔的 glob，给出任一个即整个替换平台默认规则；默认规则与各平台默认值见 `heron-agent run -h`）。安装脚本不暴露这两个参数：systemd 用 drop-in 覆盖 `ExecStart`，OpenRC 改 `/etc/init.d/heron-agent`，macOS 改 plist 的 `ProgramArguments`；升级会重写发行包自带的服务定义，drop-in 之外的改动要重放。
+- hub 地址同样只能在节点本机改：`heron-agent configure --hub <新地址>`，沿用 token 与本地策略，见 [install.md 的更换 hub 地址](install.md#更换-hub-地址)。
 - agent 日志有总量上限（突发之后被压掉的行数记在下一条日志里）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
 
 ## 排查
