@@ -29,6 +29,9 @@ type Config struct {
 	InsecureHTTP bool     `json:"insecure_http,omitempty"`
 	ProbeAllow   []string `json:"probe_allow,omitempty"`
 	ProbeDeny    []string `json:"probe_deny,omitempty"`
+	// DiskExclude 是本地数据盘的排除规则（按挂载路径 glob，规则见 agentwire.ValidateDiskExclude）；run 的 --disk-exclude
+	// 显式给出时以命令行为准。
+	DiskExclude []string `json:"disk_exclude,omitempty"`
 }
 
 // Decode 严格解析一份配置：未知字段与第一个对象之后的任何内容都是错误（规则见 Config）——策略字段拼错时若静默忽略，
