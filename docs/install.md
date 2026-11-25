@@ -16,12 +16,14 @@ heron-hub passwd --db /var/lib/heron/heron.db
 
 数据库固定为 `/var/lib/heron/heron.db`。默认只监听 `127.0.0.1:8080`，TLS 交给反向代理（见 [operations.md](operations.md#反向代理与---trusted-proxies)）。
 
-serve 参数在安装时随命令给出：`--listen`、`--timezone`、`--offline-after`、`--trusted-proxies`、`--public-dir`、`--geo-mmdb`、`--retention-1m`、`--retention-5m`、`--retention-1h`、`--retention-alert-events`；`--admin-origin` 仅用于迁移已有的 Passkey 凭据，新安装不需要。各参数的含义见 `heron-hub serve -h`。例如：
+serve 参数在安装时随命令给出：`--listen`、`--public-listen`、`--timezone`、`--offline-after`、`--trusted-proxies`、`--public-dir`、`--geo-mmdb`、`--retention-1m`、`--retention-5m`、`--retention-1h`、`--retention-alert-events`；`--admin-origin` 仅用于迁移已有的 Passkey 凭据，新安装不需要。各参数的含义见 `heron-hub serve -h`。例如：
 
 ```sh
 curl -fsSL https://github.com/xjetry/heron/releases/latest/download/install-hub.sh | sh -s -- \
   --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
 ```
+
+要给公开状态页单独一个域名、让反代不必屏蔽管理路径时，加 `--public-listen` 开一个只服务公开侧的端口（见 [operations.md](operations.md#公开页单独一个域名与---public-listen)），例如 `--public-listen 127.0.0.1:8081`。安装与升级在停旧服务之前同时检查 `--listen` 与 `--public-listen` 两个端口，任一个被别的进程占着就拒绝，旧服务照常运行。
 
 ### 升级与卸载（hub）
 
@@ -69,6 +71,7 @@ docker run -d --name heron --restart unless-stopped --stop-timeout 30 -p 127.0.0
 - `--stop-timeout 30` 给关停留出余量：默认宽限 10 秒与 hub 排空在途请求的上限相等，排空用满时最后一批写入可能被截断。
 - 镜像自带 `HEALTHCHECK`：`healthy` 表示 hub 已能接受请求，不只是进程还在。
 - 容器里监听 `0.0.0.0` 是预期的。端口只发布到本机回环（`-p 127.0.0.1:8080:8080`，反代在宿主上），或者不发布端口、让反代容器与 hub 在同一个 Docker 网络里转发到 `http://heron:8080`。反代与 `--trusted-proxies` 的配置见 [operations.md](operations.md#反向代理与---trusted-proxies)。
+- 开公开监听时把它也写进参数并发布端口，例如参数加 `--public-listen 0.0.0.0:8081`、`-p 127.0.0.1:8081:8081`。
 - 绑定宿主目录（`-v /srv/heron:/data`）代替命名卷时，目录须可被 uid 65532 写入（Linux 宿主上 `chown 65532:65532 /srv/heron`），否则 hub 启动即退出。
 
 ### 设置管理员密码（Docker）
@@ -180,6 +183,21 @@ hub 地址是 `http://` 且主机不是回环地址（`127.0.0.0/8`、`[::1]`；
 sudo heron-agent configure --insecure-http=true
 sudo systemctl restart heron-agent
 ```
+
+### 更换 hub 地址
+
+hub 换了域名、端口或反代入口后，在节点上改地址即可，不必重新注册：
+
+```sh
+sudo heron-agent configure --hub https://heron-new.example.com
+sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart；macOS：sudo launchctl kickstart -k system/xyz.heron.agent
+```
+
+- 只改配置里的 hub 地址：运行 token、节点名与本地探测策略原样保留，所以只适用于同一个 hub 换了访问地址。要把节点交给另一个 hub，用那个 hub 面板给出的命令带 `--re-register` 重新注册。
+- 新地址按 agent 启动时的同一条规则检查：`http://` 且主机不是回环地址时，配置里须已放行明文，或在同一条命令里加 `--insecure-http=true`（`heron-agent configure --hub http://10.0.0.2:8080 --insecure-http=true`）。空串、相对地址、非 http(s) 地址同样被拒；被拒时配置文件不变。
+- 配置文件整份原子替换，属主沿用原文件、权限为 0600。运行中的 agent 只在启动时读配置，重启后才连新地址；hub 来源的在线更新每次取包时重新读配置，随之改用新地址。
+- 重跑安装脚本不会改已有配置里的 hub 地址：普通升级沿用现有配置，`--hub` 只在首次安装与 `--re-register` 时使用。
+- Docker：`docker run --rm -v heron-agent:/etc/heron-agent ghcr.io/xjetry/heron-agent:v1.0.0 configure --hub https://heron-new.example.com`，改完 `docker restart heron-agent`。
 
 ### 安装脚本共同的规则
 

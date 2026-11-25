@@ -482,6 +482,66 @@ func TestHubPortConflictLeavesTheServiceRunning(t *testing.T) {
 	}
 }
 
+// --public-listen 随安装写进单元，升级时沿用；给成空值即关掉公开监听，写回单元的是空值本身。
+func TestHubPublicListenIsPassedThrough(t *testing.T) {
+	t.Parallel()
+	e := newHubInstalled(t, "--listen", "127.0.0.1:9000", "--public-listen", "127.0.0.1:9100")
+	want := hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000" "--public-listen=127.0.0.1:9100"`
+	if got := e.execStart(); got != want {
+		t.Fatalf("first install ExecStart=%s\nwant                    %s", got, want)
+	}
+	out, code := e.hubInstall()
+	if code != 0 || e.execStart() != want {
+		t.Fatalf("upgrade exit %d, ExecStart=%s, want the public listener kept:\n%s", code, e.execStart(), out)
+	}
+	out, code = e.hubInstall("--public-listen", "")
+	if want := hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000" "--public-listen="`; code != 0 || e.execStart() != want {
+		t.Fatalf("disabling exit %d, ExecStart=%s\nwant %s\n%s", code, e.execStart(), want, out)
+	}
+}
+
+// 停旧服务之前两个监听的端口都查：公开监听的端口被别的进程占着、或查不出持有者时同样拒绝，旧服务照常运行；
+// 持有者是 hub 自己时照常升级。端口号写错在停服前拒绝。
+func TestHubPublicListenPortConflictLeavesTheServiceRunning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, holder, public, wantErr string
+	}{
+		{"another process", "777", "127.0.0.1:9100", "port 9100 is already in use by pid 777; old service was not stopped"},
+		{"listener without a holder", "", "127.0.0.1:9100", "port 9100 is in use; cannot identify listener pid; old service was not stopped"},
+		{"the hub itself", "4242", "127.0.0.1:9100", ""},
+		{"no port", "", "127.0.0.1", "public-listen address must end in a numeric TCP port: 127.0.0.1"},
+		{"port out of range", "", "127.0.0.1:70000", "invalid TCP port: 70000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newHubInstalled(t, "--listen", "127.0.0.1:9000", "--public-listen", "127.0.0.1:9100")
+			// 9100 = 0x238C；状态 0A 是 LISTEN。
+			e.appendTo("proc/net/tcp", "   0: 0100007F:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000   481        0 6666 1 0000000000000000 100 0 0 10 0\n")
+			if tc.holder != "" {
+				fd := filepath.Join(e.root, "proc", tc.holder, "fd", "4")
+				if err := os.MkdirAll(filepath.Dir(fd), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("socket:[6666]", fd); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, code := e.hubInstall("--public-listen", tc.public)
+			if tc.wantErr == "" {
+				if code != 0 || !strings.Contains(out, hubDone) {
+					t.Fatalf("exit %d:\n%s", code, out)
+				}
+				return
+			}
+			if code != 1 || !strings.Contains(out, tc.wantErr) {
+				t.Fatalf("exit %d, want 1 with %q:\n%s", code, tc.wantErr, out)
+			}
+			e.assertUntouched(out)
+		})
+	}
+}
+
 // 数据目录不是真目录、库文件不是链接数为 1 的普通文件时，在停服前拒绝：旧服务照常运行，不对任何东西
 // chown、chmod——链接指向的文件不被改动。
 func TestHubDatabaseThatIsNotPlainIsRefusedBeforeStopping(t *testing.T) {

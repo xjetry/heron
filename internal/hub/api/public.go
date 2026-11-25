@@ -71,6 +71,9 @@ type Public struct {
 	limit *ratelimit.Buckets[netip.Addr]
 	// maxAge 是每个接受 GET 的过程的成功响应 max-age，构造时从描述符读出（cachePolicy），之后只读。
 	maxAge map[string]uint32
+	// path 与 handler 是 Handler 交出的挂载点，NewPublic 建一次（mountHandler）、之后只读。
+	path    string
+	handler http.Handler
 }
 
 // publicProjections 是公开端的全部投影。public.proto 里带 reserved 的消息都必须是这里某个投影（含逐层的子投影）的目标：
@@ -121,13 +124,15 @@ func NewPublic(cfg PublicConfig, deps PublicDeps) *Public {
 		panic("api.PublicDeps.Log must be set")
 	}
 	projections := publicProjections()
-	return &Public{
+	p := &Public{
 		cfg: cfg, store: deps.Store, live: deps.Live, traffic: deps.Traffic, probes: deps.Probes, clk: deps.Clock, log: deps.Log,
 		history: history{store: deps.Store, probes: deps.Probes, log: deps.Log, gate: newHistoryGate()},
 		facts:   projections.facts, metrics: projections.metrics, billing: projections.billing,
 		limit:  ratelimit.New[netip.Addr](publicBurst, publicRefill),
 		maxAge: cachePolicy(probeServices()),
 	}
+	p.path, p.handler = p.mountHandler()
+	return p
 }
 
 // connectHandler 是不带挂载点中间件的处理器。
@@ -148,7 +153,12 @@ func (p *Public) requireEnabled(next connect.UnaryFunc) connect.UnaryFunc {
 
 // Handler 是公开服务唯一的挂载点：cacheControl(BySource(snapshotCache(connect)))。限流包在缓存与 connect 之外，
 // 缓存命中与解码失败的请求同样计数；缓存头包在最外面，限流的 429 也带 no-store。
-func (p *Public) Handler() (string, http.Handler) {
+//
+// 每次调用交出同一个处理器（NewPublic 建好的那条链）。限流桶在 Public 上，快照字节缓存却是链上的一个对象：若每次调用
+// 另建一条链，挂在几个监听上就有几份缓存，snapshotTTL 窗口内同一份快照按监听数重复计算。
+func (p *Public) Handler() (string, http.Handler) { return p.path, p.handler }
+
+func (p *Public) mountHandler() (string, http.Handler) {
 	path, h := p.connectHandler()
 	return path, p.cacheControl(ratelimit.BySource(p.limit, p.cfg.TrustedProxies, p.clk, newSnapshotCache(h, p.clk)))
 }

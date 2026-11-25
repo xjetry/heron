@@ -127,6 +127,17 @@ func (b *backgroundRun) stop(t *testing.T) bool {
 // applyFlagEnv 规则，hub 看到的 TTL 相同；环境变量这条来源由 serve_env_test.go 的用例单独核对。
 func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, flags ...string) (string, serveEvents, func()) {
 	t.Helper()
+	line, events, stop := startTestHubLine(t, db, clk, ttl, flags...)
+	var addr string
+	if err := json.Unmarshal(line["listen"], &addr); err != nil {
+		t.Fatal(err)
+	}
+	return "http://" + addr, events, stop
+}
+
+// startTestHubLine 是 startTestHubWithTTL 的启动：返回启动行的全部字段，要读 listen 之外字段（如 public_listen）的用例用它。
+func startTestHubLine(t *testing.T, db string, clk clock.Clock, ttl string, flags ...string) (map[string]json.RawMessage, serveEvents, func()) {
+	t.Helper()
 	events := make(serveEvents, 128)
 	args := append([]string{"--db", db, "--listen", "127.0.0.1:0", "--offline-after", ttl}, flags...)
 	serve := runInBackground(t, func(ctx context.Context) error {
@@ -151,11 +162,7 @@ func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, f
 		select {
 		case e := <-events:
 			if string(e["msg"]) == `"hub listening"` {
-				var addr string
-				if err := json.Unmarshal(e["listen"], &addr); err != nil {
-					t.Fatal(err)
-				}
-				return "http://" + addr, events, stop
+				return e, events, stop
 			}
 		case <-serve.finished:
 			t.Fatalf("serve stopped before listening: %v", serve.result)
@@ -448,13 +455,15 @@ pruned:
 	stop()
 }
 
+// 关停的期限与断开覆盖传入的每个服务：卡住的处理器挂在第二个服务上，到点它的连接同样被断开，关停仍等它返回。
 func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 	t.Parallel()
 	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	var requests atomic.Int32
-	drain := &drainingHandler{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	drain := &drainGate{}
+	admitted := drain.admit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests.Add(1) > 1 {
 			return
 		}
@@ -462,10 +471,11 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 		<-r.Context().Done()
 		close(canceled)
 		<-release
-	})}
-	srv := httptest.NewUnstartedServer(drain)
+	}))
+	idle := httptest.NewServer(drain.admit(http.NotFoundHandler()))
+	srv := httptest.NewUnstartedServer(admitted)
 	srv.Start()
-	defer func() { unblock(); srv.Close() }()
+	defer func() { unblock(); srv.Close(); idle.Close() }()
 	go func() {
 		resp, err := srv.Client().Get(srv.URL)
 		if err == nil {
@@ -479,7 +489,7 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	// 20ms 是交给 shutdownHTTP 的超时，用来证明到点会断开连接，不是等退出的上界。
-	go func() { done <- shutdownHTTP(srv.Config, drain, 20*time.Millisecond) }()
+	go func() { done <- shutdownHTTP(drain, 20*time.Millisecond, idle.Config, srv.Config) }()
 	select {
 	case <-canceled:
 	case <-time.After(testwait.Bound):
@@ -503,9 +513,15 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 		t.Fatal("shutdown did not finish after handler returned")
 	}
 	recorder := httptest.NewRecorder()
-	drain.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	admitted.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("drained handler admitted new request: %d", recorder.Code)
+	}
+	// run 给每个监听建服务都经 newHTTPServer，它的处理器必须经同一个 drain 准入。
+	recorder = httptest.NewRecorder()
+	newHTTPServer(drain, http.NotFoundHandler(), discardLog()).Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a server built by newHTTPServer bypassed the drain: %d", recorder.Code)
 	}
 }
 

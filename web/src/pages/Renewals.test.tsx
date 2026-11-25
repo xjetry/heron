@@ -130,6 +130,47 @@ describe("Renewals", () => {
     expect(screen.getByText("2026 年 2 月")).toBeInTheDocument();
   });
 
+  // 概览只读 hub 下发的计费字段：窗口按 daysLeft，金额按原币种分列；已出租的只作旁注，逾期单列。
+  it("顶部费用概览按原币种分列待续费、逾期与月均持有成本，已出租节点另行旁注", async () => {
+    const priced = (id: bigint, name: string, price: string, currency: string, billingCycle: BillingCycle, daysLeft: number) =>
+      ({ ...node(id, name, "2026-01-01", daysLeft, billingCycle), billing: { price, currency, billingCycle, expiresOn: "2026-01-01", autoRenew: false, daysLeft } });
+    render({ listNodes: async () => ({ nodes: [
+      priced(1n, "soon", "10.50", "USD", BillingCycle.MONTHLY, 3),
+      priced(2n, "edge", "120", "EUR", BillingCycle.YEARLY, 30),
+      priced(3n, "far", "30", "USD", BillingCycle.QUARTERLY, 60),
+      priced(4n, "gone", "7", "USD", BillingCycle.MONTHLY, -2),
+      priced(5n, "oneoff", "999", "USD", BillingCycle.UNSPECIFIED, 3),
+      { ...priced(6n, "leased", "20", "USD", BillingCycle.MONTHLY, 3), rented: true },
+    ] }) });
+    const overview = await screen.findByRole("region", { name: "费用概览" });
+    const items = (label: string) => within(within(overview).getByRole("list", { name: label })).getAllByRole("listitem").map((li) => li.textContent);
+    expect(items("30 天内待续费")).toEqual(["€120 · 1 台", "US$10.50 · 1 台"]);
+    // USD：10.50 + 30 / 3 + 7 = 27.50；EUR：120 / 12 = 10。
+    expect(items("月均持有成本")).toEqual(["€10 / 月 · 年化 €120 · 1 台", "US$27.50 / 月 · 年化 US$330 · 3 台"]);
+    expect(within(overview).getByText("已过期未处理：US$7 · 1 台（不计入 30 天待续费）")).toBeInTheDocument();
+    expect(within(overview).getByText("已出租节点另计：月均 US$20 · 1 台（不计入自用成本）")).toBeInTheDocument();
+  });
+
+  it("没有逾期、没有已出租的带价节点时不显示这两行", async () => {
+    render({ listNodes: async () => ({ nodes: [node(1n, "tokyo", "2026-01-02", 1)] }) });
+    const overview = await screen.findByRole("region", { name: "费用概览" });
+    expect(within(overview).queryByText(/^已过期未处理/)).toBeNull();
+    expect(within(overview).queryByText(/^已出租节点另计/)).toBeNull();
+  });
+
+  it("一台带价有周期的节点都没有时不显示概览", async () => {
+    render({ listNodes: async () => ({ nodes: [node(1n, "tokyo", "2026-01-02", 1, BillingCycle.UNSPECIFIED)] }) });
+    expect(await screen.findByText("2026 年 1 月")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "费用概览" })).toBeNull();
+  });
+
+  it("节点都没填到期日时仍按价格与周期给出月均持有成本", async () => {
+    render({ listNodes: async () => ({ nodes: [node(1n, "bare", "", undefined)] }) });
+    expect(await screen.findByText("还没有设置到期日的节点。")).toBeInTheDocument();
+    const overview = screen.getByRole("region", { name: "费用概览" });
+    expect(within(within(overview).getByRole("list", { name: "月均持有成本" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["US$5 / 月 · 年化 US$60 · 1 台"]);
+  });
+
   it("没有任何节点带到期日时给出空态，不按浏览器时钟画一个月", async () => {
     render({ listNodes: async () => ({ nodes: [node(1n, "bare", "", undefined), node(2n, "broken", "2026-02-30", undefined)] }) });
     expect(await screen.findByText("还没有设置到期日的节点。")).toBeInTheDocument();

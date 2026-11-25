@@ -11,7 +11,7 @@ import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Node } from "../gen/heron/v1/admin_pb";
 import { useNodeList } from "../api/useNodeList";
-import { byExpiryDay, canRenew, hubToday, priceText } from "../lib/billing";
+import { type AmortizedTotal, byExpiryDay, canRenew, costSummary, type CurrencyTotal, hubToday, moneyText, priceText, RENEWAL_WINDOW_DAYS } from "../lib/billing";
 import { isDate } from "../lib/format";
 import { withId } from "../lib/ids";
 import { TRAFFIC_MS } from "../lib/poll";
@@ -62,8 +62,10 @@ export function Renewals() {
   if (!gate.ready) return <section>{header}{banner}{gate.loading}</section>;
   const list = gate.data.nodes;
   const today = hubToday(list.map((n) => n.billing));
+  // 概览不依赖今天：月均持有成本只要价格与周期，节点都没填到期日时也照常显示。
+  const overview = <CostOverview nodes={list} />;
   if (today === undefined) {
-    return <section>{header}{banner}<EmptyState title="还没有设置到期日的节点。">在节点的编辑抽屉里填写到期日与计费周期后，节点按到期日出现在这里。</EmptyState></section>;
+    return <section>{header}{banner}{overview}<EmptyState title="还没有设置到期日的节点。">在节点的编辑抽屉里填写到期日与计费周期后，节点按到期日出现在这里。</EmptyState></section>;
   }
   const days = byExpiryDay(list);
   const focus = picked?.focus ?? today;
@@ -87,6 +89,7 @@ export function Renewals() {
       {header}
       {banner}
       {notice && <p role="status" className="muted">{notice}</p>}
+      {overview}
       <div className="card renewal-calendar">
         <div className="calendar-head">
           <button type="button" className="icon-button" aria-label="上个月" onClick={() => move(addMonths(focus, -1), false, false)}><Icon name="chevronLeft" /></button>
@@ -146,6 +149,30 @@ export function Renewals() {
         onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
     </section>
   );
+}
+
+const totalText = (t: CurrencyTotal) => `${moneyText(t.currency, t.amount)} · ${t.count} 台`;
+const amortizedText = (t: AmortizedTotal) => `${moneyText(t.currency, t.monthly)} / 月 · 年化 ${moneyText(t.currency, t.yearly)} · ${t.count} 台`;
+
+// 续费日历顶部的费用概览，口径见 lib/billing 的 costSummary：各币种分列、不换算。逾期与已出租各占一行，只在有内容时
+// 出现；一台带合法价格与周期的节点都没有（四项全空）时整块不画，没记账的站长不会看到一排破折号。
+function CostOverview({ nodes }: { nodes: readonly Node[] }) {
+  const s = costSummary(nodes);
+  if (s.upcoming.length + s.overdue.length + s.amortized.length + s.rentedAmortized.length === 0) return null;
+  const column = (label: string, lines: string[]) => <div>
+    <h3>{label}</h3>
+    {lines.length === 0 ? <p className="muted">—</p> : <ul aria-label={label}>{lines.map((line) => <li key={line}>{line}</li>)}</ul>}
+  </div>;
+  return <section className="card cost-overview" aria-labelledby="cost-overview-title">
+    <h2 id="cost-overview-title">费用概览</h2>
+    <div className="cost-columns">
+      {column(`${RENEWAL_WINDOW_DAYS} 天内待续费`, s.upcoming.map(totalText))}
+      {column("月均持有成本", s.amortized.map(amortizedText))}
+    </div>
+    {s.overdue.length > 0 && <p className="cost-overdue">已过期未处理：{s.overdue.map(totalText).join("；")}（不计入 {RENEWAL_WINDOW_DAYS} 天待续费）</p>}
+    {s.rentedAmortized.length > 0 && <p className="muted">已出租节点另计：月均 {s.rentedAmortized.map((t) => `${moneyText(t.currency, t.monthly)} · ${t.count} 台`).join("；")}（不计入自用成本）</p>}
+    <p className="muted cost-note">按原币种分列，不做汇率换算；只计填了价格与计费周期的节点，一次性买断不计。日期按 hub 时区。</p>
+  </section>;
 }
 
 // "已续费"两段式：首击只进入确认态，确认才提交，误点不会把到期日推后一个周期。确认态随行卸载撤销（节点续费后
