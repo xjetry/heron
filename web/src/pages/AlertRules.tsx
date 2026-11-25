@@ -191,9 +191,9 @@ export function AlertRules() {
           })}</tbody>
         </table>
       </div>}
-      {drawer?.kind === "create" && <AlertRuleDrawer title="新建告警规则" submitLabel="创建" {...lists} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+      {drawer?.kind === "create" && <AlertRuleDrawer title="新建告警规则" submitLabel="创建" {...lists} ruleId={0n} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
-      {drawer?.kind === "edit" && <AlertRuleDrawer key={String(drawer.rule.id)} title={`编辑 ${withId(drawer.rule.name, drawer.rule.id)}`} submitLabel="保存" {...lists} initial={draftOf(drawer.rule)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+      {drawer?.kind === "edit" && <AlertRuleDrawer key={String(drawer.rule.id)} title={`编辑 ${withId(drawer.rule.name, drawer.rule.id)}`} submitLabel="保存" {...lists} ruleId={drawer.rule.id} initial={draftOf(drawer.rule)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => update.mutate({ rule: toRule(drawer.rule.id, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
       {silenceDrawer && <SilenceDrawer title="新建维护静默" submitLabel="创建" nodes={nodeList} rules={rulesData.rules} initial={silenceDrawer.initial} hubNow={hubNow}
         pending={silence.isPending} error={silence.error} opener={silenceDrawer.opener} onClose={() => setSilenceDrawer(null)}
@@ -213,8 +213,9 @@ function taskOptions(tasks: ProbeTaskDetail[], httpsOnly = false) {
   return listed.map((t, i) => <option key={String(t.id)} value={String(t.id)}>{labels[i]}</option>);
 }
 
-function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, pending, error, opener, onSubmit, onClose }: Lists & {
-  title: string; submitLabel: string; initial: Draft; pending: boolean; error: unknown; opener: HTMLElement; onSubmit: (d: Draft) => void; onClose: () => void;
+// ruleId 是正在编辑的规则（新建为 0n）：通知样例随草稿一起发出，hub 只在自适应基线的规则上用它读已保存规则的基线。
+function AlertRuleDrawer({ title, submitLabel, ruleId, nodes, channels, tasks, initial, pending, error, opener, onSubmit, onClose }: Lists & {
+  title: string; submitLabel: string; ruleId: bigint; initial: Draft; pending: boolean; error: unknown; opener: HTMLElement; onSubmit: (d: Draft) => void; onClose: () => void;
 }) {
   // initial 只在挂载时读取；列表的周期刷新不覆盖草稿。
   const [draft, setDraft] = useState(initial);
@@ -299,6 +300,7 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
       {channels.length > 0
         ? <Picks legend="通知渠道" items={channels} selected={draft.channelIds} onChange={(channelIds) => set({ channelIds })} />
         : <p className="muted">还没有通知渠道；规则只记录事件，不发送通知。</p>}
+      {channels.length > 0 && <NotificationSample rule={() => toRule(ruleId, draft, nodes, channels)} nodes={nodes} channels={channels} />}
       </fieldset>
       </div>
       <footer className="modal-footer">
@@ -307,6 +309,56 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
       </footer>
     </form>
     </Drawer>
+  );
+}
+
+type Phase = "firing" | "recovered";
+
+// 通知样例：按编辑中的草稿（不必先保存）与所选样例节点、阶段，预览各关联渠道会收到的请求，或向它们真实发送一条测试消息。
+// 两个请求都只带渠道 id，hub 只认已保存的渠道（PreviewAlertNotification 的说明）；草稿的字段错误由 hub 按保存同一套校验
+// 回答，这里原样显示。rule 在点击时才求值，拿到的是此刻的草稿。
+function NotificationSample({ rule, nodes, channels }: { rule: () => ReturnType<typeof toRule>; nodes: Node[]; channels: NotifyChannel[] }) {
+  const [nodeId, setNodeId] = useState(nodes[0]?.id);
+  const [phase, setPhase] = useState<Phase>("firing");
+  const preview = useMutation(AdminService.method.previewAlertNotification);
+  const test = useMutation(AdminService.method.testAlertNotification);
+  const current = rule();
+  const channelName = (id: bigint) => channels.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
+  // 两种结果互斥显示：每次点击先清掉另一种，看到的总是最近一次操作的结果。
+  const run = (which: "preview" | "test") => {
+    if (nodeId === undefined) return;
+    const req = { rule: rule(), nodeId, transition: phase };
+    if (which === "preview") { test.reset(); preview.mutate(req); } else { preview.reset(); test.mutate(req); }
+  };
+  const ready = nodeId !== undefined && current.channelIds.length > 0 && !preview.isPending && !test.isPending;
+  return (
+    <fieldset>
+      <legend>通知样例</legend>
+      <div className="row">
+        <label>样例节点<select value={nodeId === undefined ? "" : String(nodeId)} onChange={(e) => setNodeId(BigInt(e.target.value))}>
+          {nodes.map((n) => <option key={String(n.id)} value={String(n.id)}>{n.name}</option>)}
+        </select></label>
+        <label>阶段<select value={phase} onChange={(e) => setPhase(e.target.value as Phase)}>
+          <option value="firing">触发</option>
+          <option value="recovered">恢复</option>
+        </select></label>
+        <button type="button" disabled={!ready} onClick={() => run("preview")}>预览</button>
+        <button type="button" disabled={!ready} onClick={() => run("test")}>发送测试</button>
+      </div>
+      {nodes.length === 0 ? <p className="muted">还没有节点，无法生成样例。</p>
+        : current.channelIds.length === 0 ? <p className="muted">选择通知渠道后可预览与发送测试。</p>
+          : <p className="muted">预览不发出请求，显示各渠道按真实告警渲染的请求。发送测试向所选渠道真实发送一条摘要前带“[测试] ”的消息，不改告警状态、不记事件、不占渠道的节奏上限。</p>}
+      {errorBanner(preview.error ?? test.error)}
+      {preview.data && <ul aria-label="预览结果" className="sample-results">
+        {preview.data.previews.map((p) => <li key={String(p.channelId)}>
+          <strong>{channelName(p.channelId)}</strong>
+          {p.error ? <p className="error">{p.error}</p> : <><div className="muted"><code>{p.method} {p.urlHost}</code></div><pre>{p.body}</pre></>}
+        </li>)}
+      </ul>}
+      {test.data && <ul aria-label="发送测试结果" className="sample-results">
+        {test.data.results.map((r) => <li key={String(r.channelId)} className={r.ok ? undefined : "error"}>{channelName(r.channelId)}：{r.ok ? "已送达" : r.error}</li>)}
+      </ul>}
+    </fieldset>
   );
 }
 

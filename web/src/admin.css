@@ -430,3 +430,7 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
   .daily-day { visibility: hidden; }
   .daily-bars li:nth-child(5n+1) .daily-day, .daily-bars li[data-today] .daily-day { visibility: visible; }
 }
+
+/* 告警规则抽屉的通知样例结果：渲染出的请求体按原样换行，长 JSON 与 URL 在任意字符处断开，不撑宽抽屉；单个请求体过长时在框内滚动。 */
+.sample-results { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; overflow-wrap: anywhere; }
+.sample-results pre { margin: 4px 0 0; padding: 0.5rem; background: var(--bg); border-radius: 6px; white-space: pre-wrap; word-break: break-all; max-height: 16em; overflow-y: auto; }
