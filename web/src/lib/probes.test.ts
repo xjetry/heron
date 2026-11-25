@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
+import { ProbeSampleSchema, ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { PROBE_KINDS, isHTTPSTarget, kindLabel, lossPercent, rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, targetRule, taskIdsOf, toProbeAligned, toProbeTaskAligned } from "./probes";
+import { PROBE_KINDS, isHTTPSTarget, kindLabel, lossPercent, rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, summarizeProbes, targetRule, taskIdsOf, toProbeAligned, toProbeTaskAligned } from "./probes";
 
 it.each([
   {
@@ -84,4 +84,22 @@ it.each([
   { kind: ProbeKind.TCP, target: "https://example.com/", want: false },
 ])("isHTTPSTarget($kind, $target) = $want", ({ kind, target, want }) => {
   expect(isHTTPSTarget(kind, target)).toBe(want);
+});
+
+// 单节点探测卡片与跨节点对比表的汇总都经 summarizeProbes：均值按成功数加权，丢包率与单点同口径——全是本地错误的
+// 窗口没有丢包率，不是 0%。
+it.each([
+  {
+    name: "加权均值与最值、丢包按 lost/sent",
+    samples: [
+      { ts: 0n, sent: 100, lost: 0, errors: 0, rttMeanUs: 10_000, rttMinUs: 5_000, rttMaxUs: 15_000 },
+      { ts: 60n, sent: 100, lost: 10, errors: 0, rttMeanUs: 50_000, rttMinUs: 40_000, rttMaxUs: 90_000 },
+    ],
+    want: { mean: 5500 / 190, min: 5, max: 90, lossPercent: 5, errors: 0 },
+  },
+  { name: "全是本地错误：没有丢包率", samples: [{ ts: 0n, sent: 3, lost: 0, errors: 3 }], want: { mean: null, min: null, max: null, lossPercent: null, errors: 3 } },
+  { name: "没有样本", samples: [], want: { mean: null, min: null, max: null, lossPercent: null, errors: 0 } },
+])("窗口汇总：$name", ({ samples, want }) => {
+  const got = summarizeProbes(samples.map((s) => create(ProbeSampleSchema, s)));
+  expect({ ...got, mean: got.mean === null ? null : Number(got.mean.toFixed(9)) }).toEqual({ ...want, mean: want.mean === null ? null : Number(want.mean.toFixed(9)) });
 });
