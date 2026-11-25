@@ -205,21 +205,17 @@ func TestNodeMaintenanceSilencesFiring(t *testing.T) {
 	if ev := f.fireOffline(t, r, f.ids[0]); !ev.Silenced || len(ev.Deliveries) != 0 || len(sender.events) != 0 {
 		t.Fatalf("maintenance firing=%+v sent=%d", ev, len(sender.events))
 	}
-	// 维护在 firing 中途解除：不补发触发，恢复仍不投递。
-	f.setMaintenance(t, f.ids[0], false)
+	// 维护期间恢复：配对的触发没有发出通知，恢复也不投递。维护在 firing 中途解除的补发见 TestRenotificationWaitsForMaintenanceAndSilence。
 	f.clk.Advance(time.Minute)
-	f.sweep(t)
-	if len(f.events(t)) != 1 || len(sender.events) != 0 {
-		t.Fatalf("maintenance lifted mid-firing backfilled: events=%d sent=%d", len(f.events(t)), len(sender.events))
-	}
-	if ev := f.recoverOffline(t, r, f.ids[0]); !ev.Silenced || len(ev.Deliveries) != 0 {
-		t.Fatalf("recovery of a silenced firing=%+v", ev)
+	if ev := f.recoverOffline(t, r, f.ids[0]); !ev.Silenced || len(ev.Deliveries) != 0 || len(sender.events) != 0 {
+		t.Fatalf("recovery of a silenced firing=%+v sent=%d", ev, len(sender.events))
 	}
 }
 
 // 恢复是否投递只看配对的触发是否投递过，与恢复时刻的静默无关：两个方向都钉死。
 func TestRecoveryFollowsThePairedFiring(t *testing.T) {
-	// 触发被静默，恢复时静默已结束：恢复仍不投递，recovered_at 照常写。
+	// 触发被静默，静默关闭后的第一轮巡检里节点恢复：巡检先评估、后补发（SweepOffline），这一轮已恢复的项不再补发，
+	// 恢复仍不投递，recovered_at 照常写。
 	f := newFixture(t)
 	r := f.nodeRule(t)
 	sender := &recorder{}
@@ -252,27 +248,6 @@ func TestRecoveryFollowsThePairedFiring(t *testing.T) {
 	if ev := f2.recoverOffline(t, r2, f2.ids[0]); ev.Silenced || len(ev.Deliveries) != 1 {
 		t.Fatalf("recovery during a silence=%+v, want delivered", ev)
 	}
-}
-
-// 静默在 firing 中途结束不补发通知：状态没有转换就没有事件，队列也没有补投。
-func TestSilenceEndingMidFiringDoesNotBackfill(t *testing.T) {
-	f := newFixture(t)
-	r := f.nodeRule(t)
-	sender := &recorder{}
-	f.e.SetSender(sender)
-	f.silence(t, store.Silence{AllRules: true, Name: "夜间维护", Enabled: true, Kind: store.SilenceDaily, StartHHMM: "19:00", EndHHMM: "23:00", AllNodes: true})
-	if ev := f.fireOffline(t, r, f.ids[0]); !ev.Silenced {
-		t.Fatalf("firing=%+v", ev)
-	}
-	// 墙钟跨过窗口结束（23:00 本地 = 15:00 UTC），节点仍离线：再巡检也只是 firing 保持，不产生任何事件与投递。
-	f.clk.SetWall(time.Date(2026, 9, 24, 15, 30, 0, 0, time.UTC))
-	f.sweep(t)
-	f.clk.Advance(time.Hour)
-	f.sweep(t)
-	if len(f.events(t)) != 1 || len(sender.events) != 0 {
-		t.Fatalf("silence end backfilled: events=%d sent=%d", len(f.events(t)), len(sender.events))
-	}
-	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 }
 
 // 到期提醒永远不被静默：维护中的节点、且在生效静默覆盖内，到期事件照常投递。

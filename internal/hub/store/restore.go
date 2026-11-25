@@ -542,6 +542,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 					return fmt.Errorf("migrate config snapshot to 49: %w", err)
 				}
 			}
+		case 50:
+			// 补发内容与通知时刻三列在配置层的 alert_state 上；回填读的 alert_event、node、alert_rule 也都在配置层。
+			if layer == "config" {
+				statements = migrationV50Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
