@@ -253,6 +253,18 @@ service AdminService {
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
+  // 按编辑中的规则（可未保存）与一个样例节点渲染各关联渠道在某一阶段会发出的请求，不出网。请求体由投递同一条渲染
+  // 路径给出，与真实告警逐字节相同；模板执行出错的渠道在结果里给出错误原文，其余渠道照常渲染。
+  // 渲染结果含按请求体模板展开的内容，模板里可能放着下游密钥，所以只对会话开放。
+  rpc PreviewAlertNotification(PreviewAlertNotificationRequest) returns (PreviewAlertNotificationResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 与 PreviewAlertNotification 同一个样例，摘要前冠以 "[测试] "，同步发往各关联渠道（并发，每个渠道至多 10 秒），
+  // 逐渠道给出结果。不写告警状态与事件、不建投递记录、不占渠道的每分钟节奏。接收方的错误原文可能回显请求体，
+  // 所以只对会话开放。
+  rpc TestAlertNotification(TestAlertNotificationRequest) returns (TestAlertNotificationResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
   // 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
     option (heron.v1.access) = ACCESS_READ;
@@ -1169,6 +1181,54 @@ message DeleteNotifyChannelRequest { int64 id = 1; }
 message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
+
+// 告警通知样例的输入。
+// rule 是编辑中的规则，按 SaveAlertRule 同一套字段校验（错误同样以 rule.<字段> 点名）；作用域与引用的探测任务不影响
+// 消息，不在这里裁决。rule.id 只在自适应基线的规则上用来读这条已保存规则的基线，未保存的草稿取样例基线。
+// rule.channel_ids 只能是已保存渠道的 id，重复的合并，合并后 1–16 个；不存在的 id 即 NotFound。请求里没有地址字段：
+// 样例只会发往库里已有的渠道，出站目标都是保存时校验过的配置。
+// node_id 是样例节点（须存在）；transition 是 "firing" 或 "recovered"。
+// 样例的观测由规则推出：离线触发取 TTL 与节点宽限的较大者、恢复取 0；探测固定阈值与流量触发取阈值、恢复取阈值的
+// 一半；相对判定触发取正常带上沿、恢复取基线；资源触发取阈值、恢复取恢复阈值；到期与证书到期取今天加提前天数，恢复
+// 写"已不在提醒窗口内"。节点没设流量配额时代以 1 TiB，相对判定没有可用基线时代以 100 ms；恢复文案的告警持续时长
+// 固定为 30 分钟。
+message PreviewAlertNotificationRequest {
+  AlertRule rule = 1;
+  int64 node_id = 2;
+  string transition = 3;
+}
+// 一个渠道的渲染结果：method、url_host 与 body 是投递会发出的请求（url_host 只到 scheme://host，与 WebhookConfig 同一
+// 口径，路径、查询串与头值不回显）；error 非空时渲染失败（渠道配置无效或模板执行出错），其余三项为空。
+message AlertNotificationPreview {
+  int64 channel_id = 1;
+  string method = 2;
+  string url_host = 3;
+  string body = 4;
+  string error = 5;
+}
+message PreviewAlertNotificationResponse {
+  // 按 channel_id 升序，每个渠道一项。
+  repeated AlertNotificationPreview previews = 1;
+}
+// 字段与校验同 PreviewAlertNotificationRequest。
+message TestAlertNotificationRequest {
+  AlertRule rule = 1;
+  int64 node_id = 2;
+  string transition = 3;
+}
+// 一个渠道的试投递结果：ok 为真即接收方以 2xx 应答；否则 failure 给出类别（与 AlertDelivery 同一枚举），HTTP 失败
+// 带 http_status，error 是错误原文（HTTP 失败为响应体前 200 个字符）。
+message AlertNotificationTestResult {
+  int64 channel_id = 1;
+  bool ok = 2;
+  DeliveryFailure failure = 3;
+  optional uint32 http_status = 4;
+  string error = 5;
+}
+message TestAlertNotificationResponse {
+  // 按 channel_id 升序，每个渠道一项。
+  repeated AlertNotificationTestResult results = 1;
+}
 
 enum GeoBackend {
   GEO_BACKEND_UNSPECIFIED = 0;
