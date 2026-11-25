@@ -492,7 +492,11 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   -- ProbeTask.ip_family 与 dns_record_type 的枚举值，0 是缺省（自动、A 记录）。取值与适用种类由 SaveProbeTask 经
   -- probelimit.CheckTask 裁决，这里不另设 CHECK。列序与迁移 51 的 ADD COLUMN 结果一致。
   ip_family INTEGER NOT NULL DEFAULT 0,
-  dns_record_type INTEGER NOT NULL DEFAULT 0
+  dns_record_type INTEGER NOT NULL DEFAULT 0,
+  -- ProbeTask.http_status_policy 的枚举值与 http_expected_status，0 是缺省（< 400、无精确码）。取值、组合与适用种类
+  -- 同样由 SaveProbeTask 经 probelimit.CheckTask 裁决。列序与迁移 52 的 ADD COLUMN 结果一致。
+  http_status_policy INTEGER NOT NULL DEFAULT 0,
+  http_expected_status INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (

@@ -88,19 +88,20 @@ var coveredNodesQuery = "SELECT node_id FROM (" + probeCoverage + ") WHERE task_
 // probeTaskColumns 与 scanProbeTask 是 probe_task 行折回 ProbeTask 的唯一读法：LoadProbeTasks、loadProbeTaskTx 与
 // ListComparisonNodes 都经它们取任务。任务内容由配置身份比较（taskContent）整体覆盖，某个读取入口漏读一列，
 // 读回的任务就与库里的不同：保存时会被当成内容变化而换掉身份，或把漏掉的字段写回成零值。
-const probeTaskColumns = "id, kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id, ip_family, dns_record_type"
+const probeTaskColumns = "id, kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id, ip_family, dns_record_type, http_status_policy, http_expected_status"
 
 func scanProbeTask(row interface{ Scan(...any) error }) (ProbeTaskRecord, error) {
 	t := &heronv1.ProbeTask{}
-	var id, kind, interval, timeout, order, family, record int64
+	var id, kind, interval, timeout, order, family, record, policy, status int64
 	var all bool
 	var pin, configID []byte
-	if err := row.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer, &pin, &configID, &family, &record); err != nil {
+	if err := row.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer, &pin, &configID, &family, &record, &policy, &status); err != nil {
 		return ProbeTaskRecord{}, err
 	}
 	t.Id, t.Kind, t.IntervalS, t.TimeoutMs = uint64(id), heronv1.ProbeKind(kind), uint32(interval), uint32(timeout)
 	t.CertSpkiSha256, t.ConfigId = pin, configID
 	t.IpFamily, t.DnsRecordType = heronv1.ProbeIpFamily(family), heronv1.DnsRecordType(record)
+	t.HttpStatusPolicy, t.HttpExpectedStatus = heronv1.HttpStatusPolicy(policy), uint32(status)
 	return ProbeTaskRecord{Task: t, AllNodes: all, SortOrder: order}, nil
 }
 
@@ -223,8 +224,14 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		return ProbeTaskRecord{}, 0, err
 	}
 	allNodes, nodeIDs, tags := selector.AllNodes, append([]int64(nil), selector.NodeIDs...), append([]string(nil), selector.Tags...)
-	saved := &heronv1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs(), DnsServer: t.GetDnsServer(),
-		IpFamily: t.GetIpFamily(), DnsRecordType: t.GetDnsRecordType()}
+	// 请求里除两个只输出字段外的全部字段都是输入：整体拷贝再清掉只输出的两项，而不是逐个字段登记——漏登记的
+	// 新字段会被静默写成零值，CheckTask 也就看不到调用方实际写了什么。
+	saved := &heronv1.ProbeTask{}
+	if t != nil {
+		proto.Merge(saved, t)
+	}
+	saved.CertSpkiSha256, saved.ConfigId = nil, nil
+	bodyZero := proto.Equal(taskContent(saved), &heronv1.ProbeTask{})
 	rec := ProbeTaskRecord{Task: saved, AllNodes: allNodes}
 	var version int64
 	err := s.writeChange(ctx, ChangeTarget{Action: ActionSaveProbeTask, ResourceID: int64(saved.Id)}, func(tx *sql.Tx) error {
@@ -237,9 +244,12 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 			stored = existing.Task
 			// 只做动作：其余字段保持零值。这时请求里的选择器也不是一次编辑，沿用库里的模式，
 			// 不能把标签选择器展开后的节点当成显式分配写回去。
-			if opt.action != pinKeep && probeTaskBodyZero(t) {
-				saved.Kind, saved.Target, saved.IntervalS, saved.TimeoutMs, saved.DnsServer = stored.Kind, stored.Target, stored.IntervalS, stored.TimeoutMs, stored.DnsServer
-				saved.IpFamily, saved.DnsRecordType = stored.IpFamily, stored.DnsRecordType
+			// 沿用库里的任务字段同样整体拷贝；saved 是 rec.Task 指向的同一个消息，只能就地重置不能换指针。
+			// pin 与身份随后由指纹动作与内容比较重新决定。
+			if opt.action != pinKeep && bodyZero {
+				proto.Reset(saved)
+				proto.Merge(saved, stored)
+				saved.CertSpkiSha256, saved.ConfigId = nil, nil
 				allNodes, tags = existing.AllNodes, append([]string(nil), existing.SelectorTags...)
 				nodeIDs = nil
 				if !allNodes && len(tags) == 0 {
@@ -283,8 +293,9 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 			return InvalidTaskError{Detail: err.Error()}
 		}
 		if saved.Id == 0 {
-			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id, ip_family, dns_record_type) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ? FROM probe_task",
-				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes, saved.DnsServer, pinArg(saved.CertSpkiSha256), saved.ConfigId, int64(saved.IpFamily), int64(saved.DnsRecordType))
+			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id, ip_family, dns_record_type, http_status_policy, http_expected_status) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ?, ?, ? FROM probe_task",
+				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes, saved.DnsServer, pinArg(saved.CertSpkiSha256), saved.ConfigId, int64(saved.IpFamily), int64(saved.DnsRecordType),
+				int64(saved.HttpStatusPolicy), int64(saved.HttpExpectedStatus))
 			if err != nil {
 				return err
 			}
@@ -301,8 +312,9 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 					return err
 				}
 			}
-			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ?, dns_server = ?, cert_spki_sha256 = ?, config_id = ?, ip_family = ?, dns_record_type = ? WHERE id = ?",
-				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, saved.DnsServer, pinArg(saved.CertSpkiSha256), saved.ConfigId, int64(saved.IpFamily), int64(saved.DnsRecordType), int64(saved.Id))
+			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ?, dns_server = ?, cert_spki_sha256 = ?, config_id = ?, ip_family = ?, dns_record_type = ?, http_status_policy = ?, http_expected_status = ? WHERE id = ?",
+				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, saved.DnsServer, pinArg(saved.CertSpkiSha256), saved.ConfigId, int64(saved.IpFamily), int64(saved.DnsRecordType),
+				int64(saved.HttpStatusPolicy), int64(saved.HttpExpectedStatus), int64(saved.Id))
 			if err != nil {
 				return err
 			}
@@ -355,11 +367,6 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		return ProbeTaskRecord{}, 0, err
 	}
 	return rec, uint64(version), nil
-}
-
-func probeTaskBodyZero(t *heronv1.ProbeTask) bool {
-	return t.GetKind() == 0 && t.GetTarget() == "" && t.GetIntervalS() == 0 && t.GetTimeoutMs() == 0 && t.GetDnsServer() == "" &&
-		t.GetIpFamily() == 0 && t.GetDnsRecordType() == 0
 }
 
 // taskContent 是配置身份比较的对象：id 与 config_id 不参与，其余字段（含 pin）都参与。

@@ -176,7 +176,7 @@ var changeKinds = map[ChangeKind]changeKindSpec{
 		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='node'",
 	},
 	ChangeProbe: {
-		row:       "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server,cert_spki_sha256,config_id,ip_family,dns_record_type FROM probe_task WHERE id=?",
+		row:       "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server,cert_spki_sha256,config_id,ip_family,dns_record_type,http_status_policy,http_expected_status FROM probe_task WHERE id=?",
 		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM probe_task_node WHERE task_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM probe_task_tag WHERE task_id=? ORDER BY tag_id"}},
 		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='probe_task'",
 		scope: &ruleScopeQueries{

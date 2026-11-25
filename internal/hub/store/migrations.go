@@ -77,6 +77,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	49: migrateV49Config,
 	50: execAll(migrationV50Config),
 	51: execAll(migrationV51Config),
+	52: execAll(migrationV52Config),
 }
 
 // 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。
@@ -186,6 +187,13 @@ WHERE state = 'firing' AND fired_silenced = 1 AND fired_summary = ''`,
 var migrationV51Config = []string{
 	`ALTER TABLE probe_task ADD COLUMN ip_family INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE probe_task ADD COLUMN dns_record_type INTEGER NOT NULL DEFAULT 0`,
+}
+
+// v52：HTTP 探测任务的状态码判据。旧任务取缺省 0（< 400、无精确码），与升级前 agent 的判定相同；不能迁成严格 2xx，
+// 那会让已有任务在调用方不知情时改判。新建任务默认严格 2xx 是管理端表单的选择，不是库的缺省。只在配置层，迁移与配置快照共用。
+var migrationV52Config = []string{
+	`ALTER TABLE probe_task ADD COLUMN http_status_policy INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE probe_task ADD COLUMN http_expected_status INTEGER NOT NULL DEFAULT 0`,
 }
 
 // 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。

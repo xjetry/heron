@@ -40,9 +40,10 @@ func v8Fixture(t *testing.T, dir string) string {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 		t.Fatal(err)
 	}
-	if freshVersion != 51 {
-		t.Fatalf("fixture user_version = %d, want 51; rebuild the v8 fixture for the new version", freshVersion)
+	if freshVersion != 52 {
+		t.Fatalf("fixture user_version = %d, want 52; rebuild the v8 fixture for the new version", freshVersion)
 	}
+	removeV52Config(t, raw)
 	removeV51Config(t, raw)
 	removeV50Config(t, raw)
 	removeV49Config(t, raw)

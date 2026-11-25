@@ -289,6 +289,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV52Config(t, cfg)
 			removeV51Config(t, cfg)
 			removeV50Config(t, cfg)
 			removeV49Config(t, cfg)
@@ -367,6 +368,12 @@ func removeV44Config(t *testing.T, config *sql.DB) {
 func removeV47Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
+}
+
+// 52 给 probe_task 加了 HTTP 状态码判据两列，在配置层。
+func removeV52Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN http_status_policy; ALTER TABLE probe_task DROP COLUMN http_expected_status")
 }
 
 // 51 给 probe_task 加了地址族与记录类型两列，在配置层。
@@ -506,6 +513,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV52Config(t, cfg)
 	removeV51Config(t, cfg)
 	removeV50Config(t, cfg)
 	removeV49Config(t, cfg)
