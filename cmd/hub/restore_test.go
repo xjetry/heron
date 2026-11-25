@@ -289,6 +289,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV50Config(t, cfg)
 			removeV49Config(t, cfg)
 			removeV48Config(t, cfg)
 			removeV47Config(t, cfg)
@@ -365,6 +366,12 @@ func removeV44Config(t *testing.T, config *sql.DB) {
 func removeV47Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
+}
+
+// 50 给 alert_state 加了补发内容两列与 notified_at，在配置层。
+func removeV50Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE alert_state DROP COLUMN fired_summary; ALTER TABLE alert_state DROP COLUMN fired_value; ALTER TABLE alert_state DROP COLUMN notified_at")
 }
 
 func removeV49Config(t *testing.T, config *sql.DB) {
@@ -492,6 +499,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV50Config(t, cfg)
 	removeV49Config(t, cfg)
 	removeV48Config(t, cfg)
 	removeV47Config(t, cfg)

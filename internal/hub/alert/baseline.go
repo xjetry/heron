@@ -47,15 +47,16 @@ func (b rttBand) summary(node, rule string, ms float64) string {
 		node, rule, ms, b.baselineMs, (ms-b.baselineMs)/b.baselineMs*100, b.lo, b.hi)
 }
 
-// coolDown 实现冷却：上一次进入 firing 之后 cooldown_s 之内，状态机给出的新 firing 转换改成停在 pending，不产生转换；
+// coolDown 实现冷却：上一次发出触发通知之后 cooldown_s 之内，状态机给出的新 firing 转换改成停在 pending，不产生转换；
 // 冷却期满后仍越带的下一轮照常触发。只拦进入 firing 这一种转换：恢复与其余状态照常走，所以恢复投递不受冷却影响。
-// 上一次进入 firing 的时刻来自 alert_state.fired_at（store.StateRow.FiredAt），hub 重启不清零。cooldown_s 只在相对
-// 判定的规则上非零（store.CheckKindFields），其余规则原样通过。
+// 上一次发出触发通知的时刻来自 alert_state.notified_at（store.StateRow.NotifiedAt），hub 重启不清零；被静默、没有发出
+// 通知的触发不写它，所以静默期内的短暂故障不会让静默解除后的第一封触发通知落进冷却。静默解除后的补发记补发时刻，
+// 本身不经状态机、不受冷却拦截。cooldown_s 只在相对判定的规则上非零（store.CheckKindFields），其余规则原样通过。
 func coolDown(r store.AlertRule, cur stateEntry, now time.Time, next store.AlertState, tr *store.Transition) (store.AlertState, *store.Transition) {
-	if tr == nil || *tr != store.TransitionFiring || r.CooldownS == 0 || cur.firedAt.IsZero() {
+	if tr == nil || *tr != store.TransitionFiring || r.CooldownS == 0 || cur.notifiedAt.IsZero() {
 		return next, tr
 	}
-	if now.Sub(cur.firedAt) < time.Duration(r.CooldownS)*time.Second {
+	if now.Sub(cur.notifiedAt) < time.Duration(r.CooldownS)*time.Second {
 		return store.StatePending, nil
 	}
 	return next, tr

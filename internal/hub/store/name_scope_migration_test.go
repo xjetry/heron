@@ -31,6 +31,14 @@ var schemaV49 = append(slices.Clone(schemaV48),
 	`CREATE INDEX silence_rule_by_rule ON silence_rule (rule_id)`,
 )
 
+// removeV50Config 撤掉迁移 50 加在 alert_state 上的三列，整库与配置快照都能用。
+func removeV50Config(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec("ALTER TABLE alert_state DROP COLUMN fired_summary; ALTER TABLE alert_state DROP COLUMN fired_value; ALTER TABLE alert_state DROP COLUMN notified_at"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func removeV49Config(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec("DROP TABLE silence_rule; ALTER TABLE silence DROP COLUMN all_rules"); err != nil {
