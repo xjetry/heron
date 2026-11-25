@@ -344,6 +344,23 @@ message ProbeTask {
   ProbeIpFamily ip_family = 9;
   // DNS 任务查询的记录类型，缺省即 A。其他种类携带非缺省值即 InvalidArgument。
   DnsRecordType dns_record_type = 10;
+  // HTTP 任务接受的响应状态码，只对 HTTP 任务有意义；其他种类携带非缺省值即 InvalidArgument。
+  HttpStatusPolicy http_status_policy = 11;
+  // http_status_policy 为 EXACT 时要求的状态码，100–599；其余策略下必须为 0，否则 InvalidArgument：
+  // 写了却不生效的值会让调用方以为任务在按它判定。
+  uint32 http_expected_status = 12;
+}
+
+// HTTP 探测的状态码判据。agent 不跟随重定向、拿到响应头即关闭正文，判据只看这一个响应的状态码；
+// 不满足判据的响应计入丢包（与超时同一口径），且不携带证书到期时刻。
+enum HttpStatusPolicy {
+  // 100–399。缺省值保持升级前的行为：存量任务迁移后原样按它执行。3xx 也算正常，反向代理把请求
+  // 跳到登录页或维护页时看不出来，所以管理端新建任务默认选 SUCCESS。
+  HTTP_STATUS_POLICY_UNSPECIFIED = 0;
+  // 200–299。
+  HTTP_STATUS_POLICY_SUCCESS = 1;
+  // 恰等于 http_expected_status。
+  HTTP_STATUS_POLICY_EXACT = 2;
 }
 
 // 探测地址族。缺省（UNSPECIFIED）即自动：agent 只在本机具备的地址族里选，本机两族都具备时名字优先取 IPv4。

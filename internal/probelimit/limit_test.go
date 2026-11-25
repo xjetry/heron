@@ -223,3 +223,53 @@ func TestCheckTaskFamilyAndRecordType(t *testing.T) {
 		})
 	}
 }
+
+// 状态码判据只对 HTTP 任务生效：缺省（< 400）、严格 2xx 或单个精确状态码。精确码以外的策略不得带状态码，
+// 精确码必须在 100–599；其余种类带任何非缺省值都拒绝。hub 保存与 agent 应用都调用 CheckTask。
+func TestCheckTaskHTTPStatusPolicy(t *testing.T) {
+	const (
+		below400 = heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_UNSPECIFIED
+		success  = heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_SUCCESS
+		exact    = heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT
+	)
+	icmp, tcp, http, dns := heronv1.ProbeKind_PROBE_KIND_ICMP, heronv1.ProbeKind_PROBE_KIND_TCP, heronv1.ProbeKind_PROBE_KIND_HTTP, heronv1.ProbeKind_PROBE_KIND_DNS
+	targets := map[heronv1.ProbeKind][2]string{icmp: {"example.com", ""}, tcp: {"example.com:443", ""}, http: {"https://example.com/", ""}, dns: {"example.com", "1.1.1.1:53"}}
+	for _, tc := range []struct {
+		name   string
+		kind   heronv1.ProbeKind
+		policy heronv1.HttpStatusPolicy
+		status uint32
+		want   string
+	}{
+		{"http_default", http, below400, 0, ""},
+		{"http_success", http, success, 0, ""},
+		{"http_exact_lowest", http, exact, 100, ""},
+		{"http_exact_highest", http, exact, 599, ""},
+		{"http_exact_204", http, exact, 204, ""},
+		{"http_exact_missing", http, exact, 0, "http_expected_status must be between 100 and 599 when http_status_policy is HTTP_STATUS_POLICY_EXACT; got 0"},
+		{"http_exact_below", http, exact, 99, "http_expected_status must be between 100 and 599"},
+		{"http_exact_above", http, exact, 600, "http_expected_status must be between 100 and 599"},
+		{"http_success_with_status", http, success, 200, "http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got 200"},
+		{"http_default_with_status", http, below400, 302, "http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got 302"},
+		{"policy_undefined", http, heronv1.HttpStatusPolicy(3), 0, "http_status_policy must be HTTP_STATUS_POLICY_UNSPECIFIED, HTTP_STATUS_POLICY_SUCCESS or HTTP_STATUS_POLICY_EXACT"},
+		{"icmp_policy", icmp, success, 0, "http_status_policy only applies to an HTTP task"},
+		{"tcp_policy", tcp, exact, 200, "http_status_policy only applies to an HTTP task"},
+		{"dns_policy", dns, success, 0, "http_status_policy only applies to an HTTP task"},
+		{"dns_status_only", dns, below400, 200, "http_expected_status only applies"},
+		{"tcp_status_only", tcp, below400, 200, "http_expected_status only applies"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := targets[tc.kind]
+			err := CheckTask(&heronv1.ProbeTask{Kind: tc.kind, Target: target[0], DnsServer: target[1], IntervalS: 60, TimeoutMs: 1000, HttpStatusPolicy: tc.policy, HttpExpectedStatus: tc.status})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("CheckTask = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CheckTask = %v, want error containing %q", err, tc.want)
+			}
+		})
+	}
+}

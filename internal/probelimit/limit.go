@@ -42,6 +42,9 @@ const (
 	CertSPKISHA256Len = 32
 	// ConfigIDLen 是任务配置身份的字节数：crypto/rand 生成的随机数，只比较相等。
 	ConfigIDLen = 16
+	// MinHTTPStatus 与 MaxHTTPStatus 是精确状态码判据可取的范围：RFC 9110 定义的五个状态码类。
+	MinHTTPStatus = 100
+	MaxHTTPStatus = 599
 	// MaxResultAge 是结果的迟到预算：agent 取走时丢弃更老的，hub 拒收更老的。两侧必须是同一个数，
 	// 否则一边收下的结果另一边已经丢掉，或反过来把仍有效的结果丢掉。
 	MaxResultAge = 120 * time.Second
@@ -89,6 +92,23 @@ func CheckTask(t *heronv1.ProbeTask) error {
 	case heronv1.DnsRecordType_DNS_RECORD_TYPE_UNSPECIFIED, heronv1.DnsRecordType_DNS_RECORD_TYPE_AAAA:
 	default:
 		return fmt.Errorf("dns_record_type must be DNS_RECORD_TYPE_UNSPECIFIED or DNS_RECORD_TYPE_AAAA; got %s", t.GetDnsRecordType())
+	}
+	// 状态码判据同样放在分支之前。未定义的策略不能按缺省执行，理由与地址族相同；精确码以外的策略带着状态码、
+	// 或非 HTTP 任务带着判据，都是写了不生效的配置，静默忽略会让调用方以为任务在按它判定。
+	switch t.GetHttpStatusPolicy() {
+	case heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_UNSPECIFIED, heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_SUCCESS, heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT:
+	default:
+		return fmt.Errorf("http_status_policy must be HTTP_STATUS_POLICY_UNSPECIFIED, HTTP_STATUS_POLICY_SUCCESS or HTTP_STATUS_POLICY_EXACT; got %s", t.GetHttpStatusPolicy())
+	}
+	if t.GetKind() != heronv1.ProbeKind_PROBE_KIND_HTTP && t.GetHttpStatusPolicy() != heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_UNSPECIFIED {
+		return fmt.Errorf("http_status_policy only applies to an HTTP task; got %s", t.GetHttpStatusPolicy())
+	}
+	if t.GetHttpStatusPolicy() == heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT {
+		if s := t.GetHttpExpectedStatus(); s < MinHTTPStatus || s > MaxHTTPStatus {
+			return fmt.Errorf("http_expected_status must be between %d and %d when http_status_policy is HTTP_STATUS_POLICY_EXACT; got %d", MinHTTPStatus, MaxHTTPStatus, s)
+		}
+	} else if s := t.GetHttpExpectedStatus(); s != 0 {
+		return fmt.Errorf("http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got %d", s)
 	}
 	// DNS 任务连向解析器的地址族由 dns_server 字面量唯一决定，查询的记录类型另由 dns_record_type 表达；
 	// 两种语义混进同一字段就分不清"经 IPv6 连解析器"与"查 AAAA"。其余种类没有记录类型可查。
