@@ -6170,6 +6170,9 @@ export enum ResourceMetric {
   MEMORY_USED_PCT = 1,
 
   /**
+   * 最满盘使用率的分钟均值（disk_max_used_pct 列，见 Metrics.disk_max_used_pct），阈值 (0, 100]。不是根盘：
+   * 独立数据盘写满同样触发；触发时 hub 实时状态里有逐盘读数的，摘要点名当时最满的挂载路径。
+   *
    * @generated from enum value: RESOURCE_METRIC_DISK_USED_PCT = 2;
    */
   DISK_USED_PCT = 2,

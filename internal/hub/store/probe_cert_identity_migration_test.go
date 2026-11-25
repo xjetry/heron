@@ -187,8 +187,10 @@ func TestRestoreMetricsSnapshotFrom44(t *testing.T) {
 		if cpu != 50 || n != 1 {
 			t.Fatalf("restored metric = %v/%d, want 50/1", cpu, n)
 		}
+		// 比较的是 44 版快照里就有的列：之后的版本给指标表追加的列由各自的迁移用例覆盖，这里只钉旧列逐值不变。
 		for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
-			if got, want := identityMetricRows(t, s.r, table), identityMetricRows(t, old, table); !reflect.DeepEqual(got, want) {
+			cols, want := identityMetricRows(t, old, table, "*")
+			if _, got := identityMetricRows(t, s.r, table, strings.Join(cols, ", ")); !reflect.DeepEqual(got, want) {
 				t.Fatalf("%s changed during restore: got %v want %v", table, got, want)
 			}
 		}
@@ -199,20 +201,21 @@ func TestRestoreMetricsSnapshotFrom44(t *testing.T) {
 	}
 }
 
-func identityMetricRows(t *testing.T, db *sql.DB, table string) [][]any {
+// identityMetricRows 按 cols（"*" 或逗号分隔的列名）读出整表，连同实际读到的列名一起返回。
+func identityMetricRows(t *testing.T, db *sql.DB, table, cols string) ([]string, [][]any) {
 	t.Helper()
-	rows, err := db.Query("SELECT * FROM " + table + " ORDER BY node_id, ts")
+	rows, err := db.Query("SELECT " + cols + " FROM " + table + " ORDER BY node_id, ts")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	cols, err := rows.Columns()
+	names, err := rows.Columns()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var result [][]any
 	for rows.Next() {
-		values, pointers := make([]any, len(cols)), make([]any, len(cols))
+		values, pointers := make([]any, len(names)), make([]any, len(names))
 		for i := range values {
 			pointers[i] = &values[i]
 		}
@@ -224,5 +227,5 @@ func identityMetricRows(t *testing.T, db *sql.DB, table string) [][]any {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	return result
+	return names, result
 }

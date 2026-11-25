@@ -118,6 +118,7 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropFullestDiskColumns(t, met)
 	dropTCPRateColumns(t, met)
 	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
 		for _, column := range []string{"load1_per_core_sum", "load1_per_core_n"} {

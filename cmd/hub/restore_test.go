@@ -303,6 +303,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			removeV36Config(t, cfg)
 			removeV35Config(t, cfg)
 			removeV34Config(t, cfg)
+			removeV53Metrics(t, met)
 			removeV43Metrics(t, met)
 			removeV34Metrics(t, met)
 			removeV32Config(t, cfg)
@@ -380,6 +381,14 @@ func removeV52Config(t *testing.T, config *sql.DB) {
 func removeV51Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN ip_family; ALTER TABLE probe_task DROP COLUMN dns_record_type")
+}
+
+// 53 给三张指标表加了最满盘使用率的 sum/n，在指标层。
+func removeV53Metrics(t *testing.T, metrics *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		restoreExec(t, metrics, "ALTER TABLE "+table+" DROP COLUMN disk_max_used_pct_sum; ALTER TABLE "+table+" DROP COLUMN disk_max_used_pct_n")
+	}
 }
 
 // 50 给 alert_state 加了补发内容两列与 notified_at，在配置层。

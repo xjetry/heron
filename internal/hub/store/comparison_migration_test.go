@@ -78,6 +78,7 @@ func TestRestoreMigratesV32MetricsSnapshotAndKeepsProbeByTaskIndexes(t *testing.
 		t.Fatal(err)
 	}
 	// 快照从当前库拷出，已带按核负载列；回填 32 之前必须撤掉，否则重建仍会把新列的值当作旧历史。
+	dropFullestDiskColumns(t, old)
 	dropTCPRateColumns(t, old)
 	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
 		for _, column := range []string{"load1_per_core_sum", "load1_per_core_n"} {

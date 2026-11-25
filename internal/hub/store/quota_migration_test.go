@@ -87,6 +87,7 @@ func TestTrafficQuotaSnapshotRestore(t *testing.T) {
 							}
 						}
 						if path == metrics {
+							dropFullestDiskColumns(t, db)
 							dropTCPRateColumns(t, db)
 						}
 						if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=35"); err != nil {

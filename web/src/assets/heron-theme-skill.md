@@ -151,7 +151,8 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `load1PerCore` | 按核负载 |
 | `memUsed`、`memTotal` | 内存字节（字符串）；使用率 = memUsed / memTotal。`memTotal` 缺失或为 `"0"`、`memUsed` 缺失时没有使用率，按无读数显示，不要算成 0%（内置页同此口径） |
 | `swapUsed`、`swapTotal` | 交换字节；使用率与缺失口径同内存 |
-| `diskUsed`、`diskTotal` | 磁盘字节；使用率与缺失口径同内存 |
+| `diskUsed`、`diskTotal` | 根盘（`/`）字节；使用率与缺失口径同内存 |
+| `diskMaxUsedPct` | 最满盘使用率，百分比：节点纳入监测的全部本地盘里最满那块（含根盘），内置页的磁盘进度条与磁盘着色用它。不公开是哪块盘。缺失时无读数 |
 | `netRxBps`、`netTxBps` | 实时下行 / 上行速率，字节/秒 |
 | `netRxTotal`、`netTxTotal` | 网卡累计字节（内核计数器） |
 | `diskReadBps`、`diskWriteBps` | 磁盘读写速率，字节/秒 |
@@ -206,7 +207,9 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `tcp_passive_opens_ps` | count/s | mean、max |
 | `tcp_out_segs_ps` | count/s | mean |
 | `tcp_retrans_segs_ps` | count/s | mean |
+| `disk_max_used_pct` | percent | mean |
 
+- `disk_used`、`disk_used_pct` 是根盘，`disk_max_used_pct` 是最满盘（与实时的 `diskMaxUsedPct` 同义）。
 - 平均网速 = `rx_bytes` / `tx_bytes` 的 `sum / stepS`（字节/秒）；采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`。
 - 重传率不是一条序列，取同一个点上 `tcp_retrans_segs_ps` 与 `tcp_out_segs_ps` 的 `mean × n` 之比再乘 100，分母为 0 或任一侧 n=0 时没有重传率。
 - 最后一个点可能是未完成的桶。

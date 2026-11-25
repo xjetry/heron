@@ -261,7 +261,9 @@ var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 	"heron.v1.PublicAddressDetection": {"state"},
 	"heron.v1.PublicBilling":          {"price", "currency", "billing_cycle", "expires_on", "days_left"},
 	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "load1", "load5", "load15", "load1_per_core", "mem_total", "mem_used", "swap_total", "swap_used",
-		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "disk_read_bps", "disk_write_bps", "tcp_conns", "udp_conns", "procs", "uptime_s", "tcp_active_opens_ps", "tcp_passive_opens_ps", "tcp_out_segs_ps", "tcp_retrans_segs_ps"},
+		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "disk_read_bps", "disk_write_bps", "tcp_conns", "udp_conns", "procs", "uptime_s", "tcp_active_opens_ps", "tcp_passive_opens_ps", "tcp_out_segs_ps", "tcp_retrans_segs_ps",
+		// 最满盘使用率只是一个百分比；是哪块盘（挂载路径）只经管理端的 GetNodeDisks 给出，不在公开面上。
+		"disk_max_used_pct"},
 	"heron.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day", "quota_bytes", "quota_mode", "quota_used_bytes", "quota_used_pct"},
 	"heron.v1.QueryMetricsResponse": {"level", "step_s", "ts", "series", "coverage", "coverage_summary"},
 	"heron.v1.PointCoverage":        {"minutes", "observed", "observed_reported"},

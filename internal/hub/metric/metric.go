@@ -65,8 +65,8 @@ var Columns = []Column{
 	{"procs", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
 	{"rx_bytes", Sum, Int, "bytes", nil},
 	{"tx_bytes", Sum, Int, "bytes", nil},
-	{"memory_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return usedPercent(m.MemUsed, m.MemTotal) }},
-	{"disk_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return usedPercent(m.DiskUsed, m.DiskTotal) }},
+	{"memory_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return UsedPercent(m.MemUsed, m.MemTotal) }},
+	{"disk_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return UsedPercent(m.DiskUsed, m.DiskTotal) }},
 	// 速率取 agent 按本地采样间隔测得的值；请求到达间隔受网络拥塞影响，不用于推算峰值。
 	// 字节增量仍单独由入账方累计，采样速率的均值不能替代总字节数除以桶长。
 	{"net_rx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
@@ -86,10 +86,15 @@ var Columns = []Column{
 	{"tcp_passive_opens_ps", MeanMax, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpPassiveOpensPs(), m.TcpPassiveOpensPs != nil }},
 	{"tcp_out_segs_ps", Mean, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpOutSegsPs(), m.TcpOutSegsPs != nil }},
 	{"tcp_retrans_segs_ps", Mean, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpRetransSegsPs(), m.TcpRetransSegsPs != nil }},
+	// 最满盘使用率：纳入监测的全部本地盘里最满那块的百分比，驱动概览进度与磁盘告警。值由 hub 准入后写入
+	// （ingest.normalizeDiskMax，不带逐盘列表时退回根盘），这里只读字段、不自己再推一遍。disk_used 与 disk_used_pct
+	// 仍只是根盘：两种口径并存，根盘曲线不因哪块盘最满而换主语。
+	{"disk_max_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetDiskMaxUsedPct(), m.DiskMaxUsedPct != nil }},
 }
 
-// 同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，不能把不同采样的均值相除。
-func usedPercent(used, total *uint64) (float64, bool) {
+// UsedPercent 是容量类读数的使用率，百分比。同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，
+// 不能把不同采样的均值相除。hub 里凡是由字节算使用率的地方都调它（指标列、ingest 写入最满盘使用率）。
+func UsedPercent(used, total *uint64) (float64, bool) {
 	if used == nil || total == nil || *total == 0 {
 		return 0, false
 	}

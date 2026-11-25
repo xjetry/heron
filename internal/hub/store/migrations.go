@@ -78,6 +78,56 @@ var migrations = map[int]func(*sql.Tx) error{
 	50: execAll(migrationV50Config),
 	51: execAll(migrationV51Config),
 	52: execAll(migrationV52Config),
+	53: migrateV53Metrics,
+}
+
+// metricDDLV53 冻结引入最满盘使用率时的指标表 DDL：v43 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
+func metricDDLV53(table string) string {
+	type col struct {
+		name, sqlType string
+		max           bool
+	}
+	cols := []col{
+		{"cpu", "REAL", true}, {"mem_used", "INTEGER", true}, {"swap_used", "INTEGER", false}, {"disk_used", "INTEGER", false},
+		{"load1", "REAL", false}, {"tcp", "INTEGER", false}, {"udp", "INTEGER", false}, {"procs", "INTEGER", false},
+		{"rx_bytes", "INTEGER", false}, {"tx_bytes", "INTEGER", false}, {"memory_used_pct", "REAL", false}, {"disk_used_pct", "REAL", false},
+		{"net_rx_bps", "INTEGER", true}, {"net_tx_bps", "INTEGER", true}, {"disk_read_bps", "INTEGER", true}, {"disk_write_bps", "INTEGER", true},
+		{"cpu_steal_pct", "REAL", true}, {"cpu_iowait_pct", "REAL", true}, {"load1_per_core", "REAL", false},
+		{"tcp_active_opens_ps", "REAL", true}, {"tcp_passive_opens_ps", "REAL", true}, {"tcp_out_segs_ps", "REAL", false}, {"tcp_retrans_segs_ps", "REAL", false},
+		{"disk_max_used_pct", "REAL", false},
+	}
+	parts := []string{"node_id INTEGER NOT NULL", "ts INTEGER NOT NULL"}
+	for _, c := range cols {
+		parts = append(parts, c.name+"_sum "+c.sqlType+" NOT NULL DEFAULT 0", c.name+"_n INTEGER NOT NULL DEFAULT 0")
+		if c.max {
+			parts = append(parts, c.name+"_max "+c.sqlType+" NOT NULL DEFAULT 0")
+		}
+	}
+	if strings.TrimSuffix(table, "_new") == "metric_1m" {
+		parts = append(parts, "reported INTEGER NOT NULL DEFAULT 1", "observed INTEGER")
+	} else {
+		parts = append(parts, "minutes INTEGER", "observed INTEGER", "both INTEGER")
+	}
+	return "CREATE TABLE " + table + " (" + strings.Join(parts, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"
+}
+
+// v53：最满盘使用率一列（disk_max_used_pct），只在指标层，迁移与指标快照恢复共用。与 v43 同理按冻结 DDL 重建三张表。
+//
+// 旧行按根盘回填：取同一行 disk_used_pct 的和与样本数。依据是准入的同一条规则——上报不带逐盘列表时最满盘就是根盘
+// （ingest.normalizeDiskMax），而已发布的旧版 hub 都不接收逐盘读数，旧分钟里纳入监测的只有根盘。回填让磁盘告警的
+// 连续窗口与历史曲线跨升级不断开；不回填的话，升级后头 for_minutes 分钟的窗口会落在没有读数的旧分钟上，规则既不触发也不恢复。
+// 根盘没有读数的行（n=0）回填后仍是 n=0：无读数不变成 0%。三级表各自回填，和与样本数本来就逐级相加，回填后上卷关系不变。
+// 回滚边界同 v43：写入后 schema 52 的二进制不能直接启动，回退须恢复升级前的数据库备份。
+func migrateV53Metrics(tx *sql.Tx) error {
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		if err := rebuildTable(tx, table, metricDDLV53); err != nil {
+			return fmt.Errorf("rebuilding %s: %w", table, err)
+		}
+		if _, err := tx.Exec("UPDATE " + table + " SET disk_max_used_pct_sum = disk_used_pct_sum, disk_max_used_pct_n = disk_used_pct_n"); err != nil {
+			return fmt.Errorf("backfilling %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // 流量观测时刻与节点名都属于配置层，生产库与配置快照使用同一步迁移。

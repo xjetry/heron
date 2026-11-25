@@ -882,8 +882,18 @@ type Metrics struct {
 	TcpPassiveOpensPs *float64 `protobuf:"fixed64,27,opt,name=tcp_passive_opens_ps,json=tcpPassiveOpensPs,proto3,oneof" json:"tcp_passive_opens_ps,omitempty"` // 被动接受的连接，次/秒
 	TcpOutSegsPs      *float64 `protobuf:"fixed64,28,opt,name=tcp_out_segs_ps,json=tcpOutSegsPs,proto3,oneof" json:"tcp_out_segs_ps,omitempty"`                // 发出段，段/秒
 	TcpRetransSegsPs  *float64 `protobuf:"fixed64,29,opt,name=tcp_retrans_segs_ps,json=tcpRetransSegsPs,proto3,oneof" json:"tcp_retrans_segs_ps,omitempty"`    // 重传段，段/秒
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// 最满盘使用率，百分比 [0, 100]：节点纳入监测的全部本地盘（含根盘）里 used ÷ total 最高的那一块。
+	// disk_total / disk_used 仍固定是根盘，两者分开：多块盘的字节合计会把写满的小根盘稀释掉，拿最满盘覆盖根盘字节
+	// 又会让 disk_used 曲线在两块盘交替领先时跳台阶。
+	// 由 hub 在准入通过后写入（ingest.normalizeDiskMax），agent 不发送，发了也被覆盖：
+	//   - 请求带 ReportRequest.disk_mounts 时取列表首项。列表是截断前全集按 agentwire.CompareDiskUsage 排序后的前缀，
+	//     hub 准入复核了顺序，所以首项就是全集的最满盘，截断只去掉排在后面的盘。
+	//   - 不带列表时（agent 版本不提供逐盘读数，或这一次逐盘采集失败）取根盘 disk_used ÷ disk_total：此时能读到的只有根盘，
+	//     与逐盘采集出现之前的磁盘口径相同，不比那时更差；逐盘采集失败由诊断的 DISK_MOUNTS 点名。
+	//   - 两者都没有（根盘读不出）时缺失，不是 0。
+	DiskMaxUsedPct *float64 `protobuf:"fixed64,30,opt,name=disk_max_used_pct,json=diskMaxUsedPct,proto3,oneof" json:"disk_max_used_pct,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Metrics) Reset() {
@@ -1115,6 +1125,13 @@ func (x *Metrics) GetTcpOutSegsPs() float64 {
 func (x *Metrics) GetTcpRetransSegsPs() float64 {
 	if x != nil && x.TcpRetransSegsPs != nil {
 		return *x.TcpRetransSegsPs
+	}
+	return 0
+}
+
+func (x *Metrics) GetDiskMaxUsedPct() float64 {
+	if x != nil && x.DiskMaxUsedPct != nil {
+		return *x.DiskMaxUsedPct
 	}
 	return 0
 }
@@ -2558,7 +2575,7 @@ var File_heron_v1_types_proto protoreflect.FileDescriptor
 
 const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x14heron/v1/types.proto\x12\bheron.v1\"\xea\v\n" +
+	"\x14heron/v1/types.proto\x12\bheron.v1\"\xb0\f\n" +
 	"\aMetrics\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
@@ -2596,7 +2613,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x13tcp_active_opens_ps\x18\x1a \x01(\x01H\x17R\x10tcpActiveOpensPs\x88\x01\x01\x124\n" +
 	"\x14tcp_passive_opens_ps\x18\x1b \x01(\x01H\x18R\x11tcpPassiveOpensPs\x88\x01\x01\x12*\n" +
 	"\x0ftcp_out_segs_ps\x18\x1c \x01(\x01H\x19R\ftcpOutSegsPs\x88\x01\x01\x122\n" +
-	"\x13tcp_retrans_segs_ps\x18\x1d \x01(\x01H\x1aR\x10tcpRetransSegsPs\x88\x01\x01B\n" +
+	"\x13tcp_retrans_segs_ps\x18\x1d \x01(\x01H\x1aR\x10tcpRetransSegsPs\x88\x01\x01\x12.\n" +
+	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -2629,7 +2647,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x14_tcp_active_opens_psB\x17\n" +
 	"\x15_tcp_passive_opens_psB\x12\n" +
 	"\x10_tcp_out_segs_psB\x16\n" +
-	"\x14_tcp_retrans_segs_ps\"_\n" +
+	"\x14_tcp_retrans_segs_psB\x14\n" +
+	"\x12_disk_max_used_pct\"_\n" +
 	"\x13NetInterfaceCounter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\brx_bytes\x18\x02 \x01(\x04R\arxBytes\x12\x19\n" +

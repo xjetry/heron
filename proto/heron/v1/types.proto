@@ -61,6 +61,16 @@ message Metrics {
   optional double tcp_passive_opens_ps = 27;  // 被动接受的连接，次/秒
   optional double tcp_out_segs_ps = 28;       // 发出段，段/秒
   optional double tcp_retrans_segs_ps = 29;   // 重传段，段/秒
+  // 最满盘使用率，百分比 [0, 100]：节点纳入监测的全部本地盘（含根盘）里 used ÷ total 最高的那一块。
+  // disk_total / disk_used 仍固定是根盘，两者分开：多块盘的字节合计会把写满的小根盘稀释掉，拿最满盘覆盖根盘字节
+  // 又会让 disk_used 曲线在两块盘交替领先时跳台阶。
+  // 由 hub 在准入通过后写入（ingest.normalizeDiskMax），agent 不发送，发了也被覆盖：
+  //   - 请求带 ReportRequest.disk_mounts 时取列表首项。列表是截断前全集按 agentwire.CompareDiskUsage 排序后的前缀，
+  //     hub 准入复核了顺序，所以首项就是全集的最满盘，截断只去掉排在后面的盘。
+  //   - 不带列表时（agent 版本不提供逐盘读数，或这一次逐盘采集失败）取根盘 disk_used ÷ disk_total：此时能读到的只有根盘，
+  //     与逐盘采集出现之前的磁盘口径相同，不比那时更差；逐盘采集失败由诊断的 DISK_MOUNTS 点名。
+  //   - 两者都没有（根盘读不出）时缺失，不是 0。
+  optional double disk_max_used_pct = 30;
 }
 
 // 一张计入网络合计的网卡的内核累计计数，与同一请求的 Metrics 同一次采样。

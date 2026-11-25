@@ -379,6 +379,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	source := auth.SourceText(auth.ClientIP(req.Peer().Addr, req.Header().Values("X-Forwarded-For"), s.cfg.TrustedProxies))
 	// 准入全部通过之后才归一化：被拒的上报不留下任何改动。逐网卡列表只交给账本，不进 live。
 	normalizeNetTotals(m, req.Msg.GetNetInterfaces())
+	normalizeDiskMax(m, req.Msg.GetDiskMounts())
 	ts, gap, first := s.live.Observe(id, source, m)
 	// 逐盘容量只进内存实时状态，不进分钟桶、不落库：挂载路径是 agent 自报的任意文本，只经 GetNodeDisks 给管理端。
 	s.live.ObserveDisks(id, req.Msg.GetDiskMounts(), req.Msg.GetDiskMountsTotal())

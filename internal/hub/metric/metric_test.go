@@ -72,6 +72,7 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		"load1_per_core":      {Mean, Float},
 		"tcp_active_opens_ps": {MeanMax, Float}, "tcp_passive_opens_ps": {MeanMax, Float},
 		"tcp_out_segs_ps": {Mean, Float}, "tcp_retrans_segs_ps": {Mean, Float},
+		"disk_max_used_pct": {Mean, Float},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))
@@ -130,5 +131,20 @@ func TestIndexLocatesColumnsByName(t *testing.T) {
 	}
 	if Columns[RxBytes].Kind != Sum || Columns[TxBytes].Kind != Sum || Columns[RxBytes].Unit != "bytes" {
 		t.Fatal("traffic columns must be Sum kind in bytes")
+	}
+}
+
+// 根盘与最满盘是两列：disk_used_pct 只按根盘的字节算，disk_max_used_pct 只取 hub 写入的最满盘使用率，
+// 两者互不代替；最满盘缺失的上报不进它的样本数。
+func TestRootAndFullestDiskAreSeparateColumns(t *testing.T) {
+	b := NewBucket()
+	b.Add(&heronv1.Metrics{DiskTotal: proto.Uint64(100), DiskUsed: proto.Uint64(30), DiskMaxUsedPct: proto.Float64(90)})
+	b.Add(&heronv1.Metrics{DiskTotal: proto.Uint64(100), DiskUsed: proto.Uint64(30)})
+	root, fullest := idx(t, "disk_used_pct"), idx(t, "disk_max_used_pct")
+	if got, ok := b.Mean(root); !ok || got != 30 || b.N[root] != 2 {
+		t.Fatalf("disk_used_pct = %v/%d, want 30 over 2 samples", got, b.N[root])
+	}
+	if got, ok := b.Mean(fullest); !ok || got != 90 || b.N[fullest] != 1 {
+		t.Fatalf("disk_max_used_pct = %v/%d, want 90 over 1 sample", got, b.N[fullest])
 	}
 }

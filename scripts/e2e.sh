@@ -361,6 +361,11 @@ done
 : "${AGENT_VERSION:?AGENT_VERSION is required: it is the version injected into the hub build}"
 bound=$AGENT_VERSION
 jq -e --arg bound "$bound" '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null) and .boundAgentVersion == $bound' "$work/GetSnapshot.json" > /dev/null || { echo "FAIL: snapshot shape or bound agent version (want $bound)"; cat "$work/GetSnapshot.json"; exit 1; }
+# 最满盘使用率由 hub 写入。容器里没给 --host-root 的 agent 只报根盘一块，列表首项就是根盘、与 diskUsed / diskTotal
+# 同一次 statfs，所以两者算出的百分比相同；字段缺失说明 hub 没写或根盘没读到。
+jq -e 'all(.nodes[]; .metrics.diskMaxUsedPct != null and .metrics.diskTotal != null and
+  ((.metrics.diskMaxUsedPct - ((.metrics.diskUsed // "0" | tonumber) / (.metrics.diskTotal | tonumber) * 100)) | fabs) < 1e-9)' "$work/GetSnapshot.json" > /dev/null ||
+  { echo "FAIL: snapshot diskMaxUsedPct is not the root disk usage of a root-only agent"; cat "$work/GetSnapshot.json"; exit 1; }
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes"; exit 1; }
 jq -e '[.nodes[] | select(.facts.arch == "amd64" or .facts.arch == "arm64")] | length == 2' "$work/ListNodes.json" > /dev/null || { echo "FAIL: facts not reported"; cat "$work/ListNodes.json"; exit 1; }
 jq -e --arg os "$EXPECT_OS" '(.nodes | length) == 2 and all(.nodes[]; (.facts.os // "") | contains($os))' "$work/ListNodes.json" > /dev/null || { echo "FAIL: nodes did not report an OS containing \"$EXPECT_OS\""; cat "$work/ListNodes.json"; exit 1; }
@@ -397,6 +402,8 @@ query_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
 jq -e '.level == "1m" and (.ts | length) >= 1 and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: QueryMetrics shape"; cat "$work/QueryMetrics.json"; exit 1; }
 # TCP 速率：agent 每次采样都读 /proc/net/snmp，第二次采样起四项都有读数。
 jq -e '. as $root | all(["tcp_active_opens_ps", "tcp_passive_opens_ps", "tcp_out_segs_ps", "tcp_retrans_segs_ps"][]; . as $n | any($root.series[] | select(.name == $n) | .samples[]; (.n // 0) > 0)) and any(.series[] | select(.name == "tcp_out_segs_ps"); .unit == "count/s")' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: tcp rate series missing"; cat "$work/QueryMetrics.json"; exit 1; }
+# 最满盘使用率进分钟桶：管理端与公开端（下方）都有这条百分比序列。
+jq -e 'any(.series[] | select(.name == "disk_max_used_pct" and .unit == "percent") | .samples[]; (.n // 0) > 0)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: disk_max_used_pct series missing"; cat "$work/QueryMetrics.json"; exit 1; }
 probe_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --argjson to "$((now + 60))" '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
 # 两个任务都有成功的探测：容器里的 ICMP 探测回环，TCP 连接宿主上的 hub。
 # hub 在分钟边界后 0.5s 刷出分钟桶；4s 上报间隔与最多 5s 首次偏移下，首条结果最晚在任务创建后约 13s 到达。
@@ -452,6 +459,7 @@ jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.
 jq -e '.level == "1m" and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/pub-metrics.json" > /dev/null || { echo "FAIL: public QueryMetrics shape"; cat "$work/pub-metrics.json"; exit 1; }
 # 公开端与各管理端同一投影（规则见 proto/heron/v1/public.proto 的 PublicService 注释）：TCP 四条序列与单位一致。protojson 省略值为 0 的 n，写 (.n // 0)。
 jq -e '. as $root | all(["tcp_active_opens_ps", "tcp_passive_opens_ps", "tcp_out_segs_ps", "tcp_retrans_segs_ps"][]; . as $n | any($root.series[] | select(.name == $n) | .samples[]; (.n // 0) > 0)) and any(.series[] | select(.name == "tcp_out_segs_ps"); .unit == "count/s")' "$work/pub-metrics.json" > /dev/null || { echo "FAIL: public tcp rate series missing"; cat "$work/pub-metrics.json"; exit 1; }
+jq -e 'any(.series[] | select(.name == "disk_max_used_pct" and .unit == "percent") | .samples[]; (.n // 0) > 0)' "$work/pub-metrics.json" > /dev/null || { echo "FAIL: public disk_max_used_pct series missing"; cat "$work/pub-metrics.json"; exit 1; }
 [ "$(hdr metrics Cache-Control)" = "max-age=60" ] || { echo "FAIL: QueryMetrics Cache-Control"; cat "$work/pub-metrics.headers"; exit 1; }
 # 公开节点即公开它的探测目标：序列带任务当前的种类与目标。
 [ "$(pubget probes QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: public QueryProbes"; cat "$work/pub-probes.json"; exit 1; }

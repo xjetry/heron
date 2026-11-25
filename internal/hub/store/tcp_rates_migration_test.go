@@ -157,6 +157,7 @@ func TestRestoreV42MetricsSnapshotAddsTCPRateColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		if layer == "metrics" {
+			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 		}
 		if layer == "config" {

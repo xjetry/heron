@@ -191,7 +191,8 @@ export type MetricSeries = Message<"heron.v1.MetricSeries"> & {
    * cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes、
    * memory_used_pct、disk_used_pct、net_rx_bps、net_tx_bps、disk_read_bps、disk_write_bps、
    * cpu_steal_pct、cpu_iowait_pct、load1_per_core、tcp_active_opens_ps、tcp_passive_opens_ps、
-   * tcp_out_segs_ps、tcp_retrans_segs_ps。顺序同 hub 的指标描述表（internal/hub/metric.Columns），
+   * tcp_out_segs_ps、tcp_retrans_segs_ps、disk_max_used_pct。disk_used 与 disk_used_pct 是根盘，disk_max_used_pct 是最满盘
+   * （见 Metrics.disk_max_used_pct）。顺序同 hub 的指标描述表（internal/hub/metric.Columns），
    * 新指标只追加在末尾；客户端按 name 取。
    * 重传率不是一条序列：同一个点上 tcp_retrans_segs_ps 与 tcp_out_segs_ps 的 mean × n 相除再乘 100；分母为 0 时没有重传率。
    *

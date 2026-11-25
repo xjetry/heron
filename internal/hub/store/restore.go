@@ -557,6 +557,13 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV52Config
 			}
+		case 53:
+			// 与迁移 53 同源：最满盘使用率一列只在指标层，按冻结 DDL 重建后按列名搬运，再按根盘回填。配置层无变化。
+			if layer == "metrics" {
+				if err := migrateV53Metrics(tx); err != nil {
+					return fmt.Errorf("migrate metrics snapshot to 53: %w", err)
+				}
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

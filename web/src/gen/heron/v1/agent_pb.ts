@@ -131,7 +131,8 @@ export type ReportRequest = Message<"heron.v1.ReportRequest"> & {
   /**
    * 与 metrics 同一次采样的本地数据盘逐盘容量：按使用率（used ÷ total）降序、同使用率按路径字节序升序，取前至多
    * 16 项（agentwire.MaxDiskMounts）；根盘 "/" 与其余挂载点同样参与排序，可能被截掉。hub 只把它放进内存里的实时状态
-   * （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。
+   * （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。只有首项的使用率
+   * 经 hub 推导进 metrics.disk_max_used_pct（最满盘使用率），挂载路径不随它进快照与历史。
    *
    * @generated from field: repeated heron.v1.DiskMountUsage disk_mounts = 11;
    */

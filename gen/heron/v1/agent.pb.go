@@ -153,7 +153,8 @@ type ReportRequest struct {
 	NetInterfaces []*NetInterfaceCounter `protobuf:"bytes,10,rep,name=net_interfaces,json=netInterfaces,proto3" json:"net_interfaces,omitempty"`
 	// 与 metrics 同一次采样的本地数据盘逐盘容量：按使用率（used ÷ total）降序、同使用率按路径字节序升序，取前至多
 	// 16 项（agentwire.MaxDiskMounts）；根盘 "/" 与其余挂载点同样参与排序，可能被截掉。hub 只把它放进内存里的实时状态
-	// （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。
+	// （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。只有首项的使用率
+	// 经 hub 推导进 metrics.disk_max_used_pct（最满盘使用率），挂载路径不随它进快照与历史。
 	DiskMounts []*DiskMountUsage `protobuf:"bytes,11,rep,name=disk_mounts,json=diskMounts,proto3" json:"disk_mounts,omitempty"`
 	// 截断前的总数：0 表示这次没有逐盘读数（采集失败或 agent 不提供），此时列表为空；否则列表长度恰为
 	// min(disk_mounts_total, 16)。

@@ -7,6 +7,7 @@ import (
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/agentwire"
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/sanitize"
 	"github.com/xjetry/heron/internal/probelimit"
 	"google.golang.org/protobuf/proto"
@@ -91,6 +92,23 @@ func normalizeNetTotals(m *heronv1.Metrics, list []*heronv1.NetInterfaceCounter)
 	m.NetRxTotal = proto.Uint64(sum.Rx)
 	m.NetTxTotal = proto.Uint64(sum.Tx)
 	m.NetCounterEpoch = sum.Epoch
+}
+
+// normalizeDiskMax 在所有准入检查通过后写入最满盘使用率（Metrics.disk_max_used_pct），agent 自报的值不采信。
+//
+// 带逐盘列表时取首项：agentwire.ValidateDiskMounts 已复核列表按 CompareDiskUsage 严格递增、且长度是截断前总数与
+// MaxDiskMounts 的较小者；合法 agent 截断的是全集排序后的尾部（collect.Collector.diskMounts），所以首项就是全集里最满的
+// 那块。不带列表时只有根盘可读（agent 版本不提供逐盘读数，或这一次逐盘采集失败），取根盘的使用率；根盘也没有读数时缺失。
+// 这里是唯一的写入处：实时快照、分钟桶（metric 的 disk_max_used_pct 列）与磁盘告警都读这一个字段。
+func normalizeDiskMax(m *heronv1.Metrics, list []*heronv1.DiskMountUsage) {
+	used, total := m.DiskUsed, m.DiskTotal
+	if len(list) > 0 {
+		used, total = proto.Uint64(list[0].GetUsed()), proto.Uint64(list[0].GetTotal())
+	}
+	m.DiskMaxUsedPct = nil
+	if v, ok := metric.UsedPercent(used, total); ok {
+		m.DiskMaxUsedPct = proto.Float64(v)
+	}
 }
 
 // validateResults 限制条数、error.message 字节数，并要求 outcome 给定。合法 agent 的 Runner

@@ -153,6 +153,7 @@ func TestTrafficOldSnapshotRestoresBaseline(t *testing.T) {
 			}
 		}
 		if layer == "metrics" {
+			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 		}
 		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 40"); err != nil {

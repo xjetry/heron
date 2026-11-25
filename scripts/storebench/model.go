@@ -178,6 +178,9 @@ func (p *nodeProfile) readings() ([]colReading, error) {
 			cr = colReading{level: p.tcpOutSegs}
 		case "tcp_retrans_segs_ps":
 			cr = colReading{level: p.tcpRetransSegs}
+		case "disk_max_used_pct":
+			// 模型里每个节点只有一块根盘，最满盘就是根盘（与 hub 在没有逐盘列表时的取值相同）；同一个典型值、同样各 8 字节。
+			cr = colReading{level: p.diskPct, percent: true}
 		default:
 			return nil, fmt.Errorf("value model has no distribution for metric column %q", c.Name)
 		}

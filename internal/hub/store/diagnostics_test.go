@@ -197,6 +197,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 				}
 			}
 		} else {
+			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 			for _, q := range []string{
 				"ALTER TABLE metric_1m DROP COLUMN load1_per_core_sum", "ALTER TABLE metric_1m DROP COLUMN load1_per_core_n",

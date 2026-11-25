@@ -211,4 +211,6 @@ message PublicMetrics {
   optional double tcp_passive_opens_ps = 27;
   optional double tcp_out_segs_ps = 28;
   optional double tcp_retrans_segs_ps = 29;
+  // 最满盘使用率，与 Metrics.disk_max_used_pct 同号同义。只公开百分比：是哪一块盘（挂载路径）不公开。
+  optional double disk_max_used_pct = 30;
 }
