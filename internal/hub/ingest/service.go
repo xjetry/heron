@@ -358,6 +358,9 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	if err := validateNetInterfaces(req.Msg.GetNetInterfaces()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := agentwire.ValidateDiskMounts(req.Msg.GetDiskMounts(), req.Msg.GetDiskMountsTotal()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	if err := validateTasksDigest(req.Msg.GetTasksDigest()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -377,6 +380,8 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	// 准入全部通过之后才归一化：被拒的上报不留下任何改动。逐网卡列表只交给账本，不进 live。
 	normalizeNetTotals(m, req.Msg.GetNetInterfaces())
 	ts, gap, first := s.live.Observe(id, source, m)
+	// 逐盘容量只进内存实时状态，不进分钟桶、不落库：挂载路径是 agent 自报的任意文本，只经 GetNodeDisks 给管理端。
+	s.live.ObserveDisks(id, req.Msg.GetDiskMounts(), req.Msg.GetDiskMountsTotal())
 	// 每 token 由单个 agent 串行发出 unary 上报、等到响应才发下一次；这保证同节点的
 	// Observe、Account、AddBytes 不被另一次上报交错。多端共用 token 不提供此保证。
 	// 间隔达到 TTL 意味着按在线判定节点在这段时间里离线过，这段增量跨过一次离线，

@@ -33,7 +33,15 @@ type Host interface {
 	// 回绕后再加回的值可能落在 total 以内，checkUsage 看不出。
 	memory() (usage, error)
 	swap() (usage, error)
+	// disk 是根盘用量：被观测主机根目录所在文件系统，口径见 statfsUsage。
 	disk() (usage, error)
+	// diskMounts 给出被观测主机上的挂载点（路径已换成主机上的路径），平台只给出按路径打开时真正落在该挂载上的项，
+	// 并按自己的白名单与可写性判定 eligible（规则见 mountEntry）。读者的挂载表不描述被观测主机时（读者在容器里、
+	// 又没有显式给出宿主根）返回空，Collector 只报根。snap 是同一周期的识别快照。
+	diskMounts(snap *execSnapshot) ([]mountEntry, error)
+	// mountUsage 取主机上挂载路径 p 所在文件系统的用量，口径与 disk 相同。p 已不存在返回 errMountGone，
+	// 不是目录返回 errMountNotDir；只对 diskMounts 给出的合格项调用，调用前已排除远端文件系统。
+	mountUsage(p string) (usage, error)
 	load() (loadAvg, error)
 	procs() (uint32, error)
 	uptime() (uint64, error)

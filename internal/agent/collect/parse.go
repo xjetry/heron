@@ -263,36 +263,6 @@ func parseCPUInfo(r io.Reader) cpuInfo {
 	return c
 }
 
-// parseMountinfo 解析 /proc/self/mountinfo，只取识别要用的两列：文件系统所在设备
-// （"major:minor"）与 fstype。行格式：
-//
-//	mountID parentID major:minor root mountpoint options [可选字段…] - fstype source superoptions
-//
-// 任一行认不出整表作废（来源全部未知）：宁可缺读数，也不把某个文件猜成 procfs。
-func parseMountinfo(r io.Reader) ([]mountEntry, error) {
-	sc := bufio.NewScanner(r)
-	var out []mountEntry
-	for sc.Scan() {
-		line := sc.Text()
-		sep := strings.Index(line, " - ")
-		if sep < 0 {
-			return nil, fmt.Errorf("mountinfo: %q", line)
-		}
-		head, tail := strings.Fields(line[:sep]), strings.Fields(line[sep+3:])
-		if len(head) < 5 || len(tail) < 1 {
-			return nil, fmt.Errorf("mountinfo: %q", line)
-		}
-		out = append(out, mountEntry{dev: head[2], fstype: tail[0]})
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, errors.New("mountinfo: empty")
-	}
-	return out, nil
-}
-
 // memstatLines 是 memory.stat 里内存算式用到的三行。
 type memstatLines struct {
 	file            uint64 // 页缓存：可整体回收，不算占用

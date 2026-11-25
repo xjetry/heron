@@ -17,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/agent/collect"
+	"github.com/xjetry/heron/internal/agent/collect/collecttest"
 	"github.com/xjetry/heron/internal/agent/prober"
 	"github.com/xjetry/heron/internal/agentwire"
 	"github.com/xjetry/heron/internal/clock"
@@ -437,6 +438,34 @@ func TestRunnerReportsNetInterfaces(t *testing.T) {
 	runFor(t, r, none, 1)
 	if rep := none.received()[0]; rep.NetInterfaces != nil || rep.GetMetrics().NetRxTotal != nil {
 		t.Fatalf("failed network collection still sent counters: list %v totals %v", rep.NetInterfaces, rep.GetMetrics().NetRxTotal)
+	}
+}
+
+// 请求带上与 metrics 同一次采样的逐盘容量与总数；根读不出时逐盘读数缺失，不发残缺的列表。
+func TestRunnerReportsDiskMounts(t *testing.T) {
+	const gib = 1 << 30
+	fsys := fstest.MapFS{"proc/self/mountinfo": {Data: []byte("1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 8:17 / /data rw - xfs /dev/sdb1 rw\n42 1 0:22 / /proc rw - proc proc rw\n")}}
+	p := hostProcFS(fsys, func() (uint64, uint64, error) { return 100 * gib, 10 * gib, nil })
+	p.Root.(*collecttest.Root).MountUsageFunc = func(name string) (uint64, uint64, error) { return 10 * gib, 9 * gib, nil }
+	hub := &fakeHub{interval: 10000}
+	r, _ := newRunner(t, hub)
+	r.Collector = &collect.Collector{Host: p, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"}
+	runFor(t, r, hub, 1)
+	rep := hub.received()[0]
+	want := []*heronv1.DiskMountUsage{{Path: "/data", Total: 10 * gib, Used: 9 * gib}, {Path: "/", Total: 100 * gib, Used: 10 * gib}}
+	if got := rep.GetDiskMounts(); rep.GetDiskMountsTotal() != 2 || len(got) != 2 || !proto.Equal(got[0], want[0]) || !proto.Equal(got[1], want[1]) {
+		t.Fatalf("disk_mounts = %v (total %d), want %v", got, rep.GetDiskMountsTotal(), want)
+	}
+	if rep.GetFacts().GetDiagnostics().GetDiskMountsTotal() != 2 {
+		t.Fatalf("diagnostics = %v", rep.GetFacts().GetDiagnostics())
+	}
+
+	failing := &fakeHub{interval: 10000}
+	r, _ = newRunner(t, failing)
+	r.Collector = &collect.Collector{Host: hostProcFS(fstest.MapFS{}, func() (uint64, uint64, error) { return 0, 0, errors.New("statfs failed") }), Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"}
+	runFor(t, r, failing, 1)
+	if rep := failing.received()[0]; rep.DiskMounts != nil || rep.GetDiskMountsTotal() != 0 {
+		t.Fatalf("failed root reading still sent disk mounts: %v (total %d)", rep.DiskMounts, rep.GetDiskMountsTotal())
 	}
 }
 

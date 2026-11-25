@@ -13,12 +13,14 @@ import (
 )
 
 // Root 的函数字段为 nil 时：StatIDFunc、FSTypeFunc 报 fs.ErrNotExist（识别据此按读不出处理），
-// UsageFunc 报 0/0。构造后、交给采集之前改字段；采集期间只读。
+// UsageFunc 报 0/0，MountUsageFunc 报 fs.ErrNotExist。构造后、交给采集之前改字段；采集期间只读。
 type Root struct {
 	FS         fs.FS
 	StatIDFunc func(name string) (dev string, ino uint64, err error)
 	FSTypeFunc func(name string) (uint64, error)
 	UsageFunc  func() (total, used uint64, err error)
+	// MountUsageFunc 为 nil 时 MountUsage 报 fs.ErrNotExist（挂载点已不在）。
+	MountUsageFunc func(name string) (total, used uint64, err error)
 
 	mu     sync.Mutex
 	names  []string
@@ -101,6 +103,16 @@ func (r *Root) Usage() (uint64, uint64, error) {
 	return r.UsageFunc()
 }
 
+func (r *Root) MountUsage(name string) (uint64, uint64, error) {
+	if err := r.record("statfs", name); err != nil {
+		return 0, 0, err
+	}
+	if r.MountUsageFunc == nil {
+		return 0, 0, &fs.PathError{Op: "statfs", Path: name, Err: fs.ErrNotExist}
+	}
+	return r.MountUsageFunc(name)
+}
+
 func (r *Root) Close() error {
 	r.mu.Lock()
 	r.closed++
@@ -108,7 +120,7 @@ func (r *Root) Close() error {
 	return nil
 }
 
-// Names 返回至今经 Open、Stat、StatID、FSType 用过的全部名字，按调用顺序。
+// Names 返回至今经 Open、Stat、StatID、FSType、MountUsage 用过的全部名字，按调用顺序。
 func (r *Root) Names() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

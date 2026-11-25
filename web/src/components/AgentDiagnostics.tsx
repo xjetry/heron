@@ -15,6 +15,7 @@ const COLLECTORS: Record<CollectionComponent, string> = {
   [CollectionComponent.NET]: "网络",
   [CollectionComponent.DISK_IO]: "磁盘 I/O",
   [CollectionComponent.TCP_STATS]: "TCP 计数",
+  [CollectionComponent.DISK_MOUNTS]: "逐盘容量",
 };
 
 const STRUCTURE_REASONS: Record<NetStructureReason, string> = {

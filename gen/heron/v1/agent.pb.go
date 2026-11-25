@@ -151,8 +151,15 @@ type ReportRequest struct {
 	// 带列表时 hub 用推导值覆盖 metrics 中的合计与摘要（ingest.normalizeNetTotals），agent 可以不重复发送；metrics 仍须通过形状校验。
 	// 列表只是流量账本的输入，不进实时读数与任何 API。
 	NetInterfaces []*NetInterfaceCounter `protobuf:"bytes,10,rep,name=net_interfaces,json=netInterfaces,proto3" json:"net_interfaces,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 与 metrics 同一次采样的本地数据盘逐盘容量：按使用率（used ÷ total）降序、同使用率按路径字节序升序，取前至多
+	// 16 项（agentwire.MaxDiskMounts）；根盘 "/" 与其余挂载点同样参与排序，可能被截掉。hub 只把它放进内存里的实时状态
+	// （live），不落库、不进 facts_hash、不进任何公开接口，管理端经 AdminService.GetNodeDisks 读取。
+	DiskMounts []*DiskMountUsage `protobuf:"bytes,11,rep,name=disk_mounts,json=diskMounts,proto3" json:"disk_mounts,omitempty"`
+	// 截断前的总数：0 表示这次没有逐盘读数（采集失败或 agent 不提供），此时列表为空；否则列表长度恰为
+	// min(disk_mounts_total, 16)。
+	DiskMountsTotal uint32 `protobuf:"varint,12,opt,name=disk_mounts_total,json=diskMountsTotal,proto3" json:"disk_mounts_total,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ReportRequest) Reset() {
@@ -239,6 +246,20 @@ func (x *ReportRequest) GetNetInterfaces() []*NetInterfaceCounter {
 		return x.NetInterfaces
 	}
 	return nil
+}
+
+func (x *ReportRequest) GetDiskMounts() []*DiskMountUsage {
+	if x != nil {
+		return x.DiskMounts
+	}
+	return nil
+}
+
+func (x *ReportRequest) GetDiskMountsTotal() uint32 {
+	if x != nil {
+		return x.DiskMountsTotal
+	}
+	return 0
 }
 
 // ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响。
@@ -518,7 +539,7 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"A\n" +
 	"\x10RegisterResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xb6\x03\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x9d\x04\n" +
 	"\rReportRequest\x12+\n" +
 	"\ametrics\x18\x01 \x01(\v2\x11.heron.v1.MetricsR\ametrics\x12:\n" +
 	"\rprobe_results\x18\x02 \x03(\v2\x15.heron.v1.ProbeResultR\fprobeResults\x12\x1d\n" +
@@ -530,7 +551,10 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\vupdate_hash\x18\t \x01(\x06H\x00R\n" +
 	"updateHash\x88\x01\x01\x12D\n" +
 	"\x0enet_interfaces\x18\n" +
-	" \x03(\v2\x1d.heron.v1.NetInterfaceCounterR\rnetInterfacesB\x0e\n" +
+	" \x03(\v2\x1d.heron.v1.NetInterfaceCounterR\rnetInterfaces\x129\n" +
+	"\vdisk_mounts\x18\v \x03(\v2\x18.heron.v1.DiskMountUsageR\n" +
+	"diskMounts\x12*\n" +
+	"\x11disk_mounts_total\x18\f \x01(\rR\x0fdiskMountsTotalB\x0e\n" +
 	"\f_update_hashJ\x04\b\x03\x10\x04J\x04\b\a\x10\bR\rtasks_versionR\fcapabilities\"\xa6\x02\n" +
 	"\x0eReportResponse\x12,\n" +
 	"\x12report_interval_ms\x18\x01 \x01(\rR\x10reportIntervalMs\x12*\n" +
@@ -583,8 +607,9 @@ var file_heron_v1_agent_proto_goTypes = []any{
 	(*Facts)(nil),               // 9: heron.v1.Facts
 	(*UpdateStatus)(nil),        // 10: heron.v1.UpdateStatus
 	(*NetInterfaceCounter)(nil), // 11: heron.v1.NetInterfaceCounter
-	(*ProbeTasks)(nil),          // 12: heron.v1.ProbeTasks
-	(*UpdateTask)(nil),          // 13: heron.v1.UpdateTask
+	(*DiskMountUsage)(nil),      // 12: heron.v1.DiskMountUsage
+	(*ProbeTasks)(nil),          // 13: heron.v1.ProbeTasks
+	(*UpdateTask)(nil),          // 14: heron.v1.UpdateTask
 }
 var file_heron_v1_agent_proto_depIdxs = []int32{
 	7,  // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
@@ -592,20 +617,21 @@ var file_heron_v1_agent_proto_depIdxs = []int32{
 	9,  // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
 	10, // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
 	11, // 4: heron.v1.ReportRequest.net_interfaces:type_name -> heron.v1.NetInterfaceCounter
-	12, // 5: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
-	13, // 6: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
-	4,  // 7: heron.v1.ReportResponse.detection:type_name -> heron.v1.NetworkDetection
-	0,  // 8: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
-	2,  // 9: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
-	5,  // 10: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
-	1,  // 11: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
-	3,  // 12: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
-	6,  // 13: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
-	11, // [11:14] is the sub-list for method output_type
-	8,  // [8:11] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	12, // 5: heron.v1.ReportRequest.disk_mounts:type_name -> heron.v1.DiskMountUsage
+	13, // 6: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
+	14, // 7: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
+	4,  // 8: heron.v1.ReportResponse.detection:type_name -> heron.v1.NetworkDetection
+	0,  // 9: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
+	2,  // 10: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
+	5,  // 11: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
+	1,  // 12: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
+	3,  // 13: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
+	6,  // 14: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
+	12, // [12:15] is the sub-list for method output_type
+	9,  // [9:12] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_agent_proto_init() }

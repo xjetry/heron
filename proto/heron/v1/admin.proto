@@ -352,6 +352,11 @@ service AdminService {
   rpc GetCaller(GetCallerRequest) returns (GetCallerResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
+  // 节点最近一次上报的本地数据盘逐盘容量，只在 hub 内存里（hub 重启后到该节点再次上报前为空）。挂载路径是 agent 自报的
+  // 任意文本，所以不进可压缩的 GetSnapshot，也没有公开对应。节点不存在或不在调用方范围内返回 NotFound。
+  rpc GetNodeDisks(GetNodeDisksRequest) returns (GetNodeDisksResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
 }
 
 message GetUpdatesRequest { bool check_latest = 1; }
@@ -1853,3 +1858,17 @@ message NotifyChannelRef {
   ChannelKind kind = 3;
 }
 message ListNotifyChannelRefsResponse { repeated NotifyChannelRef channels = 1; }
+
+message GetNodeDisksRequest {
+  int64 node_id = 1;
+}
+message GetNodeDisksResponse {
+  // 与 ReportRequest.disk_mounts 相同的排序与截断：使用率降序、同使用率按路径升序，至多 16 项。
+  repeated DiskMountUsage mounts = 1;
+  // 截断前的总数；0 表示最近一次上报没有逐盘读数（采集失败或 agent 版本不提供）。
+  uint32 total = 2;
+  // 携带这份读数的上报到达 hub 的墙钟 Unix 秒；hub 启动后还没收到该节点的上报时缺失。
+  optional int64 sampled_at = 3;
+  // 与 GetSnapshot 同一在线判定：离线节点仍返回最后一次读数，由调用方按 online 标注。
+  bool online = 4;
+}
