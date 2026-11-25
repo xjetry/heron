@@ -399,7 +399,15 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .renewal-count[data-level="critical"] { color: var(--status-offline); }
 .renewal-calendar .calendar-grid button[aria-pressed="true"] .renewal-count { color: inherit; }
 .renewal-day-title { margin: 20px 0 8px; font-size: 15px; }
-@media (max-width: 560px) { .renewal-calendar .calendar-grid button { height: 48px; } }
+/* 续费日历顶部的费用概览（pages/Renewals.tsx 的 CostOverview）：两列并排，手机上叠成一列；逾期一行用严重色。 */
+.cost-overview { max-width: 760px; margin-bottom: 12px; }
+.cost-overview h2 { margin: 0 0 8px; font-size: 15px; }
+.cost-overview h3 { margin: 0 0 4px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.cost-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cost-overview ul { list-style: none; margin: 0; padding: 0; font-variant-numeric: tabular-nums; }
+.cost-overview p { margin: 8px 0 0; font-size: 13px; }
+.cost-overview .cost-overdue { color: var(--status-offline); }
+@media (max-width: 560px) { .renewal-calendar .calendar-grid button { height: 48px; } .cost-columns { grid-template-columns: minmax(0, 1fr); } }
 /* 节点详情的每日流量（components/DailyTraffic.tsx）：柱高相对本段内用量最高的一天，柱宽封顶 24px，段间与柱间各留 2px 底色；
    无数据的日子在基线上方留一个弱化的短横，与用量为 0（只剩基线）区分。
    窄屏上一天不到一个数字宽，只留每 5 天与今天的日期。 */
