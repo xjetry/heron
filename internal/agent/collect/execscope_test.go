@@ -730,9 +730,9 @@ func TestHostReadingsEquivalentToBaseSemantics(t *testing.T) {
 	// 旧口径参照：cpuRatios 是基点版本的差分公式，meminfo/swap/load 同为基点读法。
 	cur, _ := parseStat(strings.NewReader(string(statLines("cpu  180 30 90 850 40 10 10 5 0 0\n", 4))))
 	prev, _ := parseStat(strings.NewReader(string(statLines("cpu  100 0 50 800 20 0 10 5 0 0\n", 4))))
-	busy, steal, iowait, ok := cpuRatios(prev, cur)
-	if !ok || m.GetCpuPct() != busy || m.GetCpuStealPct() != steal || m.GetCpuIowaitPct() != iowait {
-		t.Fatalf("cpu 读数与基点口径不同: %+v vs %v/%v/%v", m, busy, steal, iowait)
+	r, ok := cpuRatios(prev, cur)
+	if !ok || m.GetCpuPct() != r.busy || m.GetCpuStealPct() != r.steal || m.GetCpuIowaitPct() != r.iowait || m.GetCpuSoftirqPct() != r.softirq {
+		t.Fatalf("cpu 读数与基点口径不同: %+v vs %+v", m, r)
 	}
 	if m.GetMemTotal() != 8000*1024 || m.GetMemUsed() != (8000-3000)*1024 {
 		t.Fatalf("mem 读数与基点口径不同: %d/%d", m.GetMemTotal(), m.GetMemUsed())
@@ -754,7 +754,7 @@ func TestHostReadingsEquivalentToBaseSemantics(t *testing.T) {
 	// 第三个样本 = 第二个样本 + （第二个 − 第一个）：legacy 两周期后的差分与主机口径相同。
 	fsys["proc/stat"] = &fstest.MapFile{Data: statLines("cpu  260 60 130 900 60 20 10 5 0 0\n", 4)}
 	clk2.Advance(2 * time.Second)
-	if m1, _ := v1.Metrics(v1.Identify()); m1.GetCpuPct() != busy || m1.GetMemUsed() != m.GetMemUsed() || m1.GetLoad1() != m.GetLoad1() {
+	if m1, _ := v1.Metrics(v1.Identify()); m1.GetCpuPct() != r.busy || m1.GetMemUsed() != m.GetMemUsed() || m1.GetLoad1() != m.GetLoad1() {
 		t.Fatalf("v1 读数 %v 与主机口径 %v 不一致", m1, m)
 	}
 }
