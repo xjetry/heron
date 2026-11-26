@@ -1193,7 +1193,8 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 告警通知样例的输入。
+// 告警通知样例的输入，预览与试投递共用这一份：两者渲染的是同一个样例，字段与校验只定义一次。错误里的字段路径相对
+// 本消息（rule.<字段>、node_id、transition），缺席的 sample 按各字段为空裁决。
 // rule 是编辑中的规则，按 SaveAlertRule 同一套字段校验（错误同样以 rule.<字段> 点名）；作用域与引用的探测任务不影响
 // 消息，不在这里裁决。rule.id 只在自适应基线的规则上用来读这条已保存规则的基线，未保存的草稿取样例基线。
 // rule.channel_ids 只能是已保存渠道的 id，重复的合并，合并后 1–16 个；不存在的 id 即 NotFound。请求里没有地址字段：
@@ -1203,10 +1204,13 @@ message TestNotifyChannelResponse {}
 // 一半；相对判定触发取正常带上沿、恢复取基线；资源触发取阈值、恢复取恢复阈值；到期与证书到期取今天加提前天数，恢复
 // 写"已不在提醒窗口内"。节点没设流量配额时代以 1 TiB，相对判定没有可用基线时代以 100 ms；恢复文案的告警持续时长
 // 固定为 30 分钟。
-message PreviewAlertNotificationRequest {
+message AlertNotificationSample {
   AlertRule rule = 1;
   int64 node_id = 2;
   string transition = 3;
+}
+message PreviewAlertNotificationRequest {
+  AlertNotificationSample sample = 1;
 }
 // 一个渠道的渲染结果：method、url_host 与 body 是投递会发出的请求（url_host 只到 scheme://host，与 WebhookConfig 同一
 // 口径，路径、查询串与头值不回显）；error 非空时渲染失败（渠道配置无效或模板执行出错），其余三项为空。
@@ -1221,11 +1225,8 @@ message PreviewAlertNotificationResponse {
   // 按 channel_id 升序，每个渠道一项。
   repeated AlertNotificationPreview previews = 1;
 }
-// 字段与校验同 PreviewAlertNotificationRequest。
 message TestAlertNotificationRequest {
-  AlertRule rule = 1;
-  int64 node_id = 2;
-  string transition = 3;
+  AlertNotificationSample sample = 1;
 }
 // 一个渠道的试投递结果：ok 为真即接收方以 2xx 应答；否则 failure 给出类别（与 AlertDelivery 同一枚举），HTTP 失败
 // 带 http_status，error 是错误原文（HTTP 失败为响应体前 200 个字符）。

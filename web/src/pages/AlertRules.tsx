@@ -327,7 +327,7 @@ function NotificationSample({ rule, nodes, channels }: { rule: () => ReturnType<
   // 两种结果互斥显示：每次点击先清掉另一种，看到的总是最近一次操作的结果。
   const run = (which: "preview" | "test") => {
     if (nodeId === undefined) return;
-    const req = { rule: rule(), nodeId, transition: phase };
+    const req = { sample: { rule: rule(), nodeId, transition: phase } };
     if (which === "preview") { test.reset(); preview.mutate(req); } else { preview.reset(); test.mutate(req); }
   };
   const ready = nodeId !== undefined && current.channelIds.length > 0 && !preview.isPending && !test.isPending;

@@ -33,8 +33,8 @@ func TestPreviewAlertNotificationRendersDraft(t *testing.T) {
 	w := saveChannel(t, h, hook)
 	tg := saveChannel(t, h, &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "123:secret", ChatId: "42"}})
 	before := rowCounts(t, h.dbPath)
-	resp, err := h.admin.PreviewAlertNotification(t.Context(), connect.NewRequest(&heronv1.PreviewAlertNotificationRequest{
-		Rule: offlineDraft(tg.Id, w.Id), NodeId: node, Transition: "firing"}))
+	resp, err := h.admin.PreviewAlertNotification(t.Context(), connect.NewRequest(&heronv1.PreviewAlertNotificationRequest{Sample: &heronv1.AlertNotificationSample{
+		Rule: offlineDraft(tg.Id, w.Id), NodeId: node, Transition: "firing"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func TestPreviewAlertNotificationReportsTemplateErrorPerChannel(t *testing.T) {
 	bad.Webhook.BodyTemplate = `{{if eq .Transition "recovered"}}{{.Missing}}{{end}}ok`
 	b := saveChannel(t, h, bad)
 	good := saveChannel(t, h, webhook("http://127.0.0.1:2"))
-	resp, err := h.admin.PreviewAlertNotification(t.Context(), connect.NewRequest(&heronv1.PreviewAlertNotificationRequest{
-		Rule: offlineDraft(b.Id, good.Id), NodeId: node, Transition: "recovered"}))
+	resp, err := h.admin.PreviewAlertNotification(t.Context(), connect.NewRequest(&heronv1.PreviewAlertNotificationRequest{Sample: &heronv1.AlertNotificationSample{
+		Rule: offlineDraft(b.Id, good.Id), NodeId: node, Transition: "recovered"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +106,8 @@ func TestTestAlertNotificationSendsPrefixedSampleWithoutRecording(t *testing.T) 
 	good := saveChannel(t, h, webhook(ok.URL))
 	bad := saveChannel(t, h, webhook(failing.URL))
 	before := rowCounts(t, h.dbPath)
-	resp, err := h.admin.TestAlertNotification(t.Context(), connect.NewRequest(&heronv1.TestAlertNotificationRequest{
-		Rule: offlineDraft(bad.Id, good.Id), NodeId: node, Transition: "firing"}))
+	resp, err := h.admin.TestAlertNotification(t.Context(), connect.NewRequest(&heronv1.TestAlertNotificationRequest{Sample: &heronv1.AlertNotificationSample{
+		Rule: offlineDraft(bad.Id, good.Id), NodeId: node, Transition: "firing"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,8 @@ func TestTestAlertNotificationSendsPrefixedSampleWithoutRecording(t *testing.T) 
 	}
 }
 
-// 两个入口共用的输入校验：规则字段与 SaveAlertRule 同样以 rule.<字段> 点名；渠道只能是已保存的；节点须存在；阶段只有两种。
+// 两个入口共用的输入校验（同一份 AlertNotificationSample，路径相对它）：规则字段与 SaveAlertRule 同样以 rule.<字段>
+// 点名；渠道只能是已保存的；节点须存在；阶段只有两种。
 func TestAlertNotificationValidation(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")
@@ -136,26 +137,26 @@ func TestAlertNotificationValidation(t *testing.T) {
 	c := saveChannel(t, h, webhook("http://127.0.0.1:1"))
 	for _, tc := range []struct {
 		name string
-		edit func(*heronv1.PreviewAlertNotificationRequest)
+		edit func(*heronv1.AlertNotificationSample)
 		code connect.Code
 		text string
 	}{
-		{"rule_name", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule.Name = "" }, connect.CodeInvalidArgument, "rule.name must contain"},
-		{"rule_kind", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule.Kind = 0 }, connect.CodeInvalidArgument, "rule.kind must be"},
-		{"no_rule", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule = nil }, connect.CodeInvalidArgument, "rule.kind must be"},
-		{"no_channels", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule.ChannelIds = nil }, connect.CodeInvalidArgument, "rule.channel_ids must name between 1 and 16 saved notify channels"},
-		{"unsaved_channel", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule.ChannelIds = []int64{c.Id, 99} }, connect.CodeNotFound, "rule.channel_ids: notify channel 99 does not exist"},
-		{"node", func(r *heronv1.PreviewAlertNotificationRequest) { r.NodeId = 99 }, connect.CodeNotFound, "node 99 does not exist"},
-		{"transition", func(r *heronv1.PreviewAlertNotificationRequest) { r.Transition = "pending" }, connect.CodeInvalidArgument, `invalid_argument: transition must be one of firing, recovered; got "pending"`},
+		{"rule_name", func(r *heronv1.AlertNotificationSample) { r.Rule.Name = "" }, connect.CodeInvalidArgument, "rule.name must contain"},
+		{"rule_kind", func(r *heronv1.AlertNotificationSample) { r.Rule.Kind = 0 }, connect.CodeInvalidArgument, "rule.kind must be"},
+		{"no_rule", func(r *heronv1.AlertNotificationSample) { r.Rule = nil }, connect.CodeInvalidArgument, "rule.kind must be"},
+		{"no_channels", func(r *heronv1.AlertNotificationSample) { r.Rule.ChannelIds = nil }, connect.CodeInvalidArgument, "rule.channel_ids must name between 1 and 16 saved notify channels"},
+		{"unsaved_channel", func(r *heronv1.AlertNotificationSample) { r.Rule.ChannelIds = []int64{c.Id, 99} }, connect.CodeNotFound, "rule.channel_ids: notify channel 99 does not exist"},
+		{"node", func(r *heronv1.AlertNotificationSample) { r.NodeId = 99 }, connect.CodeNotFound, "node 99 does not exist"},
+		{"transition", func(r *heronv1.AlertNotificationSample) { r.Transition = "pending" }, connect.CodeInvalidArgument, `invalid_argument: transition must be one of firing, recovered; got "pending"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := &heronv1.PreviewAlertNotificationRequest{Rule: offlineDraft(c.Id), NodeId: node, Transition: "firing"}
+			req := &heronv1.AlertNotificationSample{Rule: offlineDraft(c.Id), NodeId: node, Transition: "firing"}
 			tc.edit(req)
-			_, err := h.admin.PreviewAlertNotification(t.Context(), connect.NewRequest(req))
+			_, err := h.admin.PreviewAlertNotification(t.Context(), connect.NewRequest(&heronv1.PreviewAlertNotificationRequest{Sample: req}))
 			if codeOf(err) != tc.code || !strings.Contains(err.Error(), tc.text) {
 				t.Fatalf("preview err=%v want %s %q", err, tc.code, tc.text)
 			}
-			_, err = h.admin.TestAlertNotification(t.Context(), connect.NewRequest(&heronv1.TestAlertNotificationRequest{Rule: req.Rule, NodeId: req.NodeId, Transition: req.Transition}))
+			_, err = h.admin.TestAlertNotification(t.Context(), connect.NewRequest(&heronv1.TestAlertNotificationRequest{Sample: req}))
 			if codeOf(err) != tc.code || !strings.Contains(err.Error(), tc.text) {
 				t.Fatalf("test err=%v want %s %q", err, tc.code, tc.text)
 			}
@@ -174,7 +175,7 @@ func TestAlertNotificationRejectsAPITokens(t *testing.T) {
 	defer srv.Close()
 	c := saveChannel(t, h, webhook(srv.URL))
 	_, token := createToken(t, h, "automation")
-	body := `{"rule":{"name":"x","kind":"ALERT_KIND_OFFLINE","channelIds":["` + strconv.FormatInt(c.Id, 10) + `"]},"nodeId":"` + strconv.FormatInt(node, 10) + `","transition":"firing"}`
+	body := `{"sample":{"rule":{"name":"x","kind":"ALERT_KIND_OFFLINE","channelIds":["` + strconv.FormatInt(c.Id, 10) + `"]},"nodeId":"` + strconv.FormatInt(node, 10) + `","transition":"firing"}}`
 	for _, method := range []string{"PreviewAlertNotification", "TestAlertNotification"} {
 		if got := rawCall(t, h, method, body, bearer(token)); got.status != 403 || got.code != "permission_denied" {
 			t.Errorf("%s token must be PermissionDenied: %+v", method, got)

@@ -41,7 +41,7 @@ it("按未保存的草稿、所选样例节点与阶段预览，逐渠道显示�
   fireEvent.click(form.getByRole("button", { name: "预览" }));
   const list = await form.findByRole("list", { name: "预览结果" });
   expect(previewed).toHaveLength(1);
-  expect(previewed[0]).toMatchObject({ nodeId: 2n, transition: "recovered", rule: { id: 7n, name: "离线（未保存）", kind: AlertKind.OFFLINE, channelIds: [5n, 6n] } });
+  expect(previewed[0].sample).toMatchObject({ nodeId: 2n, transition: "recovered", rule: { id: 7n, name: "离线（未保存）", kind: AlertKind.OFFLINE, channelIds: [5n, 6n] } });
   const [hook, chat] = within(list).getAllByRole("listitem");
   expect(hook).toHaveTextContent("hook");
   expect(hook).toHaveTextContent("PUT https://hook.example");
@@ -65,7 +65,7 @@ it("发送测试默认取第一个节点与触发阶段，逐渠道显示送达�
   const form = await openEdit();
   fireEvent.click(form.getByRole("button", { name: "发送测试" }));
   const list = await form.findByRole("list", { name: "发送测试结果" });
-  expect(sent[0]).toMatchObject({ nodeId: 1n, transition: "firing", rule: { id: 7n } });
+  expect(sent[0].sample).toMatchObject({ nodeId: 1n, transition: "firing", rule: { id: 7n } });
   const [hook, chat] = within(list).getAllByRole("listitem");
   expect(hook).toHaveTextContent("hook：已送达");
   expect(chat).toHaveTextContent("群聊：HTTP 401 Unauthorized: bad token");
