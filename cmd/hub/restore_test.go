@@ -303,6 +303,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			removeV36Config(t, cfg)
 			removeV35Config(t, cfg)
 			removeV34Config(t, cfg)
+			removeV55Metrics(t, met)
 			removeV53Metrics(t, met)
 			removeV43Metrics(t, met)
 			removeV34Metrics(t, met)
@@ -381,6 +382,14 @@ func removeV52Config(t *testing.T, config *sql.DB) {
 func removeV51Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN ip_family; ALTER TABLE probe_task DROP COLUMN dns_record_type")
+}
+
+// 55 给三张指标表加了 softirq 占比的 sum/n/max，在指标层。
+func removeV55Metrics(t *testing.T, metrics *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		restoreExec(t, metrics, "ALTER TABLE "+table+" DROP COLUMN cpu_softirq_pct_sum; ALTER TABLE "+table+" DROP COLUMN cpu_softirq_pct_n; ALTER TABLE "+table+" DROP COLUMN cpu_softirq_pct_max")
+	}
 }
 
 // 53 给三张指标表加了最满盘使用率的 sum/n，在指标层。
@@ -927,13 +936,15 @@ func TestRestoreRejectsNodeWithInvalidPriceCurrency(t *testing.T) {
 	}
 }
 
-// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据，v53 快照与当前版本
-// 结构相同，改 schema_version 即得到一份 v53 快照。
+// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据，配置层在 53 之后没有
+// 结构变化，改 schema_version 即得到 v53 的配置快照；指标层撤掉 55 加的列再改版本号。
 func TestRestoreNormalizesPriceCurrencyOfV53Snapshot(t *testing.T) {
 	t.Parallel()
 	config, metrics := restoreSnapshots(t)
 	restoreExec(t, restoreDB(t, config), "UPDATE node SET price='5', currency=' usd ' WHERE id=1; UPDATE snapshot_meta SET schema_version=53")
-	restoreExec(t, restoreDB(t, metrics), "UPDATE snapshot_meta SET schema_version=53")
+	met := restoreDB(t, metrics)
+	removeV55Metrics(t, met)
+	restoreExec(t, met, "UPDATE snapshot_meta SET schema_version=53")
 	path := restoreTarget(t)
 	if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)

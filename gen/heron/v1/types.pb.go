@@ -867,8 +867,10 @@ type Metrics struct {
 	// 首样本、设备集合变化或任一设备计数回退时缺失，不伪造零值。
 	DiskReadBps  *uint64 `protobuf:"varint,21,opt,name=disk_read_bps,json=diskReadBps,proto3,oneof" json:"disk_read_bps,omitempty"`
 	DiskWriteBps *uint64 `protobuf:"varint,22,opt,name=disk_write_bps,json=diskWriteBps,proto3,oneof" json:"disk_write_bps,omitempty"`
-	// steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
-	// 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
+	// steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分（softirq 见
+	// cpu_softirq_pct，同一次差分）。cpu_pct 把 iowait 计为空闲、把 steal 计为忙碌：iowait 在 cpu_pct 之外，
+	// steal 是 cpu_pct 里可以单独看的部分。任意计数回退或 Δtotal = 0 时这几项一起缺失；来源没有该计数时
+	// （darwin、内核不提供该列）只缺该项。CPU 范围是执行环境（cgroup）时 cpu_pct 改由本环境用量得出，这几项是全机计数，不设置。
 	CpuStealPct  *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
 	CpuIowaitPct *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
 	// 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
@@ -893,8 +895,12 @@ type Metrics struct {
 	//     与逐盘采集出现之前的磁盘口径相同，不比那时更差；逐盘采集失败由诊断的 DISK_MOUNTS 点名。
 	//   - 两者都没有（根盘读不出）时缺失，不是 0。
 	DiskMaxUsedPct *float64 `protobuf:"fixed64,30,opt,name=disk_max_used_pct,json=diskMaxUsedPct,proto3,oneof" json:"disk_max_used_pct,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 软中断（softirq）占全部 CPU tick 的百分比，与 cpu_steal_pct、cpu_iowait_pct 同一次差分、同一组缺失条件。
+	// 网络收发包处理主要记在这里，转发、代理一类节点的 CPU 瓶颈常在此。softirq 不计为空闲，是 cpu_pct 里可以单独看的部分。
+	// /proc/stat 首行不足 7 个计数（2.6 之前的内核）时缺失；darwin 不设置。
+	CpuSoftirqPct *float64 `protobuf:"fixed64,31,opt,name=cpu_softirq_pct,json=cpuSoftirqPct,proto3,oneof" json:"cpu_softirq_pct,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Metrics) Reset() {
@@ -1133,6 +1139,13 @@ func (x *Metrics) GetTcpRetransSegsPs() float64 {
 func (x *Metrics) GetDiskMaxUsedPct() float64 {
 	if x != nil && x.DiskMaxUsedPct != nil {
 		return *x.DiskMaxUsedPct
+	}
+	return 0
+}
+
+func (x *Metrics) GetCpuSoftirqPct() float64 {
+	if x != nil && x.CpuSoftirqPct != nil {
+		return *x.CpuSoftirqPct
 	}
 	return 0
 }
@@ -2577,7 +2590,7 @@ var File_heron_v1_types_proto protoreflect.FileDescriptor
 
 const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x14heron/v1/types.proto\x12\bheron.v1\"\xb0\f\n" +
+	"\x14heron/v1/types.proto\x12\bheron.v1\"\xf1\f\n" +
 	"\aMetrics\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
@@ -2616,7 +2629,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x14tcp_passive_opens_ps\x18\x1b \x01(\x01H\x18R\x11tcpPassiveOpensPs\x88\x01\x01\x12*\n" +
 	"\x0ftcp_out_segs_ps\x18\x1c \x01(\x01H\x19R\ftcpOutSegsPs\x88\x01\x01\x122\n" +
 	"\x13tcp_retrans_segs_ps\x18\x1d \x01(\x01H\x1aR\x10tcpRetransSegsPs\x88\x01\x01\x12.\n" +
-	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01B\n" +
+	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01\x12+\n" +
+	"\x0fcpu_softirq_pct\x18\x1f \x01(\x01H\x1cR\rcpuSoftirqPct\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -2650,7 +2664,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x15_tcp_passive_opens_psB\x12\n" +
 	"\x10_tcp_out_segs_psB\x16\n" +
 	"\x14_tcp_retrans_segs_psB\x14\n" +
-	"\x12_disk_max_used_pct\"_\n" +
+	"\x12_disk_max_used_pctB\x12\n" +
+	"\x10_cpu_softirq_pct\"_\n" +
 	"\x13NetInterfaceCounter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\brx_bytes\x18\x02 \x01(\x04R\arxBytes\x12\x19\n" +

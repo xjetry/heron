@@ -153,6 +153,7 @@ func TestTrafficOldSnapshotRestoresBaseline(t *testing.T) {
 			}
 		}
 		if layer == "metrics" {
+			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 		}

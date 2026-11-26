@@ -315,6 +315,19 @@ func invalid(format string, args ...any) error {
 	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(format, args...))
 }
 
+// listLimit 是所有带 limit 的列表共用的裁决：0 取缺省，超过上限返回 InvalidArgument 并点名 limit，不截断。
+// 这些列表要么没有翻页游标，要么调用方按"不满一页即到底"翻页；按上限截断会让请求 1000 条的调用方拿到 500 条后
+// 以为已经取完。
+func listLimit(got uint32, def, maxLimit int) (int, error) {
+	if got == 0 {
+		return def, nil
+	}
+	if int64(got) > int64(maxLimit) {
+		return 0, invalid("limit must be between 1 and %d (0 means %d), got %d", maxLimit, def, got)
+	}
+	return int(got), nil
+}
+
 func notFound(id int64) error {
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("node %d does not exist", id))
 }
@@ -344,6 +357,26 @@ func bearerCredential(h http.Header) (string, bool, error) {
 		return "", true, errors.New("empty bearer token")
 	}
 	return found[0], true, nil
+}
+
+// missingCredential 是既无 Bearer 也无会话 cookie 时的文案，按方法准入指向调用方真正能用的那种凭据。
+// 程序化调用方（AI、脚本）按设计不持有管理员密码：可用 token 的方法若只说"去 Login"，它会被引向一条走不通的路，
+// 而真正缺的常是 Authorization 头被反代剥掉或 scheme 写错。只接受会话的方法反过来要直说 token 不行，免得它换 token 重试。
+// 非 Bearer 的 Authorization 头按 bearerCredential 的口径视为不存在；可用 token 的方法上点出 scheme 不对，不回显头的内容。
+func missingCredential(level heronv1.Access, procedure string, h http.Header) string {
+	var msg string
+	switch level {
+	case heronv1.Access_ACCESS_SESSION:
+		return fmt.Sprintf("no session cookie: %s requires a panel session, call Login first; API tokens cannot call it", procedure)
+	case heronv1.Access_ACCESS_CHANGE:
+		msg = "no credentials: send Authorization: Bearer <API token> whose grant preauthorizes this write (an administrator creates tokens on the panel's API token page), or call Login for a panel session"
+	default:
+		msg = "no credentials: send Authorization: Bearer <API token> (an administrator creates tokens on the panel's API token page), or call Login for a panel session"
+	}
+	if len(h.Values("Authorization")) > 0 {
+		msg += "; the Authorization header present is not a hub credential, API tokens use the Bearer scheme"
+	}
+	return msg
 }
 
 type accessInterceptor struct{ s *Service }
@@ -381,7 +414,7 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			case store.TokenExpired:
 				return nil, unauthenticated(fmt.Sprintf("API token expired at %s; an administrator can extend it with UpdateApiToken or issue a new one", principal.ExpiresAt.UTC().Format(time.RFC3339)))
 			default:
-				return nil, unauthenticated("API token unknown or revoked")
+				return nil, unauthenticated("API token unknown or revoked; an administrator can issue a new one on the panel's API token page")
 			}
 			if level != heronv1.Access_ACCESS_READ && !(level == heronv1.Access_ACCESS_CHANGE && len(principal.Permissions) > 0) {
 				if level == heronv1.Access_ACCESS_LOGIN {
@@ -400,7 +433,7 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		}
 		candidates := sessionCandidates(req.Header())
 		if len(candidates) == 0 {
-			return nil, unauthenticated("no session cookie; call Login first")
+			return nil, unauthenticated(missingCredential(level, req.Spec().Procedure, req.Header()))
 		}
 		tok, alive, err := s.auth.AuthenticateSession(ctx, candidates)
 		if err != nil {

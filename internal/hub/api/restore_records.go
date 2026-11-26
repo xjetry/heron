@@ -19,12 +19,9 @@ const (
 
 // ListRestoreRecords 读离线恢复写下的审计记录。恢复只在停机时发生，这里只读 store，不触碰备份循环。
 func (s *Service) ListRestoreRecords(ctx context.Context, req *connect.Request[heronv1.ListRestoreRecordsRequest]) (*connect.Response[heronv1.ListRestoreRecordsResponse], error) {
-	limit := int(req.Msg.GetLimit())
-	if limit == 0 {
-		limit = restoreRecordsDefaultLimit
-	}
-	if limit > restoreRecordsMaxLimit {
-		return nil, invalid("limit must be between 1 and %d, got %d", restoreRecordsMaxLimit, limit)
+	limit, err := listLimit(req.Msg.GetLimit(), restoreRecordsDefaultLimit, restoreRecordsMaxLimit)
+	if err != nil {
+		return nil, err
 	}
 	records, err := s.store.ListRestoreRecords(ctx, limit)
 	if err != nil {

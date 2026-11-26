@@ -90,6 +90,8 @@ var Columns = []Column{
 	// （ingest.normalizeDiskMax，不带逐盘列表时退回根盘），这里只读字段、不自己再推一遍。disk_used 与 disk_used_pct
 	// 仍只是根盘：两种口径并存，根盘曲线不因哪块盘最满而换主语。
 	{"disk_max_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetDiskMaxUsedPct(), m.DiskMaxUsedPct != nil }},
+	// softirq 与 steal、iowait 同一次差分、同一口径，同样保留峰值：网络突发造成的软中断尖峰会被分钟均值抹平。
+	{"cpu_softirq_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuSoftirqPct(), m.CpuSoftirqPct != nil }},
 }
 
 // UsedPercent 是容量类读数的使用率，百分比。同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，

@@ -4986,7 +4986,8 @@ export type ListAlertEventsRequest = Message<"heron.v1.ListAlertEventsRequest"> 
   beforeId: bigint;
 
   /**
-   * 0 取 100，超过 500 按 500 返回。
+   * 0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断。翻页用上一页最后一条的 id 作 before_id，
+   * 返回条数少于 limit 即已到底——截断会让这条判断失真。
    *
    * @generated from field: uint32 limit = 3;
    */
@@ -5820,6 +5821,9 @@ export type ListOperationsRequest = Message<"heron.v1.ListOperationsRequest"> & 
   requestId: string;
 
   /**
+   * 返回按提交时刻从新到旧的最新条数。0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断：
+   * 这里没有翻页游标，截断会让调用方误以为已经拿全。
+   *
    * @generated from field: uint32 limit = 3;
    */
   limit: number;

@@ -345,14 +345,11 @@ func (s *Service) TestNotifyChannel(ctx context.Context, req *connect.Request[he
 }
 
 func (s *Service) ListAlertEvents(ctx context.Context, req *connect.Request[heronv1.ListAlertEventsRequest]) (*connect.Response[heronv1.ListAlertEventsResponse], error) {
-	limit := req.Msg.GetLimit()
-	if limit == 0 {
-		limit = 100
+	limit, err := listLimit(req.Msg.GetLimit(), 100, 500)
+	if err != nil {
+		return nil, err
 	}
-	if limit > 500 {
-		limit = 500
-	}
-	events, err := s.store.ListAlertEvents(ctx, req.Msg.GetNodeId(), req.Msg.GetBeforeId(), int(limit))
+	events, err := s.store.ListAlertEvents(ctx, req.Msg.GetNodeId(), req.Msg.GetBeforeId(), limit)
 	if err != nil {
 		return nil, s.operationError(err, "", "listing alert events failed")
 	}

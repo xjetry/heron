@@ -509,10 +509,10 @@ func TestListAlertEventsPaging(t *testing.T) {
 	if got := query(0, 0, 0); len(got.Events) != 100 {
 		t.Fatalf("default count=%d", len(got.Events))
 	}
-	if got := query(0, 0, 1000); len(got.Events) != 500 {
-		t.Fatalf("capped count=%d", len(got.Events))
+	if got := query(0, 0, 500); len(got.Events) != 500 {
+		t.Fatalf("maximum count=%d", len(got.Events))
 	}
-	if got := query(n2, 0, 1000); len(got.Events) != 1 || got.Events[0].Id != events[0].ID {
+	if got := query(n2, 0, 500); len(got.Events) != 1 || got.Events[0].Id != events[0].ID {
 		t.Fatalf("node filter=%v", got)
 	}
 }
