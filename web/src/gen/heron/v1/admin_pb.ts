@@ -5142,8 +5142,9 @@ export type AlertEvent = Message<"heron.v1.AlertEvent"> & {
    * 离线是未上报的时长（seconds）；探测是这一分钟的读数，丢包 loss_pct 为 percent、往返 rtt_ms 为 milliseconds；
    * 资源是规则读取的指标列的分钟均值，内存、磁盘（最满盘）、CPU 使用率为 percent，按核负载无量纲（空串），网卡下行、
    * 上行速率为 bytes/s（面板按 1 Mbps = 125000 bytes/s 显示）；流量是本周期已用量占配额的 percent，因清除配额而恢复时
-   * 没有观测值（0 且单位 n/a）；到期与证书到期是距到期的日历日数（days，按 hub 时区，负数是已过期的天数），到期规则因清除
-   * 到期日而恢复时没有观测值（0 且单位 n/a）。系统事件没有观测值，恒为 0、单位 n/a。
+   * 没有观测值（0 且单位 n/a）；到期是按节点计费时区（空即 hub 时区）算出的距到期日历日数（days，负数是已过期的天数），
+   * 因清除到期日而恢复时没有观测值（0 且单位 n/a）；证书到期是按 hub 时区算出的距到期日历日数（days，负数是已过期的天数）。
+   * 系统事件没有观测值，恒为 0、单位 n/a。
    *
    * @generated from field: double value = 7;
    */
