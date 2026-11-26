@@ -1,7 +1,7 @@
 import { type Traffic, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { bytes } from "./format";
 
-// 重置日的准入范围，与 hub 的 traffic.MinResetDay / MaxResetDay 一致；越界值 hub 会拒绝，表单先禁止保存。
+// 重置日的准入范围，与 hub 的 store.MinTrafficResetDay / MaxTrafficResetDay 一致；越界值 hub 会拒绝，表单先禁止保存。
 // 不足该日的月份由 hub 钳到当月最后一日（traffic.PeriodStart），配置的原值不变。
 export const RESET_DAY_MIN = 1;
 export const RESET_DAY_MAX = 31;
