@@ -52,7 +52,7 @@ type Staleness struct {
 }
 
 // Staleness 是存储健康的唯一判定：API 响应带上它的结论，面板只渲染、不重算，阈值因此只有这一份，不会在
-// 前端与 hub 之间各改各的。保留期取调用方传入的当前配置，与 Prune 用的是同一个 Retention。
+// 前端与 hub 之间各改各的。保留期由调用方传入，生产路径传 Store.Retention()，与 Prune 用的是同一份。
 //
 //   - 最老桶早于 now − 保留期 − 一个桶长 − MaintenanceInterval 即标红。Prune 的截止点是 now − 保留期向下对齐到
 //     桶长，所以刚清理完时最老桶比 now − 保留期早不到一个桶长；截止点跨过桶边界之后、下一轮 prune 删掉那一桶之前，

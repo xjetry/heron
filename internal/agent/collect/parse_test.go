@@ -43,47 +43,65 @@ func TestCPUPercentFromTwoSamples(t *testing.T) {
 	}
 }
 
-// /proc/stat 首行里的 iowait（第 5 个）与 steal（第 8 个）各取各的；steal 字段缺失时是「没有」而不是 0。
-func TestParseStatExtractsStealAndIowait(t *testing.T) {
-	c, err := parseStat(strings.NewReader("cpu  100 0 50 800 20 0 10 5 0 0\n"))
+// /proc/stat 首行里的 iowait（第 5 个）、softirq（第 7 个）与 steal（第 8 个）各取各的；
+// 计数器个数决定哪些存在：缺失时是「没有」而不是 0。
+func TestParseStatExtractsStealIowaitAndSoftirq(t *testing.T) {
+	c, err := parseStat(strings.NewReader("cpu  100 0 50 800 20 4 9 5 0 0\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.iowait != 20 || c.steal != 5 || !c.hasIowait || !c.hasSteal {
-		t.Fatalf("iowait/steal = %d/%d flags %v/%v, want 20/5", c.iowait, c.steal, c.hasIowait, c.hasSteal)
+	if c.iowait != 20 || c.softirq != 9 || c.steal != 5 || !c.hasIowait || !c.hasSoftirq || !c.hasSteal {
+		t.Fatalf("iowait/softirq/steal = %d/%d/%d flags %v/%v/%v, want 20/9/5 all present",
+			c.iowait, c.softirq, c.steal, c.hasIowait, c.hasSoftirq, c.hasSteal)
 	}
-	c, err = parseStat(strings.NewReader("cpu 1 2 3 4 5 6 7\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.hasIowait || c.hasSteal {
-		t.Fatalf("hasIowait/hasSteal = %v/%v, want true/false", c.hasIowait, c.hasSteal)
+	for _, tc := range []struct {
+		line                 string
+		softirq              uint64
+		hasSoftirq, hasSteal bool
+	}{
+		// 2.6.0 到 2.6.11 之间的内核：有 irq 与 softirq，没有 steal。
+		{"cpu 1 2 3 4 5 6 7\n", 7, true, false},
+		// 更早的内核只有前 5 个计数：softirq 与 steal 都没有。
+		{"cpu 1 2 3 4 5\n", 0, false, false},
+	} {
+		c, err := parseStat(strings.NewReader(tc.line))
+		if err != nil {
+			t.Fatal(tc.line, err)
+		}
+		if !c.hasIowait || c.hasSoftirq != tc.hasSoftirq || c.hasSteal != tc.hasSteal || c.softirq != tc.softirq {
+			t.Fatalf("%q: hasIowait/hasSoftirq/hasSteal = %v/%v/%v softirq %d, want true/%v/%v softirq %d",
+				tc.line, c.hasIowait, c.hasSoftirq, c.hasSteal, c.softirq, tc.hasSoftirq, tc.hasSteal, tc.softirq)
+		}
 	}
 }
 
-// 三个占比共用同一个分母与有效性判定；cpu_pct 的口径不变（idle 含 iowait），steal 与 iowait 是独立系列。
+// 四个占比共用同一个分母与有效性判定；cpu_pct 的口径不变（idle 含 iowait），steal、iowait、softirq 各是独立系列。
 func TestCPURatiosShareOneDifferential(t *testing.T) {
-	// Δtotal=100、Δidle=50 → busy 50%；Δiowait=20、Δsteal=20 → 各 20%。
-	prev := cpuTimes{idle: 800, total: 1000, iowait: 20, steal: 5, hasIowait: true, hasSteal: true}
-	cur := cpuTimes{idle: 850, total: 1100, iowait: 40, steal: 25, hasIowait: true, hasSteal: true}
-	busy, steal, iowait, ok := cpuRatios(prev, cur)
-	if !ok || busy != 50 || steal != 20 || iowait != 20 {
-		t.Fatalf("busy/steal/iowait = %v/%v/%v ok=%v, want 50/20/20", busy, steal, iowait, ok)
+	// Δtotal=100、Δidle=50 → busy 50%；Δiowait=20、Δsteal=20 → 各 20%；Δsoftirq=7 → 7%。
+	prev := cpuTimes{idle: 800, total: 1000, iowait: 20, steal: 5, softirq: 3, hasIowait: true, hasSteal: true, hasSoftirq: true}
+	cur := cpuTimes{idle: 850, total: 1100, iowait: 40, steal: 25, softirq: 10, hasIowait: true, hasSteal: true, hasSoftirq: true}
+	r, ok := cpuRatios(prev, cur)
+	if !ok || r != (cpuShares{busy: 50, steal: 20, iowait: 20, softirq: 7}) {
+		t.Fatalf("ratios = %+v ok=%v, want busy 50 steal 20 iowait 20 softirq 7", r, ok)
 	}
-	if got, ok := cpuPercent(prev, cur); !ok || got != busy {
+	if got, ok := cpuPercent(prev, cur); !ok || got != r.busy {
 		t.Fatalf("cpu_pct = %v ok=%v, want the same busy as cpuRatios", got, ok)
 	}
 }
 
-// Δtotal=0 或任一计数回退时三项一起缺失：不能只丢回退的那一项，留下另外两项。
+// Δtotal=0 或任一计数回退时四项一起缺失：不能只丢回退的那一项，留下其余几项。
 func TestCPURatiosDropAllOnNoElapsedOrRegression(t *testing.T) {
-	prev := cpuTimes{idle: 800, total: 1000, iowait: 20, steal: 5, hasIowait: true, hasSteal: true}
-	if _, _, _, ok := cpuRatios(prev, prev); ok {
+	prev := cpuTimes{idle: 800, total: 1000, iowait: 20, steal: 5, softirq: 9, hasIowait: true, hasSteal: true, hasSoftirq: true}
+	if _, ok := cpuRatios(prev, prev); ok {
 		t.Fatal("no elapsed ticks must yield no readings")
 	}
-	regressed := cpuTimes{idle: 850, total: 1100, iowait: 30, steal: 4, hasIowait: true, hasSteal: true}
-	if _, _, _, ok := cpuRatios(prev, regressed); ok {
-		t.Fatal("a steal regression must drop busy and iowait as well")
+	for name, regressed := range map[string]cpuTimes{
+		"steal":   {idle: 850, total: 1100, iowait: 30, steal: 4, softirq: 12, hasIowait: true, hasSteal: true, hasSoftirq: true},
+		"softirq": {idle: 850, total: 1100, iowait: 30, steal: 6, softirq: 8, hasIowait: true, hasSteal: true, hasSoftirq: true},
+	} {
+		if _, ok := cpuRatios(prev, regressed); ok {
+			t.Fatalf("a %s regression must drop every ratio", name)
+		}
 	}
 }
 

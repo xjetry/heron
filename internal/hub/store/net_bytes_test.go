@@ -21,24 +21,24 @@ func trafficMinuteRows(nodeID int64, from, to int64, rx, tx float64) []metric.Ro
 	return rows
 }
 
-// 三小时的分钟行，上卷到 1h 水位 +2h、5m 水位 +2h15m 后，像 Prune 那样删掉各级已冻结的细行：和只有同时读 1h、5m 与剩下的 1m 行才对得上。
+// 三小时的分钟行，上卷到 1h 水位 +2h、5m 水位 +2h55m 后，像 Prune 那样删掉各级已冻结的细行：和只有同时读 1h、5m 与剩下的 1m 行才对得上。
 func TestNetBytesBetweenSumsAcrossLevels(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
 	id, _, _ := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	clk.SetWall(time.Unix(base+3*3600, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: trafficMinuteRows(id, base, base+3*3600, 10, 1)}); err != nil {
 		t.Fatal(err)
 	}
-	clk.SetWall(time.Unix(base+2*3600+20*60, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := watermark(t, s, "1h"); got != base+2*3600 {
 		t.Fatalf("1h watermark = %d, want %d", got, base+2*3600)
 	}
-	frozen := base + 2*3600 + 15*60
+	frozen := base + 2*3600 + 55*60
 	if got := watermark(t, s, "5m"); got != frozen {
 		t.Fatalf("5m watermark = %d, want %d", got, frozen)
 	}

@@ -77,6 +77,15 @@ func (m *memStore) LoadTraffic(context.Context) ([]store.TrafficRecord, error) {
 	return out, nil
 }
 
+// AdjustTraffic 与 store 同一语义：写一条，节点不存在（这里是写入被拒）时返回 ErrNotFound。
+func (m *memStore) AdjustTraffic(ctx context.Context, r store.TrafficRecord) error {
+	written, err := m.WriteTraffic(ctx, []store.TrafficRecord{r})
+	if err == nil && len(written) == 0 {
+		err = store.ErrNotFound
+	}
+	return err
+}
+
 func (m *memStore) WriteTraffic(_ context.Context, recs []store.TrafficRecord) ([]int64, error) {
 	if m.gate != nil {
 		first := false

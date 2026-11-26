@@ -113,11 +113,11 @@ func TestSecurityCASAndChallengeBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+	if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	_, h := NewToken()
-	if err = a.commitSecurity(ctx, b, s, false, &h, ""); !errors.Is(err, store.ErrAdminChanged) {
+	if err = a.commitSecurity(ctx, 0, b, s, false, &h, ""); !errors.Is(err, store.ErrAdminChanged) {
 		t.Fatal("stale security state issued session")
 	}
 	for _, kind := range []string{"session", "purpose", "generation", "expiration", "replay"} {
@@ -188,7 +188,7 @@ func TestWebAuthnMissingRequestOriginRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Passkeys = []Passkey{{Credential: webauthn.Credential{ID: []byte("bound-key")}}}
-	if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+	if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.ConfigureWebAuthn("https://admin.example"); err != nil {
@@ -218,7 +218,7 @@ func TestPasskeyChallengeAndVerificationAdmission(t *testing.T) {
 	s.Origin = "https://admin.example"
 	s.RPID = "admin.example"
 	s.Passkeys = []Passkey{{Credential: webauthn.Credential{ID: []byte("admission-test")}}}
-	if err := a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+	if err := a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
@@ -532,7 +532,7 @@ func TestPasskeyLegacyOriginMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.Passkeys = []Passkey{{Name: "legacy", Credential: webauthn.Credential{ID: []byte("legacy-key")}}}
-			if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+			if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 				t.Fatal(err)
 			}
 			if err = a.ConfigureWebAuthn(oldOrigin); err != nil {
@@ -573,7 +573,7 @@ func TestConfigureWebAuthnImportsOnceThenKeepsTheBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Passkeys = []Passkey{{Name: "legacy", Credential: webauthn.Credential{ID: []byte("legacy-key")}}}
-	if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+	if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err = a.ConfigureWebAuthn("https://admin.example"); err != nil {
@@ -608,7 +608,7 @@ func TestPasskeyRebindingRequiresPasswordAndCommitsAtomically(t *testing.T) {
 	s.RPID = "old.example"
 	s.UserID = []byte("existing-admin-identity")
 	s.Passkeys = []Passkey{{Name: "old", Credential: webauthn.Credential{ID: []byte("old-key")}}}
-	if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+	if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	session, err := a.Login(newCtx, goodPassword, from)
@@ -696,7 +696,7 @@ func TestPasskeyRejectsInconsistentPersistedBinding(t *testing.T) {
 			}
 			state.Origin, state.RPID = "https://admin.example", rpID
 			state.Passkeys = []Passkey{{Credential: webauthn.Credential{ID: []byte("bound-key")}}}
-			if err := a.commitSecurity(ctx, b, state, false, nil, ""); err != nil {
+			if err := a.commitSecurity(ctx, 0, b, state, false, nil, ""); err != nil {
 				t.Fatal(err)
 			}
 			info, err := a.SecurityInfo(ctx)
@@ -747,7 +747,7 @@ func TestPasskeyRebindingConsumesEnabledSecondFactor(t *testing.T) {
 			s.Secret = "JBSWY3DPEHPK3PXP"
 			s.Passkeys = []Passkey{{Name: "old", Credential: webauthn.Credential{ID: []byte("old-key")}}}
 			recovery := newRecovery(&s)
-			if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+			if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 				t.Fatal(err)
 			}
 			session, err := a.LoginFactors(ctx, goodPassword, "", recovery[0], from)
@@ -801,7 +801,7 @@ func TestPasskeyRebindingRejectsRevokedSession(t *testing.T) {
 	s.Origin = "https://old.example"
 	s.RPID = "old.example"
 	s.Passkeys = []Passkey{{Name: "old", Credential: webauthn.Credential{ID: []byte("old-key")}}}
-	if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+	if err = a.commitSecurity(ctx, 0, b, s, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	session, err := a.Login(ctx, goodPassword, from)

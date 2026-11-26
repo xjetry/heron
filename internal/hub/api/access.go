@@ -38,3 +38,32 @@ func accessTable(svc protoreflect.ServiceDescriptor) map[string]heronv1.Access {
 	}
 	return table
 }
+
+// auditTable 从服务描述符读出每个方法声明的操作记录口径（heron.v1.audit），键为 Connect 过程路径；规则见
+// access.proto 的 Audit：ACCESS_SESSION 与 ACCESS_CHANGE 必须声明 AUDIT_NONE 或 AUDIT_WRITE（CHANGE 只能是
+// AUDIT_WRITE），ACCESS_READ 与 ACCESS_LOGIN 不得声明。不符即 panic：与 accessTable 同理，漏标或标错的方法让 hub
+// 在构造处理器时起不来，不会以"默认不记"随发布出去。access 是同一服务的 accessTable。
+func auditTable(svc protoreflect.ServiceDescriptor, access map[string]heronv1.Access) map[string]heronv1.Audit {
+	methods := svc.Methods()
+	table := make(map[string]heronv1.Audit, methods.Len())
+	for i := 0; i < methods.Len(); i++ {
+		m := methods.Get(i)
+		path := "/" + string(svc.FullName()) + "/" + string(m.Name())
+		audit, _ := proto.GetExtension(m.Options(), heronv1.E_Audit).(heronv1.Audit)
+		level := access[path]
+		var ok bool
+		switch level {
+		case heronv1.Access_ACCESS_SESSION:
+			ok = audit == heronv1.Audit_AUDIT_NONE || audit == heronv1.Audit_AUDIT_WRITE
+		case heronv1.Access_ACCESS_CHANGE:
+			ok = audit == heronv1.Audit_AUDIT_WRITE
+		case heronv1.Access_ACCESS_READ, heronv1.Access_ACCESS_LOGIN:
+			ok = audit == heronv1.Audit_AUDIT_UNSPECIFIED
+		}
+		if !ok {
+			panic(fmt.Sprintf("%s: heron.v1.audit %v does not fit heron.v1.access %v", m.FullName(), audit, level))
+		}
+		table[path] = audit
+	}
+	return table
+}

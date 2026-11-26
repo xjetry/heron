@@ -11,7 +11,6 @@ import (
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/gen/heron/v1/heronv1connect"
 	"github.com/xjetry/heron/internal/hub/alert"
-	"github.com/xjetry/heron/internal/hub/store"
 )
 
 func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
@@ -31,7 +30,7 @@ func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
 	}
 	deps := h.deps()
 	deps.Alerts = e
-	svc := New(Config{Backups: h.svc.cfg.Backups, Heartbeat: h.svc.cfg.Heartbeat, TTL: 30 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: h.svc.cfg.Geo}, deps)
+	svc := New(Config{Backups: h.svc.cfg.Backups, Heartbeat: h.svc.cfg.Heartbeat, TTL: 30 * time.Second, Location: time.UTC, Geo: h.svc.cfg.Geo}, deps)
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)

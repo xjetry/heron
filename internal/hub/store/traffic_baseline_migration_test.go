@@ -139,6 +139,7 @@ func TestTrafficOldSnapshotRestoresBaseline(t *testing.T) {
 			t.Fatal(err)
 		}
 		if layer == "config" {
+			removeV56Config(t, db)
 			removeV52Config(t, db)
 			removeV51Config(t, db)
 			removeV50Config(t, db)
@@ -153,6 +154,7 @@ func TestTrafficOldSnapshotRestoresBaseline(t *testing.T) {
 			}
 		}
 		if layer == "metrics" {
+			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 		}

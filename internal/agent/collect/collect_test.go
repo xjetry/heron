@@ -529,6 +529,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		CpuPct:            proto.Float64(100 * (1 - 60.0/200)),
 		CpuStealPct:       proto.Float64(100 * 2.0 / 200),
 		CpuIowaitPct:      proto.Float64(100 * 10.0 / 200),
+		CpuSoftirqPct:     proto.Float64(100 * 3.0 / 200),
 		MemTotal:          proto.Uint64(8000 * 1024),
 		MemUsed:           proto.Uint64((8000 - 3000) * 1024),
 		SwapTotal:         proto.Uint64(4000 * 1024),

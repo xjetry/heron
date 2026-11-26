@@ -12,7 +12,7 @@ hub 的管理接口面向 AI agent 与脚本设计：预授权 API token，HTTP+
 - 编辑：行菜单「编辑」整体替换名称、权限、节点范围与有效期，明文与操作记录不变，下一个请求即按新授权鉴权。去掉「注册入口」会关闭它开着的注册窗口。打开编辑之后它若有变化（例如它创建或注册的节点已自动纳入范围），保存会被拒绝并提示重新打开，以免覆盖掉这些节点。
 - agent 用 `GetCaller` 读取自己的权限、范围与有效期。`heron-hub token list` 的 EXPIRES 列显示有效期，过期的标 `(expired)`。
 - 不开放：远程命令、云主机操作、hub 升级、管理员与 API 凭据管理、会话管理、通知密钥修改。
-- 写入经 `ExecuteChange` 进行：先 `preview: true` 预览改动，再带上预览返回的 `expectedVersion` 与唯一 `requestId` 执行；响应丢失时原样重试同一 `requestId`，不会重复执行。每次写入都留审计回执。
+- 写入经 `ExecuteChange` 进行：先 `preview: true` 预览改动，再带上预览返回的 `expectedVersion` 与唯一 `requestId` 执行；响应丢失时原样重试同一 `requestId`，不会重复执行。每次写入都在同一事务里留一条操作记录，与面板会话、hub 自身的写入在同一条记录链上：面板「操作记录」页看得到全部，token 自己调 `ListOperations` 只看得到自己的。
 - 吊销在面板操作，或在 hub 主机上：
 
 ```sh

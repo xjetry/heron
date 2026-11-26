@@ -49,6 +49,8 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 		// 基线计数是截到 MaxInt64 的内核计数，负值没有含义；读侧另按 CheckTrafficBaseline 拒收（快照的表不带 CHECK）。
 		{"traffic_baseline", "rx >= 0", "INSERT INTO traffic_baseline (node_id, iface, rx, tx) VALUES (1, '', -1, 0)"},
 		{"traffic_baseline", "tx >= 0", "INSERT INTO traffic_baseline (node_id, iface, rx, tx) VALUES (1, '', 0, -1)"},
+		// 主体只有三种；表外的值读侧没有对应的 proto 取值。
+		{"operation", "principal IN ('session', 'api_token', 'system')", "INSERT INTO operation (owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at,principal,session_id,source,method,resource_key) VALUES ('session',0,'x','','x',0,'','',0,'admin','','','','')"},
 	}
 	freshChecks, migratedChecks := checkConstraints(t, fresh.r), checkConstraints(t, migrated.r)
 	if !reflect.DeepEqual(freshChecks, migratedChecks) {

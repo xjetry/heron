@@ -112,8 +112,8 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 	}
 }
 
-// GetStorageStats 的 retention_s 与两项标红都要用 api.Config.Retention（serve 传给它的那份配置），不是
-// store.DefaultRetention：这个夹具不跑 RunMaintenance，全部数据只由这条用例写入、只由这次调用读出，没有
+// GetStorageStats 的 retention_s 与两项标红都要用 Store 的生效保留期（serve 经 store.WithRetention 传入的那份配置），
+// 不是 store.DefaultRetention：这个夹具不跑 RunMaintenance，全部数据只由这条用例写入、只由这次调用读出，没有
 // 后台协程会把控制行删掉，判定不依赖任何真实时间窗。用 6 小时的 1m 保留期（远短于默认的 7 天）构造，一行
 // 7 小时前的 probe_1m 数据在配置下已超期、在默认值下不会超期，两个结论只要有一个取到默认值就会分开。
 func TestGetStorageStatsUsesTheConfiguredRetention(t *testing.T) {

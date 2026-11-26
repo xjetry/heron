@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -31,6 +32,11 @@ func openStore(t *testing.T) (*store.Store, string, *clock.Fake) {
 
 func hash(b byte) []byte { h := make([]byte, 32); h[0] = b; return h }
 
+// tokenContext 是 API token 请求的 ctx：与 api 的鉴权拦截器一致，主体与写记录用的 Caller 同时放入。
+func tokenContext(ctx context.Context, p store.APIToken) context.Context {
+	return store.WithCaller(store.WithPrincipal(ctx, p), store.Caller{Kind: store.PrincipalAPIToken, Method: "ExecuteChange"})
+}
+
 func newChange(action store.ChangeAction, op store.Operation) *store.Change {
 	return &store.Change{Operation: op, Action: action, Policy: Policy{}}
 }
@@ -55,7 +61,7 @@ func TestChangeRechecksRevocationInsideTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := store.WithPrincipal(t.Context(), p)
+	ctx := tokenContext(t.Context(), p)
 	c := newChange(store.ActionRotateNodeToken, store.Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "x", ResourceID: node})
 	c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 	if err != nil {
@@ -83,7 +89,7 @@ func TestAgenticReplayAfterScopeRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := store.WithPrincipal(t.Context(), p)
+	ctx := tokenContext(t.Context(), p)
 	c := newChange(store.ActionDeleteNode, store.Operation{OwnerID: p.ID, RequestID: "delete", RequestHash: "delete", ResourceID: node})
 	c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 	if err != nil {
@@ -110,7 +116,7 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx := store.WithPrincipal(t.Context(), p)
+		ctx := tokenContext(t.Context(), p)
 		c := newChange(store.ActionCreateNode, store.Operation{OwnerID: p.ID, RequestID: "same-key", RequestHash: name})
 		c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 		if err != nil {
@@ -144,30 +150,30 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 	if err != nil || state != store.TokenLive || actual.Identity != p.Identity {
 		t.Fatalf("restored credential identity changed: %+v %v", actual, err)
 	}
-	ctx := store.WithPrincipal(t.Context(), actual)
+	ctx := tokenContext(t.Context(), actual)
 	o, err := restored.FindOperation(ctx, actual.ID, "same-key")
 	if err != nil || o.RequestHash != "source" || !strings.Contains(o.AfterJSON, "source") || strings.Contains(o.AfterJSON, "target") {
 		t.Fatalf("receipt crossed credential identities: %+v %v", o, err)
 	}
-	list, err := restored.ListOperations(ctx, actual.ID, "", 100)
+	list, err := restored.ListOperations(ctx, store.OperationFilter{OwnerID: actual.ID, Limit: 100})
 	if err != nil || len(list) != 1 || list[0].RequestHash != "source" {
 		t.Fatalf("restored token saw another identity's audit: %+v %v", list, err)
 	}
-	all, err := restored.ListOperations(t.Context(), actual.ID, "", 100)
+	all, err := restored.ListOperations(t.Context(), store.OperationFilter{OwnerID: actual.ID, Limit: 100})
 	if err != nil || len(all) != 2 {
 		t.Fatalf("restore lost an identity's history: %+v %v", all, err)
 	}
 	if o.ID == "" || list[0].ID != o.ID || all[0].ID == all[1].ID {
 		t.Fatalf("restored receipts lack distinct stable IDs: own=%+v all=%+v", o, all)
 	}
-	original, err := source.FindOperation(store.WithPrincipal(t.Context(), p), p.ID, "same-key")
+	original, err := source.FindOperation(tokenContext(t.Context(), p), p.ID, "same-key")
 	if err != nil || original.ID != o.ID {
 		t.Fatalf("restore changed receipt ID: before=%+v after=%+v err=%v", original, o, err)
 	}
 	// 复用的数字 id 不能借原持有者的授权：以复用者的身份执行时，策略在事务里读到的行身份不同。
 	impostor := q
 	c := newChange(store.ActionCreateNode, store.Operation{OwnerID: impostor.ID, RequestID: "impostor", RequestHash: "impostor"})
-	if _, err := restored.ChangeVersion(store.WithPrincipal(t.Context(), impostor), c); !errors.Is(err, store.ErrPermission) {
+	if _, err := restored.ChangeVersion(tokenContext(t.Context(), impostor), c); !errors.Is(err, store.ErrPermission) {
 		t.Fatalf("reused token id passed principal check after restore: %v", err)
 	}
 }
@@ -179,7 +185,7 @@ func TestCreateGrantsNewNodeToCreator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := store.WithPrincipal(t.Context(), p)
+	ctx := tokenContext(t.Context(), p)
 	c := newChange(store.ActionCreateNode, store.Operation{OwnerID: p.ID, RequestID: "create", RequestHash: "create"})
 	if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
 		t.Fatal(err)
@@ -196,7 +202,7 @@ func TestCreateGrantsNewNodeToCreator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx = store.WithPrincipal(t.Context(), p)
+	ctx = tokenContext(t.Context(), p)
 	rotate := newChange(store.ActionRotateNodeToken, store.Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "rotate", ResourceID: created})
 	if _, err := s.ChangeVersion(ctx, rotate); err != nil {
 		t.Fatalf("creator cannot touch the node it created: %v", err)
@@ -219,7 +225,7 @@ func TestChangeRejectsExpiredTokenAndAcceptsRevived(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := store.WithPrincipal(t.Context(), p)
+	ctx := tokenContext(t.Context(), p)
 	if _, err := s.UpdateAPIToken(t.Context(), p.ID, p.Name, grant, clk.Now(), versionOf(t, s, p.ID)); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +267,7 @@ func TestEditKeepsReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := store.WithPrincipal(t.Context(), p)
+	ctx := tokenContext(t.Context(), p)
 	c := newChange(store.ActionCreateNode, store.Operation{OwnerID: p.ID, RequestID: "before-edit", RequestHash: "x"})
 	if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
 		t.Fatal(err)
@@ -276,8 +282,8 @@ func TestEditKeepsReceipts(t *testing.T) {
 	if err != nil || state != store.TokenLive || q.Name != "renamed" {
 		t.Fatalf("edited token: %+v %v %v", q, state, err)
 	}
-	ctx = store.WithPrincipal(t.Context(), q)
-	list, err := s.ListOperations(ctx, q.ID, "", 100)
+	ctx = tokenContext(t.Context(), q)
+	list, err := s.ListOperations(ctx, store.OperationFilter{OwnerID: q.ID, Limit: 100})
 	if err != nil || len(list) != 1 || list[0].RequestID != "before-edit" {
 		t.Fatalf("receipts after edit: %+v %v", list, err)
 	}
