@@ -688,13 +688,13 @@ test('详情页安装命令：警告、换发后旧 token 失效、新 key 可�
   await drawer.getByRole('button', { name: '换发 token 并生成安装命令', exact: true }).click();
   const command = await drawer.getByLabel('curl 安装命令').textContent();
   const key = command?.match(/--key (\S+)/)?.[1];
-  expect(key).toBeTruthy();
+  if (!key) throw new Error(`install command has no --key: ${command}`);
   expect(command).toContain(' --re-register');
   await page.screenshot({ path: testInfo.outputPath('detail-install-desktop.png'), fullPage: true });
 
   const stale = await report(token);
   expect(stale.ok).toBe(false);
-  must(await rpc(page, AgentService.method.register, { key: key! }));
+  must(await rpc(page, AgentService.method.register, { key }));
   await drawer.getByRole('button', { name: '完成', exact: true }).click();
   await expect(drawer).toHaveCount(0);
 });

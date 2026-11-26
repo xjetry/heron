@@ -126,6 +126,7 @@ func TestOfflineGenerationSnapshotRestore(t *testing.T) {
 						}
 						if version == 36 {
 							if path == metrics {
+								dropSoftirqColumns(t, db)
 								dropFullestDiskColumns(t, db)
 								dropTCPRateColumns(t, db)
 							}

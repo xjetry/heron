@@ -87,6 +87,7 @@ func TestTrafficQuotaSnapshotRestore(t *testing.T) {
 							}
 						}
 						if path == metrics {
+							dropSoftirqColumns(t, db)
 							dropFullestDiskColumns(t, db)
 							dropTCPRateColumns(t, db)
 						}
