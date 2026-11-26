@@ -86,15 +86,16 @@ esac
 exit 0
 `,
 	// STUB_LAUNCHCTL_FAILS_ONCE 与 STUB_LAUNCHCTL_TERM_ONCE 各是一条完整的参数串，只在第一次匹配时生效：前者让这次
-	// 调用失败（bootout 刚返回就 bootstrap 报 EIO 这类一次性故障），后者给安装脚本发 SIGTERM（SSH 断开）。只生效一次，
-	// 回滚路径里的同一条命令照常成功。包里带 heron-test-broken 标记的 heron-agent 模拟起不来的新二进制：bootstrap
-	// 照常返回 0，进程不在。
+	// 调用失败（bootout 刚返回就 bootstrap 报 EIO 这类一次性故障，失败之前执行 stubFailure），后者给安装脚本发 SIGTERM
+	// （SSH 断开）。只生效一次，回滚路径里的同一条命令照常成功。包里带 heron-test-broken 标记的 heron-agent 模拟起不来的
+	// 新二进制：bootstrap 照常返回 0，进程不在。
 	"launchctl": `#!/bin/sh
 cat > /dev/null
 S=$STUB_STATE
-echo "launchctl $*" >> "$S/calls"
+` + stubSignalAfterFailure + `echo "launchctl $*" >> "$S/calls"
 if [ "$*" = "${STUB_LAUNCHCTL_FAILS_ONCE-}" ] && [ ! -f "$S/failed-once" ]; then
-  : > "$S/failed-once"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5
+  : > "$S/failed-once"
+` + stubFailure + `  echo "Bootstrap failed: 5: Input/output error" >&2; exit 5
 fi
 if [ "$*" = "${STUB_LAUNCHCTL_TERM_ONCE-}" ] && [ ! -f "$S/termed-once" ]; then
   : > "$S/termed-once"; kill -TERM "$PPID"
@@ -186,22 +187,26 @@ exec /bin/chmod "$@"
 }
 
 // fileCurl 是三个安装脚本共用的 curl 替身：记下参数（用例据此判断有没有发生下载、下载的是哪个地址），只认 file://
-// 地址并复制文件，其余地址像解析失败那样以 6 退出。读尽 stdin，理由同其他替身。
+// 地址并复制文件，其余地址像解析失败那样以 6 退出。-w 照真 curl 的形状写 "<状态码> <正文字节数>"：脚本按它决定
+// 失败后要不要重试，复制成功写 "200 <字节数>"，失败写连不上时的 "000 0"。读尽 stdin，理由同其他替身。
 const fileCurl = `#!/bin/sh
 cat > /dev/null
 echo "curl $*" >> "$STUB_STATE/calls"
-out=""; url=""
+out=""; url=""; w=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) out=$2; shift 2;;
-    --proto|--proto-redir) shift 2;;
+    -w) w=$2; shift 2;;
+    --proto|--proto-redir|--connect-timeout|--speed-limit|--speed-time) shift 2;;
     -*) shift;;
     *) url=$1; shift;;
   esac
 done
 case "$url" in
-  file://*) cp "${url#file://}" "$out";;
-  *) echo "curl: (6) unexpected URL $url" >&2; exit 6;;
+  file://*)
+    cp "${url#file://}" "$out" || { [ -z "$w" ] || printf '000 0'; exit 37; }
+    [ -z "$w" ] || printf '200 %s' "$(wc -c < "$out" | tr -d ' ')";;
+  *) echo "curl: (6) unexpected URL $url" >&2; [ -z "$w" ] || printf '000 0'; exit 6;;
 esac
 `
 
@@ -223,12 +228,14 @@ echo "registered as node 1; config written to $cfg"
 `
 
 // script 是 run 执行的脚本：起初是仓库里的源码 source（没有写入清单，只能卸载），publish 之后是 dist 里写入后的副本。
+// shell 是执行脚本的 shell 及其前置参数（busybox 为 {"busybox", "sh"}），空时用 PATH 上的 sh。
 type env struct {
 	t                *testing.T
 	source, script   string
 	root, state, bin string
 	dist             string
 	vars             []string
+	shell            []string
 }
 
 // newStubEnv 建出临时的根目录、替身状态目录与放替身的 PATH 目录，脚本与替身集由调用方给。
@@ -350,25 +357,41 @@ func (e *env) sums(dir string) {
 // run 以面板命令的形态执行：脚本来自 stdin（sh -s --）。
 func (e *env) run(args ...string) (string, int) {
 	e.t.Helper()
+	cmd := e.command(args...)
+	defer cmd.Stdin.(*os.File).Close()
+	out, err := cmd.CombinedOutput()
+	return string(out), e.exitCode(err)
+}
+
+// command 是 run 执行的那条命令，输出由调用方接：stdin 已接上脚本（调用方负责关闭），环境与 PATH 同 run。
+func (e *env) command(args ...string) *exec.Cmd {
+	e.t.Helper()
 	script, err := os.Open(e.script)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	defer script.Close()
-	cmd := exec.Command("sh", append([]string{"-s", "--"}, args...)...)
+	shell := e.shell
+	if len(shell) == 0 {
+		shell = []string{"sh"}
+	}
+	cmd := exec.Command(shell[0], append(append(slices.Clone(shell[1:]), "-s", "--"), args...)...)
 	cmd.Stdin = script
 	// 末尾补上 sbin：macOS 的 sha256sum 在 /sbin。
 	cmd.Env = append(os.Environ(), "PATH="+e.bin+string(os.PathListSeparator)+os.Getenv("PATH")+":/usr/sbin:/sbin",
 		"HERON_INSTALL_ROOT="+e.root, "STUB_STATE="+e.state)
 	cmd.Env = append(cmd.Env, e.vars...)
-	out, err := cmd.CombinedOutput()
-	code := 0
+	return cmd
+}
+
+// exitCode 把 Wait 的结果换成退出码：脚本以非零退出不算错误，起不来才让用例失败。
+func (e *env) exitCode(err error) int {
+	e.t.Helper()
 	if ee, ok := err.(*exec.ExitError); ok {
-		code = ee.ExitCode()
+		return ee.ExitCode()
 	} else if err != nil {
 		e.t.Fatal(err)
 	}
-	return string(out), code
+	return 0
 }
 
 func (e *env) install(extra ...string) (string, int) {
