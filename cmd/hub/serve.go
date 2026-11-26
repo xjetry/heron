@@ -139,7 +139,7 @@ type serveOptions struct {
 	db     string
 	listen string
 	// publicListen 是 --public-listen 的原值，空串表示不开公开监听。非空时 parseServeOptions 已核对它与 listen 不重叠
-	// （listenersOverlap）。
+	// （checkListenersApart）。
 	publicListen string
 	// adminOrigin 是 --admin-origin 经 auth.ParsePasskeyOrigin 规范化后的值，空串表示未给出。
 	adminOrigin string
