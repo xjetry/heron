@@ -132,3 +132,61 @@ it("维护中为真时已出租开关禁用", () => {
   expect(screen.getByLabelText<HTMLInputElement>("维护 quota（#1）").checked).toBe(true);
   expect(screen.getByLabelText("已出租 quota（#1）")).toBeDisabled();
 });
+
+function scheduleEditor(fields: { billingTimezone?: string; trafficResetMinute?: number } = {}) {
+  const onSave = vi.fn<Parameters<typeof NodeEditor>[0]["onSave"]>();
+  const node = create(NodeSchema, { id: 1n, name: "quota", trafficResetDay: 1, ...fields });
+  render(<NodeEditor node={node} knownTags={[]} saving={false} error={null} listError={null} onClose={() => {}} onSave={onSave} opener={document.createElement("button")} />);
+  return onSave;
+}
+const zoneInput = () => screen.getByRole("combobox", { name: "计费时区 quota（#1）" });
+const resetHour = () => screen.getByRole("textbox", { name: "重置时刻 quota（#1） 时" });
+const resetMinute = () => screen.getByRole("textbox", { name: "重置时刻 quota（#1） 分" });
+const setResetTime = (hhmm: string) => {
+  const [h = "", m = ""] = hhmm.split(":");
+  fireEvent.change(resetHour(), { target: { value: h } });
+  fireEvent.change(resetMinute(), { target: { value: m } });
+};
+
+// UpdateNode 整体替换：没动这两项的保存也必须带上当前值，缺席会把计费时区清回 hub 时区、重置时刻清回 00:00。
+it("计费时区与重置时刻随整体替换原样提交，重置时刻以分钟数提交", () => {
+  const save = scheduleEditor({ billingTimezone: "Asia/Kolkata", trafficResetMinute: 510 });
+  expect(zoneInput()).toHaveValue("Asia/Kolkata");
+  expect(resetHour()).toHaveValue("08");
+  expect(resetMinute()).toHaveValue("30");
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(save.mock.calls[0][0]).toMatchObject({ billingTimezone: "Asia/Kolkata", trafficResetMinute: 510 });
+  expect(save.mock.calls[0][0]).not.toHaveProperty("trafficResetTime");
+});
+
+it("计费时区候选按输入匹配、点选即填入；改后的时刻与去首尾空白的时区随保存提交", () => {
+  const save = scheduleEditor();
+  fireEvent.change(zoneInput(), { target: { value: "new_y" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["America/New_York"]);
+  fireEvent.click(screen.getByRole("option", { name: "America/New_York" }));
+  expect(zoneInput()).toHaveValue("America/New_York");
+  setResetTime("23:59");
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(save.mock.calls[0][0]).toMatchObject({ billingTimezone: "America/New_York", trafficResetMinute: 1439 });
+  fireEvent.change(zoneInput(), { target: { value: " UTC " } });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(save.mock.calls[1][0]).toMatchObject({ billingTimezone: "UTC" });
+});
+
+// 留空是缺省（沿用 hub 的 --timezone），可以保存；浏览器不认得的名字与没填完的时刻都禁止保存，并说明原因。
+it("计费时区留空可保存，认不得的时区名与没填完的时刻禁止保存", () => {
+  const save = scheduleEditor({ billingTimezone: "UTC" });
+  fireEvent.change(zoneInput(), { target: { value: "Mars/Olympus" } });
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("浏览器不认得这个时区名");
+  fireEvent.change(zoneInput(), { target: { value: "" } });
+  setResetTime("");
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("请填写重置时刻");
+  setResetTime("07:");
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  expect(screen.getByText("请输入 00:00 到 23:59 之间的时刻")).toBeInTheDocument();
+  setResetTime("00:00");
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(save.mock.calls[0][0]).toMatchObject({ billingTimezone: "", trafficResetMinute: 0 });
+});

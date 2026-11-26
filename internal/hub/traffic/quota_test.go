@@ -104,7 +104,7 @@ func TestCommittedPublishesOnlySuccessfulWrites(t *testing.T) {
 		t.Fatalf("Load committed=%+v want=%+v", got, want)
 	}
 	clk.Advance(40 * 24 * time.Hour)
-	b.SetResetDay(1, 5)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 5})
 	b.View(1)
 	if got := b.Committed()[1]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("read rolled committed=%+v want raw=%+v", got, want)

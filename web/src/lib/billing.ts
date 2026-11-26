@@ -1,5 +1,4 @@
 import { BillingCycle } from "../gen/heron/v1/types_pb";
-import { addDays } from "./ymd";
 
 // 面板的 Billing（types_pb）与公开页的 PublicBilling（public_pb）共有的字段；自动续期只在管理端有，这里不用。
 // 节点五项都没填时 hub 不下发 billing，所以下面的函数都接受 undefined。
@@ -9,7 +8,8 @@ export type BillingView = {
   currency: string;
   billingCycle: BillingCycle;
   expiresOn: string;
-  // hub 按 --timezone 算好的剩余天数；负数是已过期天数，没有到期日时缺失。浏览器不自己再算：访客的时区与 hub 不同时，按本地日期算可能差一天。
+  // hub 按节点计费时区（没设时是 hub 的 --timezone）的今天算好的剩余天数；负数是已过期天数，没有到期日时缺失。浏览器不
+  // 自己再算：访客的时区与节点的计费时区不同时，按本地日期算可能差一天。
   daysLeft?: number;
 };
 
@@ -61,10 +61,11 @@ export function remainingText(daysLeft: number): string {
   return daysLeft < 0 ? `已过期 ${-daysLeft} 天` : `剩 ${daysLeft} 天`;
 }
 
-// 按到期从早到晚排：已过期的到期最早，排最前；没有到期日、或到期日无法解析（hub 不下发 daysLeft）的排最后。
-// 排序键取 hub 下发的 daysLeft 而不是 expiresOn 字符串：同一次 GetSnapshot 里所有节点的 daysLeft 由同一个 today 算出，
-// 按它排就是按到期日排；无法解析的到期日没有顺序可言，字符串比较会把它按字典序塞进有效日期之间。到期相同的保持传入的
-// 相对顺序（Array.prototype.sort 自 ES2019 起稳定）；不改动传入的数组。
+// 按剩余天数从少到多排：已过期的排最前；没有到期日、或到期日无法解析（hub 不下发 daysLeft）的排最后。排序键取 hub
+// 下发的 daysLeft 而不是 expiresOn 字符串：无法解析的到期日没有顺序可言，字符串比较会把它按字典序塞进有效日期之间。
+// 每个节点的 daysLeft 按它自己计费时区的今天算，同一时区的节点按它排就是按到期日排；计费时区不同的节点之间按的是
+// 各自还剩几天，与到期日原文的先后至多差一天。剩余天数相同的保持传入的相对顺序（Array.prototype.sort 自 ES2019 起
+// 稳定）；不改动传入的数组。
 export function sortByExpiry<T extends { billing?: BillingView }>(nodes: readonly T[]): T[] {
   const key = (n: T) => n.billing?.daysLeft ?? Infinity;
   return [...nodes].sort((a, b) => {
@@ -74,18 +75,8 @@ export function sortByExpiry<T extends { billing?: BillingView }>(nodes: readonl
   });
 }
 
-// hub 时区（--timezone）的今天，由 hub 下发的 days_left 反推：expiresOn − daysLeft 天。同一次 ListNodes 里所有节点的
-// daysLeft 由同一个 today 算出（hub 的 ListNodes 只读一次钟），取第一个有 daysLeft 的节点即可。没有 daysLeft 的节点
-// （没有到期日，或到期日 hub 读不懂）不参与；全都没有时返回 undefined——浏览器的时钟与时区不能代替 hub 的今天。
-export function hubToday(billings: readonly (BillingView | undefined)[]): string | undefined {
-  for (const b of billings) {
-    if (b?.daysLeft !== undefined) return addDays(b.expiresOn, -b.daysLeft);
-  }
-  return undefined;
-}
-
-// 按到期日分组，键是 hub 下发的 expiresOn 原文；没有 daysLeft 的节点不进任何一天（与 hubToday 同一口径：hub 读不懂的
-// 日期不该被浏览器解释成某一天）。组内保持传入顺序。
+// 按到期日分组，键是 hub 下发的 expiresOn 原文；没有 daysLeft 的节点不进任何一天：hub 读不懂的日期不该被浏览器解释成
+// 某一天。组内保持传入顺序。
 export function byExpiryDay<T extends { billing?: BillingView }>(nodes: readonly T[]): Map<string, T[]> {
   const days = new Map<string, T[]>();
   for (const n of nodes) {
@@ -173,7 +164,7 @@ class Totals {
 // 续费日历顶部的费用概览，完全在浏览器里由 ListNodes 的计费字段算出：hub 不汇总价格（见 types.proto 的 Billing）。
 // 各币种分列、不做汇率换算。只计"填了价格与周期"的节点：没有周期的是一次性买断，没有续费也没有摊销。
 // 已出租节点的续费是租约的事，不进自用的现金流与持有成本（与 expiryLevel 对已出租恒为中性同一口径），只单列月均。
-// 窗口按 hub 下发的 daysLeft 判定：日历日是 hub 时区的，浏览器的时钟与时区不参与（同 hubToday）；没有 daysLeft 的
+// 窗口按 hub 下发的 daysLeft 判定：每个节点按它自己计费时区的今天，浏览器的时钟与时区不参与；没有 daysLeft 的
 // 节点（没填到期日或 hub 读不懂）不进现金流与逾期，但照常摊销。周期是表外值（hub 比页面新）时不知道月数，
 // 只进现金流与逾期、不摊销。
 export function costSummary(nodes: readonly { rented: boolean; billing?: BillingView }[]): CostSummary {

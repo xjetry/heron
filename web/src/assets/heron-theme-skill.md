@@ -105,7 +105,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `accentColor` | 主色 `#rrggbb`；空表示主题自定 |
 | `logo` | `data:image/…;base64,…` 或空 |
 | `customCss` | 站长为内置公开页写的附加 CSS；主题可自行决定是否套用（套用时放在自己的样式之后） |
-| `timezone` | hub 的时区（IANA 名，如 `Asia/Shanghai`），流量周期与到期日都按它算。按日历切时段（某天、晚高峰）时传给 `Intl.DateTimeFormat` 的 `timeZone`，不要用访客浏览器的本地时区 |
+| `timezone` | hub 的时区（IANA 名，如 `Asia/Shanghai`）。按日历切时段（某天、晚高峰）时传给 `Intl.DateTimeFormat` 的 `timeZone`，不要用访客浏览器的本地时区。节点的流量周期与到期剩余天数按各节点的计费时区，见 `traffic.timezone` |
 
 ### PublicSnapshot（`getSnapshot()`）
 
@@ -133,7 +133,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `facts` | 主机信息，**可缺失**（从未上报）：`os`、`arch`、`virtualization`、`cpuModel`、`cpuCores`，以及双栈出口 `network`（见下） |
 | `metrics` | 最近一次读数，**可缺失**（从未上报；离线节点保留最后一次读数），见下表 |
 | `traffic` | hub 累计的流量，见下表 |
-| `billing` | 计费与到期，**可缺失**（站长没填）：`price`（十进制文本）、`currency`（ISO 4217）、`billingCycle`（`BILLING_CYCLE_MONTHLY` / `QUARTERLY` / `SEMIANNUAL` / `YEARLY` / `BIENNIAL` / `TRIENNIAL` / `QUINQUENNIAL`）、`expiresOn`（`YYYY-MM-DD`）、`daysLeft`（到期剩余天数，负数为已过期；可缺失） |
+| `billing` | 计费与到期，**可缺失**（站长没填）：`price`（十进制文本）、`currency`（ISO 4217）、`billingCycle`（`BILLING_CYCLE_MONTHLY` / `QUARTERLY` / `SEMIANNUAL` / `YEARLY` / `BIENNIAL` / `TRIENNIAL` / `QUINQUENNIAL`）、`expiresOn`（`YYYY-MM-DD`）、`daysLeft`（到期剩余天数，按节点计费时区的今天算，负数为已过期；可缺失） |
 
 `facts.network` 只给每个地址族的显示状态，不给地址：`network.ipv4.state` 与 `network.ipv6.state` 取自 hub 的显示值（与管理端 `Node.network` 同一判定），`ADDRESS_DETECTION_STATE_AVAILABLE` 有三个来源——agent 探测到该族公网地址、站长手填、hub 看到它以该族公网地址上报；`ADDRESS_DETECTION_STATE_UNSUPPORTED`（本机没有该族可用的接口地址或路由）、`ADDRESS_DETECTION_STATE_FAILED`（这一轮探测没成功，不能据此判断有没有出口）保留原释义。`network` 缺失表示所有适用显示来源都没有结果，不要据此反推 agent 版本；某个族缺失同理（还没探测过、没有手填，hub 也没记到该族公网来源）。内置页只为 `AVAILABLE` 的族画「IPv4」「IPv6」小标。
 
@@ -166,7 +166,10 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `periodRx`、`periodTx` | 本周期收、发字节 |
 | `totalRx`、`totalTx` | 自首次上报累计字节 |
 | `periodStart`、`nextResetAt` | 本周期起点、下次重置（Unix 秒） |
+| `previousPeriodStart` | 上一周期起点（Unix 秒）；上一周期是 `[previousPeriodStart, periodStart)`，按周期切历史时用它，不要自己按重置日推算 |
 | `resetDay` | 每月重置日 1–31；当月不足该日时在当月最后一日重置 |
+| `resetMinute` | 重置时刻，`timezone` 里零点之后的分钟数（0–1439，缺失即 0，即 00:00） |
+| `timezone` | 这个节点的周期时区（IANA 名）：节点的计费时区，没设时是 hub 的时区。按天切这个节点的流量、显示它的周期起点时传给 `Intl.DateTimeFormat` 的 `timeZone` |
 | `quotaBytes` | 周期配额字节；缺失或 0 表示未设配额 |
 | `quotaMode` | 配额口径：`TRAFFIC_QUOTA_MODE_SUM`（收+发）、`RX`、`TX`、`MAX`（取大者） |
 | `quotaUsedBytes` | 按配额口径算的本周期用量（没设配额也有值） |

@@ -61,7 +61,7 @@ export function TrafficReportSettings({ channels, deleting }: { channels: Notify
   return (
     <form className="card" aria-label="流量报告" onSubmit={submit}>
       <h2>流量报告</h2>
-      <p className="muted">按 Hub 的时区（--timezone）在所选整点之后一分钟内，把全部节点本计费周期的已提交用量、配额占比与距重置天数汇成一条消息发出；超过 20 台时只列占比最高的 20 台。首次启用时立即补发最近一期，Hub 停机错过的只补发最近一期。</p>
+      <p className="muted">按 Hub 的时区（--timezone）在所选整点之后一分钟内，把全部节点本计费周期的已提交用量、配额占比与距重置天数汇成一条消息发出（周期与天数按各节点的计费时区与重置时刻）；超过 20 台时只列占比最高的 20 台。首次启用时立即补发最近一期，Hub 停机错过的只补发最近一期。</p>
       {gate.banner}
       <fieldset className="bare" disabled={pending}>
         <label><input type="checkbox" checked={form.enabled} onChange={(e) => edit({ enabled: e.target.checked })} />启用流量报告</label>

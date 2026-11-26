@@ -45,8 +45,8 @@ type PublicConfig struct {
 	ReportInterval time.Duration
 	// TrustedProxies 决定限流按哪个来源地址计：只有来自这些对端的 X-Forwarded-For 才被采信；空表示一个都不信。
 	TrustedProxies []netip.Prefix
-	// Location 是 hub 的 --timezone，days_left 按它的日历日算，GetSite.timezone 下发它的名字；NewPublic 要求非 nil，
-	// 且与 PublicDeps.Traffic 的时区是同一个对象。
+	// Location 是 hub 的 --timezone，GetSite.timezone 下发它的名字；节点没设计费时区时 days_left 也按它的日历日算
+	// （alert.NodeToday）。NewPublic 要求非 nil，且与 PublicDeps.Traffic 的 hub 时区是同一个对象。
 	Location *time.Location
 }
 
@@ -124,10 +124,10 @@ func NewPublic(cfg PublicConfig, deps PublicDeps) *Public {
 	if deps.Log == nil {
 		panic("api.PublicDeps.Log must be set")
 	}
-	// GetSite.timezone 与 days_left 读 cfg.Location，快照里的流量周期读账本的时区；公开页按前者切日历时段，
-	// 两者不是同一个区时访客看到的"晚间"与周期边界就不在同一张日历上。理由同 New。
-	if deps.Traffic.Zone() != cfg.Location {
-		panic("api.PublicConfig.Location must be the traffic book's zone")
+	// 没设计费时区的节点，days_left 回落到 cfg.Location、快照里的流量周期回落到账本的 hub 时区；两者不是同一个区时同一
+	// 节点的到期日界与周期边界就不在同一张日历上。理由同 New。
+	if deps.Traffic.HubZone() != cfg.Location {
+		panic("api.PublicConfig.Location must be the traffic book's hub zone")
 	}
 	projections := publicProjections()
 	p := &Public{
@@ -312,9 +312,9 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Pub
 		p.log.Error("listing public nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	// now 只读一次：快照的 now 与每个节点的 days_left 出自同一时刻，调用方拿 now 核对 days_left 不会差一天。
+	// now 只读一次：快照的 now 与每个节点的 days_left 出自同一时刻，调用方拿 now 与节点的 traffic.timezone 核对 days_left
+	// 不会差一天。
 	now := p.clk.Now()
-	today := alert.Today(now, p.cfg.Location)
 	out := &heronv1.PublicSnapshot{Now: now.Unix(), ReportIntervalMs: uint32(p.cfg.ReportInterval / time.Millisecond)}
 	for _, n := range nodes {
 		online, seen, m := liveState(p.live, n)
@@ -326,7 +326,7 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Pub
 		// 标签随公开节点公开：n 来自 ListPublicNodes，只含 public = 1 的节点，私有节点的标签不会走到这里。
 		pn.Tags = n.Tags
 		// 计费经投影公开：PublicBilling 没有 auto_renew（reserved），它与 Billing 的对齐由 NewPublic 构造投影时核对。
-		if b := billingProto(n.Billing, today); b != nil {
+		if b := billingProto(n.Billing, alert.NodeToday(now, n, p.cfg.Location)); b != nil {
 			pn.Billing = p.billing.apply(b).(*heronv1.PublicBilling)
 		}
 		// 地址族状态取显示值（手填与 hub 来源的族为 AVAILABLE），与管理端 Node.network 出自同一个判定。从未上报 facts 的

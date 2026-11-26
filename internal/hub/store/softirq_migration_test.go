@@ -178,6 +178,7 @@ func TestRestoreV54MetricsSnapshotAddsSoftirqColumns(t *testing.T) {
 		if layer == "metrics" {
 			dropSoftirqColumns(t, db)
 		} else {
+			removeV57Config(t, db)
 			removeV56Config(t, db)
 		}
 		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=54"); err != nil {

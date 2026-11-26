@@ -278,18 +278,19 @@ func TestTrafficWriteSkipsDeletedNodes(t *testing.T) {
 	}
 }
 
-func TestTrafficResetDaysComeFromNodeTable(t *testing.T) {
+// 周期配置三列都从 node 表读：节点建好、尚无一次上报时就可改，traffic 行只在有流量状态后才存在。
+func TestTrafficSchedulesComeFromNodeTable(t *testing.T) {
 	t.Parallel()
 	st, id := openTraffic(t)
 	err := st.write(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.Exec("UPDATE node SET traffic_reset_day = 15 WHERE id = ?", id)
+		_, err := tx.Exec("UPDATE node SET traffic_reset_day = 15, traffic_reset_minute = 510, billing_timezone = 'UTC' WHERE id = ?", id)
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	days, err := st.TrafficResetDays(t.Context())
-	if err != nil || days[id] != 15 {
-		t.Fatalf("days = %v err=%v, want {%d: 15}", days, err, id)
+	got, err := st.TrafficSchedules(t.Context())
+	if want := (TrafficSchedule{Day: 15, Minute: 510, Timezone: "UTC"}); err != nil || got[id] != want {
+		t.Fatalf("schedules = %v err=%v, want {%d: %+v}", got, err, id, want)
 	}
 }

@@ -156,7 +156,7 @@ func TestReloadSkipsUnchangedGeneration(t *testing.T) {
 // 代数变化后重建映射、清掉库外删除的节点、重载任务，再确认；确认之后的周期不再加载。
 func TestReloadForgetsRemovedNodesAndConfirms(t *testing.T) {
 	rf, r, logs := newReloadFakes(t, 0, 7, 8)
-	rf.resetDays[7], rf.resetDays[8] = 3, 4
+	rf.schedules[7], rf.schedules[8] = store.TrafficSchedule{Day: 3}, store.TrafficSchedule{Day: 4}
 	rf.deleteOffline(7)
 	r.reload(t.Context())
 	got := rf.log()
@@ -216,7 +216,7 @@ func TestReloadFailureKeepsConfirmedAndRecovers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rf, r, logs := newReloadFakes(t, 0, 7, 8)
-			rf.resetDays[7] = 3
+			rf.schedules[7] = store.TrafficSchedule{Day: 3}
 			rf.deleteOffline(7)
 			tc.inject(rf)
 			r.reload(t.Context())
@@ -274,7 +274,7 @@ func TestReloadForgetWaitsForUpdateHoldingTheLock(t *testing.T) {
 	}
 	<-reloaded
 	got := names(rf.log())
-	if i, j := slices.Index(got, "traffic.SetResetDay"), slices.Index(got, "state.Forget"); i < 0 || j < 0 || i > j {
+	if i, j := slices.Index(got, "traffic.SetSchedule"), slices.Index(got, "state.Forget"); i < 0 || j < 0 || i > j {
 		t.Fatalf("forget did not follow the update's memory write: %v", got)
 	}
 	if day, ok := rf.resetDay(7); ok {

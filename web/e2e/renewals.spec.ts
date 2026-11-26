@@ -1,9 +1,9 @@
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
 import { BillingCycle } from "../src/gen/heron/v1/types_pb";
-import { addDays, addMonths } from "../src/lib/ymd";
+import { addMonths } from "../src/lib/ymd";
 import { expect, login, must, mustField, test } from "./fixtures";
 
-// 浏览器放在与 hub 不同的时区：日历按 hub 下发的 days_left 定今天，与浏览器时区无关（逐日的断言在 Renewals.test.tsx）。
+// 浏览器放在与 hub 不同的时区：日历按 ListNodes 下发的 hub_today 定今天，与浏览器时区无关（逐日的断言在 Renewals.test.tsx）。
 test.use({ timezoneId: "Pacific/Kiritimati" });
 
 // 冒烟：真实 hub 上一台今天到期、没开自动续期的节点出现在续费日历默认选中的今天里，「已续费」经 RenewNodeBilling
@@ -12,10 +12,11 @@ test("续费日历：今天到期的节点经「已续费」推后", async ({ pa
   const name = `${browserName}-renewal`;
   const id = mustField(await hub.rpc(AdminService.method.createNode, { name }), "node").id;
   hub.deleteNodeAtEnd(id);
-  const probe = mustField(await hub.rpc(AdminService.method.updateNode, { id, name, trafficResetDay: 1, offlineGraceS: 0, billing: { billingCycle: BillingCycle.MONTHLY, expiresOn: "2030-06-15" } }), "node", "billing");
-  if (probe.daysLeft === undefined) throw new Error(`hub returned no days_left for ${probe.expiresOn}`);
-  const today = addDays(probe.expiresOn, -probe.daysLeft);
-  must(await hub.rpc(AdminService.method.updateNode, { id, name, trafficResetDay: 1, offlineGraceS: 0, billing: { billingCycle: BillingCycle.MONTHLY, expiresOn: today } }));
+  const today = must(await hub.rpc(AdminService.method.listNodes, {})).hubToday;
+  if (!today) throw new Error("hub returned no hub_today");
+  // 节点没设计费时区，剩余天数与日历同按 hub 时区：今天到期剩 0 天。
+  const due = mustField(await hub.rpc(AdminService.method.updateNode, { id, name, trafficResetDay: 1, offlineGraceS: 0, billing: { billingCycle: BillingCycle.MONTHLY, expiresOn: today } }), "node", "billing");
+  expect(due.daysLeft).toBe(0);
 
   await page.goto("/admin/login");
   await login(page);

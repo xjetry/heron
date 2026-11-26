@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,6 +17,7 @@ import (
 	"github.com/xjetry/heron/internal/hub/alert"
 	"github.com/xjetry/heron/internal/hub/sanitize"
 	"github.com/xjetry/heron/internal/hub/store"
+	"github.com/xjetry/heron/internal/hub/traffic"
 )
 
 const (
@@ -77,8 +80,8 @@ func billingOf(m *heronv1.Billing) (store.Billing, error) {
 	return b, nil
 }
 
-// billingProto 是 Node.billing，也是公开端 PublicBilling 的投影来源。五项都没填时为 nil，字段缺失。today 是 hub 时区的
-// 今天（alert.Today）；没有到期日或库里的值读不懂时 days_left 缺失。
+// billingProto 是 Node.billing，也是公开端 PublicBilling 的投影来源。五项都没填时为 nil，字段缺失。today 是节点计费时区的
+// 今天（alert.NodeToday）；没有到期日或库里的值读不懂时 days_left 缺失。
 func billingProto(b store.Billing, today time.Time) *heronv1.Billing {
 	if b == (store.Billing{}) {
 		return nil
@@ -123,10 +126,11 @@ func addressPinInvalid(e store.AddressPinError) error {
 	return invalid("ipv6_pin: must be empty or a public IPv6 address without a zone, e.g. 2606:4700::1111; got %q", e.Got)
 }
 
-// nodeProto 的 today 是 hub 时区的今天（alert.Today）。
-func nodeProto(n store.Node, today time.Time) *heronv1.Node {
+// nodeProto 的 days_left 按节点计费时区里 now 的今天算（alert.NodeToday），hub 是 hub 生效的 --timezone。
+func nodeProto(n store.Node, now time.Time, hub *time.Location) *heronv1.Node {
 	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, SortOrder: n.SortOrder, Position: n.Position, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
-		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance, Rented: n.Rented,
+		TrafficResetMinute: uint32(n.TrafficResetMinute), BillingTimezone: n.BillingTimezone,
+		Billing: billingProto(n.Billing, alert.NodeToday(now, n, hub)), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance, Rented: n.Rented,
 		TrafficQuotaBytes: n.TrafficQuotaBytes, TrafficQuotaMode: enumFor(trafficQuotaModes, n.TrafficQuotaMode),
 		Ipv4Pin: n.IPv4Pin, Ipv6Pin: n.IPv6Pin, Network: nodeNetworkProto(n.DisplayNetwork())}
 	country, source := n.DisplayCountry()
@@ -175,23 +179,37 @@ func (s *Service) ListNodes(ctx context.Context, req *connect.Request[heronv1.Li
 	if req.Msg.GetUntagged() && len(tags) > 0 {
 		return nil, invalid("tags and untagged: must not be combined; untagged selects nodes with no tags, so tags must be empty")
 	}
-	// today 只取一次：同一个日期既拼进版本、又交给 nodeProto 算 days_left，版本与内容说的是同一天。
-	today := s.today()
-	revision := func(counter uint64) string {
-		return fmt.Sprintf("%s.%d.%s", s.nodeListEpoch, counter, today.Format(time.DateOnly))
+	// now 只取一次：同一时刻的各时区日期既拼进版本、又交给 nodeProto 算 days_left、又写成 hub_today，版本与内容说的是
+	// 同一天。
+	now := s.clk.Now()
+	revision := func(counter uint64, zones []string) string {
+		return fmt.Sprintf("%s.%d.%s", s.nodeListEpoch, counter, listDays(now, s.cfg.Location, zones))
 	}
 	known := req.Msg.GetKnownRevision()
 	list, err := s.store.ReadNodeList(ctx, store.NodeFilter{Tags: tags, Untagged: req.Msg.GetUntagged()},
-		func(counter uint64) bool { return known != "" && known == revision(counter) })
+		func(counter uint64, zones []string) bool { return known != "" && known == revision(counter, zones) })
 	if err != nil {
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := &heronv1.ListNodesResponse{Revision: revision(list.Revision), Unchanged: list.Unchanged}
+	out := &heronv1.ListNodesResponse{Revision: revision(list.Revision, list.BillingTimezones), Unchanged: list.Unchanged,
+		HubToday: alert.Today(now, s.cfg.Location).Format(time.DateOnly)}
 	for _, n := range list.Nodes {
-		out.Nodes = append(out.Nodes, nodeProto(n, today))
+		out.Nodes = append(out.Nodes, nodeProto(n, now, s.cfg.Location))
 	}
 	return connect.NewResponse(out), nil
+}
+
+// listDays 是节点列表版本里的日期部分：hub 时区的今天（hub_today），加上 zones（store.NodeList.BillingTimezones，全部节点
+// 用到的计费时区名）各自的今天（days_left 的基准）。任何一个时区换了日期，摘要就变，版本随之变；名字与日期都进摘要，
+// 两个时区交换日期也不会撞上。摘要只为让版本保持定长，版本本来就只比较相等。
+func listDays(now time.Time, hub *time.Location, zones []string) string {
+	h := fnv.New64a()
+	h.Write([]byte(alert.Today(now, hub).Format(time.DateOnly)))
+	for _, z := range zones {
+		h.Write([]byte("\x00" + z + "=" + alert.Today(now, traffic.BillingZone(z, hub)).Format(time.DateOnly)))
+	}
+	return strconv.FormatUint(h.Sum64(), 36)
 }
 
 func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.CreateNodeRequest]) (*connect.Response[heronv1.CreateNodeResponse], error) {
@@ -204,10 +222,15 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.C
 	if err != nil {
 		return nil, err
 	}
-	id, tok, err := s.nodes.Create(ctx, store.NewNode{Name: name, Billing: billing, Rented: req.Msg.GetRented()})
+	// 计费时区的判定只在 store（insertNode 的 checkBillingTimezone，与 UpdateNode、快照恢复同一处），被拒时在下面翻译。
+	id, tok, err := s.nodes.Create(ctx, store.NewNode{Name: name, Billing: billing, BillingTimezone: req.Msg.GetBillingTimezone(), Rented: req.Msg.GetRented()})
 	// insertNode 的准入复查同样拒绝未规范化的名字：这里已清洗过不会触发，映射留着兜住任何绕过入口校验的路径。
 	if mapped := invalidName(err); mapped != nil {
 		return nil, mapped
+	}
+	var zoneErr store.BillingTimezoneError
+	if errors.As(err, &zoneErr) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, zoneErr)
 	}
 	if errors.Is(err, store.ErrNodeLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, err)
@@ -223,7 +246,7 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.C
 		return nil, internalError("reading created node failed")
 	}
 	s.log.Info("node created", "node", id, "name", name)
-	return connect.NewResponse(&heronv1.CreateNodeResponse{Node: nodeProto(n, s.today()), Token: tok}), nil
+	return connect.NewResponse(&heronv1.CreateNodeResponse{Node: nodeProto(n, s.clk.Now(), s.cfg.Location), Token: tok}), nil
 }
 
 func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.UpdateNodeRequest]) (*connect.Response[heronv1.UpdateNodeResponse], error) {
@@ -239,7 +262,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
-	// 重置日的范围由 store 的写入口裁决（与快照恢复同一判定），越界返回 TrafficResetDayError，在下面翻译。
+	// 周期规则（重置日、重置时刻、计费时区）由 store 的写入口裁决（与快照恢复同一判定），不合法返回
+	// TrafficResetDayError、TrafficResetMinuteError 或 BillingTimezoneError，在下面翻译。
 	day := int(req.Msg.GetTrafficResetDay())
 	quota := req.Msg.GetTrafficQuotaBytes()
 	if quota >= 1<<62 {
@@ -272,7 +296,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
-	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, TrafficQuotaBytes: quota, TrafficQuotaMode: mode, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Rented: req.Msg.GetRented(), Tags: tags,
+	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day,
+		TrafficResetMinute: int(req.Msg.GetTrafficResetMinute()), BillingTimezone: req.Msg.GetBillingTimezone(), TrafficQuotaBytes: quota, TrafficQuotaMode: mode, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Rented: req.Msg.GetRented(), Tags: tags,
 		IPv4Pin: req.Msg.GetIpv4Pin(), IPv6Pin: req.Msg.GetIpv6Pin()}
 	err = s.nodes.Update(ctx, req.Msg.GetId(), edit)
 	if errors.Is(err, store.ErrNotFound) {
@@ -285,6 +310,14 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	var dayErr store.TrafficResetDayError
 	if errors.As(err, &dayErr) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, dayErr)
+	}
+	var minuteErr store.TrafficResetMinuteError
+	if errors.As(err, &minuteErr) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, minuteErr)
+	}
+	var zoneErr store.BillingTimezoneError
+	if errors.As(err, &zoneErr) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, zoneErr)
 	}
 	if err != nil {
 		return nil, s.operationError(err, "tags", "updating node failed")
@@ -299,11 +332,11 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 		s.log.Error("reading updated node failed", "err", err)
 		return nil, internalError("reading updated node failed")
 	}
-	return connect.NewResponse(&heronv1.UpdateNodeResponse{Node: nodeProto(n, s.today())}), nil
+	return connect.NewResponse(&heronv1.UpdateNodeResponse{Node: nodeProto(n, s.clk.Now(), s.cfg.Location)}), nil
 }
 
 // RenewNodeBilling 是"已续费"。推后的日期只由 alert.RenewedExpiry 算出，与自动续期共用步进与月末钳制；
-// 今天是 hub 时区的今天（s.today），与同一响应里的 days_left 同一口径。写回经 store.RenewNodeBilling 的条件写：
+// 今天是节点计费时区的今天（alert.NodeToday），与同一响应里的 days_left、到期扫描同一口径。写回经 store.RenewNodeBilling 的条件写：
 // 这里读到节点到写入之间计费若被改过（并发的 UpdateNode、日界扫描的自动续期），条件不成立、什么都不写，回答
 // FailedPrecondition，调用方刷新后按新值再决定是否续费。写入后与 UpdateNode 改计费一样立刻扫描一次，到期
 // 告警在续费后即恢复；修改已提交，扫描失败只记日志，日界扫描会补上。不经 nodeops：只写到期日一列，不碰流量账本与
@@ -318,7 +351,7 @@ func (s *Service) RenewNodeBilling(ctx context.Context, req *connect.Request[her
 		s.log.Error("reading node for renewal failed", "err", err)
 		return nil, internalError("reading node for renewal failed")
 	}
-	to, err := alert.RenewedExpiry(n.Billing, s.today())
+	to, err := alert.RenewedExpiry(n.Billing, alert.NodeToday(s.clk.Now(), n, s.cfg.Location))
 	switch {
 	case errors.Is(err, alert.ErrRenewNoCycle):
 		return nil, invalid("billing.billing_cycle: node %d has no billing cycle to renew by; set one with UpdateNode first", id)
@@ -351,7 +384,7 @@ func (s *Service) RenewNodeBilling(ctx context.Context, req *connect.Request[her
 		s.log.Error("reading renewed node failed", "err", err)
 		return nil, internalError("reading renewed node failed")
 	}
-	return connect.NewResponse(&heronv1.RenewNodeBillingResponse{Node: nodeProto(n, s.today())}), nil
+	return connect.NewResponse(&heronv1.RenewNodeBillingResponse{Node: nodeProto(n, s.clk.Now(), s.cfg.Location)}), nil
 }
 
 // DeleteNode 返回成功同时意味着持久化删除完成与进程内状态清除（见 nodeops.Service.Delete）。

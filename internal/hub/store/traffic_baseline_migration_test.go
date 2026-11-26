@@ -139,6 +139,7 @@ func TestTrafficOldSnapshotRestoresBaseline(t *testing.T) {
 			t.Fatal(err)
 		}
 		if layer == "config" {
+			removeV57Config(t, db)
 			removeV56Config(t, db)
 			removeV52Config(t, db)
 			removeV51Config(t, db)

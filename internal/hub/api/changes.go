@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/hub/alert"
 	"github.com/xjetry/heron/internal/hub/authz"
 	"github.com/xjetry/heron/internal/hub/store"
 	"google.golang.org/protobuf/proto"
@@ -190,7 +191,8 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			if err != nil {
 				return notFound(c.ResourceID)
 			}
-			base := &heronv1.UpdateNodeRequest{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, TrafficResetDay: uint32(n.TrafficResetDay), OfflineGraceS: proto.Uint32(uint32(n.OfflineGraceS)), Billing: billingProto(n.Billing, s.today()), CountryPin: n.CountryPin, Tags: n.Tags, Maintenance: n.Maintenance, Rented: n.Rented}
+			base := &heronv1.UpdateNodeRequest{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, TrafficResetDay: uint32(n.TrafficResetDay), OfflineGraceS: proto.Uint32(uint32(n.OfflineGraceS)), Billing: billingProto(n.Billing, alert.NodeToday(s.clk.Now(), n, s.cfg.Location)), CountryPin: n.CountryPin, Tags: n.Tags, Maintenance: n.Maintenance, Rented: n.Rented}
+			base.TrafficResetMinute, base.BillingTimezone = uint32(n.TrafficResetMinute), n.BillingTimezone
 			base.TrafficQuotaBytes, base.TrafficQuotaMode = n.TrafficQuotaBytes, enumFor(trafficQuotaModes, n.TrafficQuotaMode)
 			base.Ipv4Pin, base.Ipv6Pin = n.IPv4Pin, n.IPv6Pin
 			return mergeChange(q.UpdateNode, base, m.GetUpdateMask().GetPaths(), "id", "billing.days_left")

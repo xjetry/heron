@@ -144,7 +144,7 @@ export function clockParts(timeZone?: string): (unixMs: number) => ClockParts | 
   };
 }
 
-// 面板与公开页统一的时刻写法 YYYY-MM-DD HH:mm:ss 与日期写法 YYYY-MM-DD。timeZone 传 hub 的时区（如 GetTraffic.timezone）时按 hub 的日界显示。
+// 面板与公开页统一的时刻写法 YYYY-MM-DD HH:mm:ss 与日期写法 YYYY-MM-DD。timeZone 传 hub 下发的时区名（如节点的 Traffic.timezone）时按那个时区的日界显示。
 export function dateTime(unixSeconds: number | bigint, timeZone?: string): string {
   const p = clockParts(timeZone)(Number(unixSeconds) * 1000);
   return p ? `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}` : "";

@@ -63,7 +63,13 @@ const ddlNode = `CREATE TABLE node (
   -- 已出租：机器租出去了、不装 agent，离线是预期状态。与 maintenance 互斥，裁决在 UpdateNodeTasks
   -- （checkNodeFlags），快照恢复进库前由 validateSnapshotNodes 复核；库里不设 CHECK。
   -- 列序与迁移 44 的 ADD COLUMN 结果一致。
-  rented INTEGER NOT NULL DEFAULT 0
+  rented INTEGER NOT NULL DEFAULT 0,
+  -- 周期规则的后两项（重置日是 traffic_reset_day）：重置时刻是计费时区里当地零点起的分钟数（0–1439，默认 00:00）；
+  -- 计费时区是 IANA 名，空串是缺省——沿用 hub 的 --timezone，不是放宽（读侧 traffic.BillingZone 解析成 hub 时区）。
+  -- 流量周期边界与到期日的日界都按计费时区算。取值由写入口（insertNode、UpdateNodeTasks）与快照恢复预检
+  -- （validateSnapshotNodes）裁决，库里不设 CHECK。列序与迁移 57 的 ADD COLUMN 结果一致。
+  traffic_reset_minute INTEGER NOT NULL DEFAULT 0,
+  billing_timezone TEXT NOT NULL DEFAULT ''
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (
@@ -142,7 +148,7 @@ const ddlTraffic = `CREATE TABLE traffic (
   total_tx INTEGER NOT NULL,
   period_rx INTEGER NOT NULL,
   period_tx INTEGER NOT NULL,
-  -- 当前周期起点，Unix 秒；重置日零点按 hub 时区换算。
+  -- 当前周期起点，Unix 秒；按节点的周期规则（重置日、重置时刻、计费时区，见 traffic.PeriodStart）换算。
   period_start INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   -- 合计形态基线的集合摘要；逐网卡形态与没有基线时为空。
@@ -241,6 +247,7 @@ var ddlNodeListRevisionTriggers = []string{
   OR OLD.country_pin IS NOT NEW.country_pin OR OLD.maintenance IS NOT NEW.maintenance OR OLD.public_remark IS NOT NEW.public_remark
   OR OLD.traffic_quota_bytes IS NOT NEW.traffic_quota_bytes OR OLD.traffic_quota_mode IS NOT NEW.traffic_quota_mode
   OR OLD.ipv4_pin IS NOT NEW.ipv4_pin OR OLD.ipv6_pin IS NOT NEW.ipv6_pin OR OLD.rented IS NOT NEW.rented
+  OR OLD.traffic_reset_minute IS NOT NEW.traffic_reset_minute OR OLD.billing_timezone IS NOT NEW.billing_timezone
 BEGIN ` + bumpNodeListRevision + ` END`,
 	`CREATE TRIGGER node_list_revision_facts_insert AFTER INSERT ON node_facts BEGIN ` + bumpNodeListRevision + ` END`,
 	`CREATE TRIGGER node_list_revision_facts_delete AFTER DELETE ON node_facts BEGIN ` + bumpNodeListRevision + ` END`,

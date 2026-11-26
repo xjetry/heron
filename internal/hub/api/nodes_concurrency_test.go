@@ -37,7 +37,7 @@ func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if day := h.book.View(id).ResetDay; day != n.TrafficResetDay {
+		if day := h.book.View(id).Schedule.Day; day != n.TrafficResetDay {
 			t.Fatalf("round %d: memory reset day %d differs from stored %d", round, day, n.TrafficResetDay)
 		}
 	}
@@ -69,7 +69,7 @@ func TestConcurrentUpdateCannotReviveDeletedResetDay(t *testing.T) {
 		})
 		close(start)
 		wg.Wait()
-		if day := h.book.View(id).ResetDay; day != 1 {
+		if day := h.book.View(id).Schedule.Day; day != 1 {
 			t.Fatalf("round %d: deleted node retained reset day %d", round, day)
 		}
 	}

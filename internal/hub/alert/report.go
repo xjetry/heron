@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xjetry/heron/internal/clock"
+	"github.com/xjetry/heron/internal/hub/calendar"
 	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/hub/traffic"
 )
@@ -34,13 +35,15 @@ type ReportDeps struct {
 	Traffic *traffic.Book
 	// Sender 投递报告事件；生产装配传告警的投递队列，报告与告警共用队列与重试。
 	Sender Sender
-	// Location 是 hub 的 --timezone：周期边界、投递时刻与距重置的天数都按它的日历算。
+	// Location 是 hub 的 --timezone：报告的期（日报、周报、月报）、投递时刻与首行的日期按它的日历算；每个节点的
+	// 周期边界与距重置的天数按节点的计费时区（为空时就是它，traffic.ScheduleOf）。
 	Location *time.Location
 	Clock    clock.Clock
 	Log      *slog.Logger
 }
 
-// Reporter 是周期流量报告的调度：按 hub 时区的日历，在每种启用的周期到期时把全部节点的已提交周期用量汇成一条
+// Reporter 是周期流量报告的调度：按 hub 时区的日历，在每种启用的周期到期时把全部节点的已提交周期用量（各按自己的
+// 周期规则）汇成一条
 // 消息，记为系统事件并交给投递队列。它放在 alert 包而不是 store 的维护循环里：投递要经告警的队列，store 见不到它。
 type Reporter struct {
 	st     ReportStorage
@@ -178,54 +181,12 @@ func LatestReportPeriod(c store.ReportCadence, now time.Time, hour int, loc *tim
 	return store.ReportPeriod{Cadence: c, Key: day}
 }
 
-// ReportSendMoment 是投递日 day（日期值，见 Today）在 loc 里本地时间不小于 hour:00 的第一个存在时刻，即到期扫描
-// "零点不存在取新一天第一个时刻"（nextDayStart）的推广。go1.27.1 的 time.Date 对不存在与重复的墙钟读数都不保证给哪一侧：
-//   - 拨快的间隙（America/New_York 3 月的 02:00）：它可能往回给旧偏移下更早的读数（01:00 EST），也可能往前给新偏移下
-//     更晚的读数（Australia/Lord_Howe 的 02:30、Asia/Beirut 的 01:00）。往回时第一个存在时刻是这一时段的结束处，往前时
-//     是这一时段的开始处，两者都是拨快的那一刻。间隙跨过午夜（America/Santiago 9 月的 00:00 往回到前一天 23:00）同样
-//     取结束处。
-//   - 拨慢的重复（Europe/London 10 月的 01:00 给第二次的 GMT，America/New_York 11 月的 01:00 给第一次的 EDT）：取第一次。
-//
-// 一期报告由投递日（周期键）标识而不是由这个时刻标识，所以这里给出的时刻只决定"何时算到期"，不会让一期发两次。
+// ReportSendMoment 是投递日 day（日期值，见 Today）在 loc 里本地读数不早于 hour:00 的第一个时刻（calendar.Moment：
+// 拨快的空档取跳变时刻，拨慢的重复取第一次）。一期报告由投递日（周期键）标识而不是由这个时刻标识，所以这里给出的时刻
+// 只决定"何时算到期"，不会让一期发两次。
 func ReportSendMoment(day time.Time, hour int, loc *time.Location) time.Time {
 	y, m, d := day.Date()
-	t := time.Date(y, m, d, hour, 0, 0, 0, loc)
-	ty, tm, td := t.Date()
-	if ty == y && tm == m && td == d && t.Hour() == hour && t.Minute() == 0 {
-		return firstOccurrence(t)
-	}
-	start, end := t.ZoneBounds()
-	if wallClock(t).Before(time.Date(y, m, d, hour, 0, 0, 0, time.UTC)) {
-		return end
-	}
-	return start
-}
-
-// wallClock 是 t 在它自己的时区里的墙钟读数，记成 UTC 里同样读数的时刻，只用于与另一个墙钟读数比先后。
-func wallClock(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
-}
-
-// firstOccurrence 是与 t 墙钟读数相同的最早时刻：t 落在拨慢后的重复时段里时，前一时段（偏移更大）里同一读数更早。
-func firstOccurrence(t time.Time) time.Time {
-	start, _ := t.ZoneBounds()
-	if start.IsZero() {
-		return t
-	}
-	prev := zoneOffset(start.Add(-time.Second))
-	if prev <= zoneOffset(t) {
-		return t
-	}
-	earlier := t.Add(-(prev - zoneOffset(t)))
-	if earlier.Before(start) && wallClock(earlier).Equal(wallClock(t)) {
-		return earlier
-	}
-	return t
-}
-
-func zoneOffset(t time.Time) time.Duration {
-	_, off := t.Zone()
-	return time.Duration(off) * time.Second
+	return calendar.Moment(y, m, d, hour*60, loc)
 }
 
 // ReportRow 是报告里的一个节点。
@@ -235,26 +196,26 @@ type ReportRow struct {
 	UsedBytes, QuotaBytes uint64
 	Mode                  string
 	Percent               float64
-	// DaysLeft 是 hub 时区的今天到下一个重置日的天数。
+	// DaysLeft 是节点计费时区里今天到下一次重置所在那一日的天数（重置时刻不是零点时，当天稍后重置也是 0）。
 	DaysLeft int
 }
 
-// ReportRows 由已提交观测算出每个节点这一行，口径与面板相同：用量与百分比经 traffic.Quota，周期边界经
-// traffic.PeriodStart / NextResetAfter。已提交的观测不重算；它的周期已经结束（账本还没刷出这次滚动，或这台节点自上个
-// 周期起再没有入账）时按账本读侧（Book.Get 的滚动）同样的规则看作新周期、用量为零，而不是把上个周期的整期用量报成本期的。
-// 没有已提交观测的节点同样是新周期的零用量（与 Book.View 一致）。
-func ReportRows(nodes []store.Node, committed map[int64]traffic.State, now time.Time, loc *time.Location) []ReportRow {
-	today := Today(now, loc)
+// ReportRows 由已提交观测算出每个节点这一行，口径与面板相同：用量与百分比经 traffic.Quota，周期边界按节点的周期规则
+// （traffic.ScheduleOf，hub 是节点没设计费时区时的缺省）经 traffic.PeriodStart / NextResetAfter。已提交的观测不重算；它的
+// 周期已经结束（账本还没刷出这次滚动，或这台节点自上个周期起再没有入账）时按账本读侧（Book.Get 的滚动）同样的规则看作
+// 新周期、用量为零，而不是把上个周期的整期用量报成本期的。没有已提交观测的节点同样是新周期的零用量（与 Book.View 一致）。
+func ReportRows(nodes []store.Node, committed map[int64]traffic.State, now time.Time, hub *time.Location) []ReportRow {
 	rows := make([]ReportRow, 0, len(nodes))
 	for _, n := range nodes {
+		sched := traffic.ScheduleOf(n.TrafficSchedule(), hub)
 		s, ok := committed[n.ID]
-		if !ok || !now.Before(traffic.NextResetAfter(s.PeriodStart, n.TrafficResetDay, loc)) {
-			s = traffic.State{PeriodStart: traffic.PeriodStart(now, n.TrafficResetDay, loc)}
+		if !ok || !now.Before(traffic.NextResetAfter(s.PeriodStart, sched)) {
+			s = traffic.State{PeriodStart: traffic.PeriodStart(now, sched)}
 		}
 		used, pct, _ := traffic.Quota(traffic.Entry{State: s}, n.TrafficQuotaBytes, n.TrafficQuotaMode)
-		next := traffic.NextResetAfter(s.PeriodStart, n.TrafficResetDay, loc)
+		next := traffic.NextResetAfter(s.PeriodStart, sched)
 		rows = append(rows, ReportRow{Name: n.Name, UsedBytes: used, QuotaBytes: n.TrafficQuotaBytes, Mode: n.TrafficQuotaMode, Percent: pct,
-			DaysLeft: daysBetween(today, Today(next, loc))})
+			DaysLeft: daysBetween(Today(now, sched.Zone), Today(next, sched.Zone))})
 	}
 	return rows
 }

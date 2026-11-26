@@ -497,11 +497,11 @@ describe("Nodes", () => {
     else expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
-  it("编辑重置日说明月末钳位与周期量清零的后果", async () => {
+  it("编辑重置日说明月末钳位与改周期规则后按历史重算", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     openRowAction("a（#1）", "编辑");
-    expect(screen.getByText("当月不足该日时在当月最后一日重置，之后的月份仍按该日。若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
+    expect(screen.getByText("当月不足该日时在当月最后一日重置，之后的月份仍按该日。改重置日、重置时刻或计费时区后，本周期用量按新的起点从历史数据重算；离线期间与 hub 重启后首次上报的流量、手动校正不在历史里，不计入。")).toBeInTheDocument();
   });
 
   it("编辑回显重置日", async () => {
