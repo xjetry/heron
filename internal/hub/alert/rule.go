@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
@@ -183,13 +184,16 @@ type WebhookConfig struct {
 	RemoveHeaders []string          `json:"remove_headers,omitempty"`
 }
 
+// Message 是一次投递的内容，也是 Webhook 模板的数据。Value 与 ValueUnit 取自事件（store.AlertEvent 的同名字段），
+// 接收方拿到数值时同时拿到单位，不必按规则种类去猜；没有单一观测值的消息（系统事件、合并消息）是 0 与 n/a。
 type Message struct {
 	Rule, Node, Kind, Transition, Summary string
 	Value                                 float64
+	ValueUnit                             string
 	At                                    time.Time
 }
 
-const DefaultWebhookTemplate = `{"rule":{{json .Rule}},"node":{{json .Node}},"kind":{{json .Kind}},"transition":{{json .Transition}},"value":{{.Value}},"at":{{.At.Unix}},"summary":{{json .Summary}}}`
+const DefaultWebhookTemplate = `{"rule":{{json .Rule}},"node":{{json .Node}},"kind":{{json .Kind}},"transition":{{json .Transition}},"value":{{.Value}},"value_unit":{{json .ValueUnit}},"at":{{.At.Unix}},"summary":{{json .Summary}}}`
 
 func parseBodyTemplate(body string) (*template.Template, error) {
 	if body == "" {
@@ -200,7 +204,7 @@ func parseBodyTemplate(body string) (*template.Template, error) {
 		return nil, err
 	}
 	// 样例与投递共用 Message 的字段类型，能在保存时发现执行到的分支中的字段或类型错误。
-	err = tmpl.Execute(io.Discard, Message{Rule: "rule", Node: "node", Kind: "probe", Transition: "firing", Summary: "summary", Value: 1, At: time.Unix(0, 0).UTC()})
+	err = tmpl.Execute(io.Discard, Message{Rule: "rule", Node: "node", Kind: "probe", Transition: "firing", Summary: "summary", Value: 1, ValueUnit: metric.UnitPercent, At: time.Unix(0, 0).UTC()})
 	if err != nil {
 		return nil, err
 	}

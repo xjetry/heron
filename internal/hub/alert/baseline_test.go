@@ -84,7 +84,7 @@ func TestRelativeRuleFiresOutsideBandAndRecovers(t *testing.T) {
 	must(t, f.e.EvaluateProbes(t.Context(), ts+60))
 	wantState(t, f.e, r.ID, node, store.StateFiring)
 	ev := f.events(t)
-	if len(ev) != 1 || ev[0].Value != 100 {
+	if len(ev) != 1 || ev[0].Value != 100 || ev[0].ValueUnit != metric.UnitMilliseconds {
 		t.Fatalf("events=%+v", ev)
 	}
 	for _, want := range []string{"rtt 均值 100.0 ms", "基线 50.0 ms", "偏差 +100.0%", "正常带 25.0–100.0 ms"} {
@@ -97,7 +97,7 @@ func TestRelativeRuleFiresOutsideBandAndRecovers(t *testing.T) {
 	wantState(t, f.e, r.ID, node, store.StateFiring)
 	must(t, f.e.EvaluateProbes(t.Context(), ts+180))
 	wantState(t, f.e, r.ID, node, store.StateOK)
-	if ev = f.events(t); len(ev) != 2 || ev[0].Transition != store.TransitionRecovered || !strings.Contains(ev[0].Summary, "偏差 +20.0%") {
+	if ev = f.events(t); len(ev) != 2 || ev[0].Transition != store.TransitionRecovered || ev[0].ValueUnit != metric.UnitMilliseconds || !strings.Contains(ev[0].Summary, "偏差 +20.0%") {
 		t.Fatalf("events after recovery=%+v", ev)
 	}
 }

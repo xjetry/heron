@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/hub/alert"
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/outbound"
 	"github.com/xjetry/heron/internal/hub/store"
 	"google.golang.org/protobuf/proto"
@@ -467,7 +468,7 @@ func TestListAlertEventsPaging(t *testing.T) {
 		if i == 0 {
 			id = n2
 		}
-		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []store.DeliveryTarget{{ChannelID: c.Id}})
+		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i), ValueUnit: metric.UnitSeconds}, []store.DeliveryTarget{{ChannelID: c.Id}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -495,7 +496,7 @@ func TestListAlertEventsPaging(t *testing.T) {
 		return resp.Msg
 	}
 	page := query(0, 0, 2)
-	want := &heronv1.AlertEvent{Id: last.ID, RuleId: r.Id, NodeId: n, Transition: "firing", At: h.clk.Now().Unix(), Summary: "500", Value: 500, Deliveries: []*heronv1.AlertDelivery{{Id: last.Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Ok: true, Done: true, DeliveredAt: proto.Int64(h.clk.Now().Unix())}}}
+	want := &heronv1.AlertEvent{Id: last.ID, RuleId: r.Id, NodeId: n, Transition: "firing", At: h.clk.Now().Unix(), Summary: "500", Value: 500, ValueUnit: metric.UnitSeconds, Deliveries: []*heronv1.AlertDelivery{{Id: last.Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Ok: true, Done: true, DeliveredAt: proto.Int64(h.clk.Now().Unix())}}}
 	if len(page.Events) != 2 || !proto.Equal(page.Events[0], want) || page.Events[1].Id != events[499].ID || page.Events[1].Deliveries[0].DeliveredAt != nil {
 		t.Fatalf("page=%v want first=%v", page, want)
 	}

@@ -74,7 +74,7 @@ func TestPreviewAlertNotificationReportsTemplateErrorPerChannel(t *testing.T) {
 	if len(p) != 2 || p[0].ChannelId != b.Id || !strings.Contains(p[0].Error, "can't evaluate field Missing") || p[0].Body != "" || p[0].Method != "" {
 		t.Fatalf("bad channel preview=%v", p)
 	}
-	if p[1].Error != "" || !strings.Contains(p[1].Body, `"transition":"recovered"`) || !strings.Contains(p[1].Body, "，告警持续 30 分钟") {
+	if p[1].Error != "" || !strings.Contains(p[1].Body, `"transition":"recovered"`) || !strings.Contains(p[1].Body, `"value_unit":"seconds"`) || !strings.Contains(p[1].Body, "，告警持续 30 分钟") {
 		t.Fatalf("good channel preview=%v", p[1])
 	}
 }
@@ -89,6 +89,7 @@ func TestTestAlertNotificationSendsPrefixedSampleWithoutRecording(t *testing.T) 
 	type received struct {
 		Rule, Node, Kind, Transition, Summary string
 		Value                                 float64
+		ValueUnit                             string `json:"value_unit"`
 	}
 	got := make(chan received, 1)
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +120,7 @@ func TestTestAlertNotificationSendsPrefixedSampleWithoutRecording(t *testing.T) 
 		t.Fatalf("results=%v want %v", resp.Msg.Results, want)
 	}
 	m := <-got
-	if m != (received{Rule: "草稿", Node: "东京", Kind: "offline", Transition: "firing", Summary: "[测试] 节点 东京 离线 30s（规则 草稿）", Value: 30}) {
+	if m != (received{Rule: "草稿", Node: "东京", Kind: "offline", Transition: "firing", Summary: "[测试] 节点 东京 离线 30s（规则 草稿）", Value: 30, ValueUnit: "seconds"}) {
 		t.Fatalf("received=%+v", m)
 	}
 	if after := rowCounts(t, h.dbPath); !maps.Equal(before, after) {

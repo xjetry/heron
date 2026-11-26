@@ -83,6 +83,7 @@ const sampleFiringDuration = 30 * time.Minute
 func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Node, phase store.Transition) (store.AlertEvent, error) {
 	tr := &phase
 	ev := store.AlertEvent{Transition: phase, At: e.clk.Now()}
+	var rd reading
 	switch r.Kind {
 	case store.KindOffline:
 		// 刚好触发的已离线时长：至少 TTL，且不短于节点宽限（NextOffline）。恢复时节点刚刚上报，时长为零。
@@ -90,7 +91,7 @@ func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Nod
 		if phase == store.TransitionRecovered {
 			unseen = 0
 		}
-		ev.Summary, ev.Value = offlineSummary(n, r, true, unseen, tr), unseen.Seconds()
+		ev.Summary, rd = offlineSummary(n, r, true, unseen, tr), observedValue(unseen.Seconds())
 	case store.KindProbe:
 		// 固定阈值：触发取阈值本身（触发含等号），恢复取阈值的一半。相对判定：触发取带的上沿（含等号），恢复取基线。
 		var band rttBand
@@ -107,11 +108,11 @@ func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Nod
 		} else if phase == store.TransitionRecovered {
 			value = r.Threshold / 2
 		}
-		ev.Summary, ev.Value = probeSummary(n, r, band, value), value
+		ev.Summary, rd = probeSummary(n, r, band, value), observedValue(value)
 	case store.KindResource:
-		ev.Summary, ev.Value = resourceSummary(n, r, tr, e.fullestMount(r, n.ID)), r.Threshold
+		ev.Summary, rd = resourceSummary(n, r, tr, e.fullestMount(r, n.ID)), observedValue(r.Threshold)
 		if phase == store.TransitionRecovered {
-			ev.Value = r.RecoveryThreshold
+			rd = observedValue(r.RecoveryThreshold)
 		}
 	case store.KindTraffic:
 		// 节点没设配额时真实评估不会触发（NextTraffic），样例代之以 sampleQuotaBytes，只为让文案带上配额的形状。
@@ -125,7 +126,7 @@ func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Nod
 			pct = r.Threshold / 2
 		}
 		o := TrafficObservation{Current: true, QuotaBytes: quota, UsedBytes: uint64(float64(quota) * pct / 100), Percent: pct, Threshold: r.Threshold}
-		ev.Summary, ev.Value = trafficSummary(n, r, o, tr), pct
+		ev.Summary, rd = trafficSummary(n, r, o, tr)
 	case store.KindExpiry, store.KindCertExpiry:
 		// 到期日取刚进入提醒窗口的那一天（今天 + 提前天数，按 hub 时区的日历）。恢复取"已不在提醒窗口内"那一支：
 		// 触发时记下的到期日与当前相同。
@@ -133,13 +134,18 @@ func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Nod
 		o := ExpiryObservation{HasExpiry: true, DaysLeft: r.DaysBefore, DaysBefore: r.DaysBefore}
 		if r.Kind == store.KindExpiry {
 			n.Billing.ExpiresOn = expiresOn
-			ev.Summary, ev.Value = expirySummary(n, r, o, tr, expiresOn)
+			ev.Summary, rd = expirySummary(n, r, o, tr, expiresOn)
 		} else {
-			ev.Summary, ev.Value = certSummary(n, r, expiresOn, o, tr, expiresOn)
+			ev.Summary, rd = certSummary(n, r, expiresOn, o, tr, expiresOn)
 		}
 	default:
 		// Sample 先过 CheckRule，表外种类到不了这里；新增种类而漏了这里的分支时，样例以内部错误失败而不是给出错的文案。
 		return store.AlertEvent{}, fmt.Errorf("no sample for rule kind %q", r.Kind)
+	}
+	// 值与单位经真实事件同一处（eventValue）成形，样例消息的 Value、ValueUnit 与真实投递同口径。
+	var err error
+	if ev.Value, ev.ValueUnit, err = eventValue(r, rd); err != nil {
+		return store.AlertEvent{}, err
 	}
 	if phase == store.TransitionRecovered {
 		ev.Summary = withFiringDuration(ev.Summary, sampleFiringDuration, atRecovery)

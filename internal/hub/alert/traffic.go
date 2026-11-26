@@ -41,14 +41,15 @@ func quotaBytesText(n uint64) string {
 	return fmt.Sprintf("%.3g %s", v, units[i])
 }
 
-func trafficSummary(n store.Node, r store.AlertRule, o TrafficObservation, tr *store.Transition) string {
+// trafficSummary 是流量规则的文案与观测：观测是已用量占配额的百分比，因清除配额而恢复时没有配额可比、没有观测（noReading）。
+func trafficSummary(n store.Node, r store.AlertRule, o TrafficObservation, tr *store.Transition) (string, reading) {
 	if tr != nil && *tr == store.TransitionRecovered {
 		if o.QuotaBytes == 0 {
-			return fmt.Sprintf("节点 %s 已清除流量配额（规则 %s）", n.Name, r.Name)
+			return fmt.Sprintf("节点 %s 已清除流量配额（规则 %s）", n.Name, r.Name), noReading
 		}
-		return fmt.Sprintf("节点 %s 本周期流量用量 %.2f%% 已低于阈值 %.2f%%（规则 %s）", n.Name, o.Percent, r.Threshold, r.Name)
+		return fmt.Sprintf("节点 %s 本周期流量用量 %.2f%% 已低于阈值 %.2f%%（规则 %s）", n.Name, o.Percent, r.Threshold, r.Name), observedValue(o.Percent)
 	}
-	return fmt.Sprintf("节点 %s 本周期流量已用 %.2f%%（%s / %s，%s，规则 %s）", n.Name, o.Percent, quotaBytesText(o.UsedBytes), quotaBytesText(o.QuotaBytes), quotaModeText[n.TrafficQuotaMode], r.Name)
+	return fmt.Sprintf("节点 %s 本周期流量已用 %.2f%%（%s / %s，%s，规则 %s）", n.Name, o.Percent, quotaBytesText(o.UsedBytes), quotaBytesText(o.QuotaBytes), quotaModeText[n.TrafficQuotaMode], r.Name), observedValue(o.Percent)
 }
 
 // quotaModeText 是配额口径在通知文案里的写法，流量告警与流量报告共用。
@@ -106,7 +107,8 @@ func (e *Engine) evaluateTraffic(ctx context.Context, cy *cycle, nodes []store.N
 			if !current {
 				continue
 			}
-			if err := e.apply(ctx, cy, r, n.ID, next, false, n.Maintenance, "", tr, trafficSummary(n, r, o, tr), pct); err != nil {
+			summary, rd := trafficSummary(n, r, o, tr)
+			if err := e.apply(ctx, cy, r, n.ID, next, false, n.Maintenance, "", tr, summary, rd); err != nil {
 				errs = append(errs, err)
 			}
 		}

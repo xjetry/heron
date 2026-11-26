@@ -358,7 +358,7 @@ func (s *Service) ListAlertEvents(ctx context.Context, req *connect.Request[hero
 	}
 	out := &heronv1.ListAlertEventsResponse{}
 	for _, ev := range events {
-		p := &heronv1.AlertEvent{Id: ev.ID, RuleId: ev.RuleID, NodeId: ev.NodeID, Transition: string(ev.Transition), At: ev.At.Unix(), Summary: ev.Summary, Value: ev.Value, Silenced: ev.Silenced}
+		p := &heronv1.AlertEvent{Id: ev.ID, RuleId: ev.RuleID, NodeId: ev.NodeID, Transition: string(ev.Transition), At: ev.At.Unix(), Summary: ev.Summary, Value: ev.Value, ValueUnit: ev.ValueUnit, Silenced: ev.Silenced}
 		for _, d := range ev.Deliveries {
 			// 只读口径：原文可能含接收方回显的密钥，只给类别与状态码（GetAlertDeliveryError 是原文的唯一出口）。
 			failure, err := deliveryFailureProto(d.Failure)

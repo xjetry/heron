@@ -436,7 +436,7 @@ func (q *Queue) retryAfterFailure(ctx context.Context, delay *time.Duration) err
 // 单个事件的批次就是那个事件本身，Webhook 的模板字段逐事件含义不变。多个事件的批次合成一条：首行写规则、台数与转换
 // 方向，其后逐行列出至多 maxListedNodes 个事件的原文，超出的写"另外 N 台"。批次只按（渠道，评估周期，规则，转换
 // 方向）合并（Engine.apply），所以同批事件的规则与方向相同，首行取第一个事件的即可。合并只发生在 Telegram 渠道；
-// 渠道在批次待发期间被改成 Webhook 时仍按合并文案发一次请求（Node 为逐个列出的节点名，Value 为 0）——"一个批次
+// 渠道在批次待发期间被改成 Webhook 时仍按合并文案发一次请求（Node 为逐个列出的节点名，Value 为 0、ValueUnit 为 n/a）——"一个批次
 // 一次发送"是尝试次数与结果能整批记账的前提，优先于模板字段的逐事件含义。
 //
 // 系统事件（登录、备份、流量报告）的标签与种类按 transition 给出（store.SystemEventKind），不按 0/0 推断。它们的批次
@@ -446,7 +446,7 @@ func (q *Queue) retryAfterFailure(ctx context.Context, delay *time.Duration) err
 func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, error) {
 	first := b.Events[0]
 	if kind, ok := store.SystemEventKind(first.Transition); ok {
-		return Message{Rule: "系统事件", Node: "Hub", Kind: kind, Transition: string(first.Transition), Summary: first.Summary, Value: first.Value, At: first.At}, nil
+		return Message{Rule: "系统事件", Node: "Hub", Kind: kind, Transition: string(first.Transition), Summary: first.Summary, Value: first.Value, ValueUnit: first.ValueUnit, At: first.At}, nil
 	}
 	rule, kind := fmt.Sprintf("规则 #%d", first.RuleID), ""
 	rules, err := q.st.ListAlertRules(ctx)
@@ -487,14 +487,14 @@ func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, er
 		more := fmt.Sprintf("另外 %d 台", rest)
 		lines, names = append(lines, more), append(names, more)
 	}
-	// 合并消息没有单一的观测值，Value 为零。
-	return Message{Rule: rule, Node: strings.Join(names, "、"), Kind: kind, Transition: string(first.Transition), Summary: strings.Join(lines, "\n"), At: first.At}, nil
+	// 合并消息没有单一的观测值：Value 为零、单位 n/a，各台的读数在逐行原文里。
+	return Message{Rule: rule, Node: strings.Join(names, "、"), Kind: kind, Transition: string(first.Transition), Summary: strings.Join(lines, "\n"), ValueUnit: store.ValueUnitNotApplicable, At: first.At}, nil
 }
 
 // eventMessage 是一个规则事件单独成批时发出的消息：rule、kind 与 node 由调用方给出（Queue.message 取规则与节点当前的
 // 名字，Engine.Sample 取草稿与样例节点），其余字段取事件的值。两处都经这里，样例与真实投递的消息同形。
 func eventMessage(rule, kind, node string, ev store.AlertEvent) Message {
-	return Message{Rule: rule, Node: node, Kind: kind, Transition: string(ev.Transition), Summary: ev.Summary, Value: ev.Value, At: ev.At}
+	return Message{Rule: rule, Node: node, Kind: kind, Transition: string(ev.Transition), Summary: ev.Summary, Value: ev.Value, ValueUnit: ev.ValueUnit, At: ev.At}
 }
 
 // PruneAlertEvents 与投递并发，且在同一事务删除事件和投递；行消失等价于终态，
@@ -705,7 +705,7 @@ func Classify(err error) (store.DeliveryResult, bool) {
 
 // SendTest 向渠道 c 同步发送一条固定的测试消息（经 SendNow）。
 func (q *Queue) SendTest(ctx context.Context, c store.NotifyChannel) error {
-	return q.SendNow(ctx, c, Message{Rule: "测试规则", Node: "测试节点", Kind: "test", Transition: "test", Summary: "这是一条测试通知", At: q.clk.Now()})
+	return q.SendNow(ctx, c, Message{Rule: "测试规则", Node: "测试节点", Kind: "test", Transition: "test", Summary: "这是一条测试通知", ValueUnit: store.ValueUnitNotApplicable, At: q.clk.Now()})
 }
 
 // SendNow 向渠道 c 同步发送消息 m，与 attempt 同一条路径：ParseChannel 用队列的出站客户端与 Telegram 根地址构造渠道，

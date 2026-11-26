@@ -528,7 +528,8 @@ func (e *Engine) entry(k stateKey) stateEntry {
 // 补发由离线巡检里的 renotifyUnsilenced 负责，它把 fired_silenced 写回 0，此后的恢复照常投递；静默期内就恢复的，
 // 恢复也不投递，前后都不打扰。
 // maintenance 由调用方从节点读；日历类规则（到期、证书到期）传 false——日历提醒永远不被静默，系统事件不经 apply。
-func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, maintenance bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
+// rd 是这一轮的观测，事件的 value 与 value_unit 在这里由它与规则一起定下（eventValue），所有规则事件都经这一处成形。
+func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, maintenance bool, firedExpiresOn string, tr *store.Transition, summary string, rd reading) error {
 	k := stateKey{r.ID, nodeID}
 	cur := e.entry(k)
 	if cur.state == next {
@@ -572,10 +573,15 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 	var ev store.AlertEvent
 	var err error
 	var merged map[int64]bool
+	var value float64
 	if tr != nil {
+		var unit string
+		if value, unit, err = eventValue(r, rd); err != nil {
+			return err
+		}
 		var targets []store.DeliveryTarget
 		targets, merged = e.deliveryTargets(cy, r, *tr)
-		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value, Silenced: silenced}, targets)
+		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value, ValueUnit: unit, Silenced: silenced}, targets)
 	} else {
 		// SetAlertState 不写触发日期，内存与库记同一个值。
 		firedExpiresOn = ""
@@ -667,8 +673,14 @@ func (e *Engine) renotifyUnsilenced(ctx context.Context, cy *cycle, nodes []stor
 		}
 		// fired_at 对 firing 状态恒非零：setAlertState 在进入 firing 时写下它，迁移 39 为当时已在 firing 的行回填了 since_at。
 		summary := withFiringDuration(s.FiredSummary, now.Sub(s.FiredAt), atUnsilence)
+		// 补发沿用原触发的观测值，单位按当前规则取：规则身份一变状态项就清掉（见 valueUnit），走到这里的规则身份与原触发时相同。
+		value, unit, err := eventValue(r, observedValue(s.FiredValue))
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		targets, merged := e.deliveryTargets(cy, r, store.TransitionFiring)
-		ev, err := e.st.RecordUnsilencedFiring(ctx, r.ID, node.ID, store.AlertEvent{At: now, Summary: summary, Value: s.FiredValue}, targets)
+		ev, err := e.st.RecordUnsilencedFiring(ctx, r.ID, node.ID, store.AlertEvent{At: now, Summary: summary, Value: value, ValueUnit: unit}, targets)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -794,7 +806,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 				o.Recovered, o.SinceRecovery = true, e.offlineStart(entry, seen, node).Sub(cur.recoveredAt)
 			}
 			next, tr := NextOffline(cur.state, o)
-			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), node.Maintenance, "", tr, offlineSummary(node, r, seen, unseen, tr), unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), node.Maintenance, "", tr, offlineSummary(node, r, seen, unseen, tr), observedValue(unseen.Seconds())); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -907,7 +919,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(cur.state, samples, r.ForMinutes)
 			next, tr = coolDown(r, cur, e.clk.Now(), next, tr)
 			value := samples[len(samples)-1].Value
-			if err := e.apply(ctx, cy, r, node.ID, next, false, node.Maintenance, "", tr, probeSummary(node, r, band, value), value); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, false, node.Maintenance, "", tr, probeSummary(node, r, band, value), observedValue(value)); err != nil {
 				errs = append(errs, err)
 			}
 		}

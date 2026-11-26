@@ -135,7 +135,7 @@ func TestSweepOfflineFollowsRestartInvariant(t *testing.T) {
 		t.Fatalf("events=%d sent=%d want 2", len(events), len(sender.events))
 	}
 	for _, ev := range events {
-		if len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelID != c.ID || !ev.At.Equal(f.clk.Now()) || !strings.Contains(ev.Summary, "离线") || !strings.Contains(ev.Summary, "node") {
+		if len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelID != c.ID || !ev.At.Equal(f.clk.Now()) || ev.ValueUnit != metric.UnitSeconds || !strings.Contains(ev.Summary, "离线") || !strings.Contains(ev.Summary, "node") {
 			t.Fatalf("event=%+v", ev)
 		}
 	}
@@ -143,7 +143,7 @@ func TestSweepOfflineFollowsRestartInvariant(t *testing.T) {
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 	wantState(t, f.e, r.ID, f.ids[1], store.StateFiring)
-	if ev := f.events(t); len(ev) != 3 || ev[0].Transition != store.TransitionRecovered {
+	if ev := f.events(t); len(ev) != 3 || ev[0].Transition != store.TransitionRecovered || ev[0].ValueUnit != metric.UnitSeconds {
 		t.Fatalf("recovery events=%+v", ev)
 	}
 	// 重启前让节点再次离线，才能验证持久化 firing 在没有新上报时不恢复。刚恢复就再次离线落在抖动窗口里，要满
@@ -282,16 +282,16 @@ func TestEvaluateProbesReadsClosedMinutes(t *testing.T) {
 			must(t, f.e.EvaluateProbes(t.Context(), ts+120))
 			wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 			ev := f.events(t)
-			want := 50.0
+			want, wantUnit := 50.0, metric.UnitPercent
 			if metricName == store.MetricRttMs {
-				want = 50.5
+				want, wantUnit = 50.5, metric.UnitMilliseconds
 			}
-			if len(ev) != 1 || ev[0].Value != want || !strings.Contains(ev[0].Summary, fmt.Sprintf("%.1f", want)) || !strings.Contains(ev[0].Summary, "探测") {
-				t.Fatalf("events=%+v want value %v", ev, want)
+			if len(ev) != 1 || ev[0].Value != want || ev[0].ValueUnit != wantUnit || !strings.Contains(ev[0].Summary, fmt.Sprintf("%.1f", want)) || !strings.Contains(ev[0].Summary, "探测") {
+				t.Fatalf("events=%+v want value %v unit %q", ev, want, wantUnit)
 			}
 			must(t, f.e.EvaluateProbes(t.Context(), ts+180))
 			wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
-			if ev = f.events(t); len(ev) != 2 || ev[0].Transition != store.TransitionRecovered {
+			if ev = f.events(t); len(ev) != 2 || ev[0].Transition != store.TransitionRecovered || ev[0].ValueUnit != wantUnit {
 				t.Fatalf("events=%+v", ev)
 			}
 			f.minutes(t, task, f.ids[0], ts+240, high, high, high)
