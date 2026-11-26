@@ -30,3 +30,8 @@ it("bytes/s 轴用同一倍率并带 /s 后缀", () => {
 it("bytes/s 轴按最大值统一选倍率，小刻度也随大刻度升位", () => {
   expect(axisValues([0, 512, 1024 ** 2], "bytes/s")).toEqual(["0.0000 MiB/s", "0.0005 MiB/s", "1.0000 MiB/s"]);
 });
+
+it("bytes 轴峰值四舍五入后达到 1024 时整根轴升到下一单位", () => {
+  expect(axisValues([0, 512, 1023.6], "bytes")).toEqual(["0.0 KiB", "0.5 KiB", "1.0 KiB"]);
+  expect(axisValues([0, 512 * 1024, 1023.7 * 1024], "bytes/s")).toEqual(["0.0 MiB/s", "0.5 MiB/s", "1.0 MiB/s"]);
+});

@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import type { Node, Tag } from "../gen/heron/v1/admin_pb";
 import { BillingCycle, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
-import { parseQuota, quotaInput, QUOTA_UNITS, type QuotaUnit, RESET_DAY_MAX, RESET_DAY_MIN } from "../lib/traffic";
+import { parseQuota, parseResetTime, quotaInput, QUOTA_UNITS, type QuotaUnit, RESET_DAY_MAX, RESET_DAY_MIN, resetTimeText } from "../lib/traffic";
 import { errorBanner } from "../api/queryGate";
 import { withId } from "../lib/ids";
 import { literalPattern } from "../lib/fold";
@@ -10,6 +10,8 @@ import { Drawer } from "../components/Modal";
 import { Select } from "../components/Select";
 import { SuggestInput } from "../components/SuggestInput";
 import { BillingEditor } from "../components/BillingEditor";
+import { BillingTimezoneInput, billingTimezoneValid } from "../components/BillingTimezoneInput";
+import { TimeInput } from "../components/DateInput";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { lookupText, NodeCountry } from "../components/NodeCountry";
 import { day } from "../lib/format";
@@ -22,9 +24,11 @@ const QUOTA_MODE_OPTIONS = [
 ];
 
 // UpdateNode 整体替换全部可编辑字段；每次保存必须保留未编辑字段，不能用缺席表达“不变”。
-// rented 缺席即 false：草稿漏掉当前值时，一次只改名称的保存会把已出租清掉。
+// rented 缺席即 false：草稿漏掉当前值时，一次只改名称的保存会把已出租清掉；计费时区与重置时刻同理，缺席即回到
+// hub 时区与 00:00。重置时刻在草稿里是 TimeInput 的 HH:MM 文本（没填完时是原样连起来的各段），保存时换回分钟数。
 const draftOf = (node: Node) => ({
-  name: node.name, public: node.public, note: node.note, publicRemark: node.publicRemark, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
+  name: node.name, public: node.public, note: node.note, publicRemark: node.publicRemark, trafficResetDay: node.trafficResetDay,
+  trafficResetTime: resetTimeText(node.trafficResetMinute), billingTimezone: node.billingTimezone, countryPin: node.countryPin,
   ipv4Pin: node.ipv4Pin, ipv6Pin: node.ipv6Pin,
   tags: [...node.tags], offlineGraceS: String(node.offlineGraceS ?? 0), maintenance: node.maintenance, rented: node.rented,
   trafficQuotaBytes: node.trafficQuotaBytes, trafficQuotaMode: node.trafficQuotaMode || TrafficQuotaMode.SUM,
@@ -34,7 +38,7 @@ const draftOf = (node: Node) => ({
   },
 });
 type Draft = ReturnType<typeof draftOf>;
-export type NodePatch = Omit<Draft, "offlineGraceS"> & { offlineGraceS: number };
+export type NodePatch = Omit<Draft, "offlineGraceS" | "trafficResetTime"> & { offlineGraceS: number; trafficResetMinute: number };
 
 export function NodeEditor({ node, knownTags, saving, error, listError, onClose, onSave, opener }: {
   node: Node; knownTags: readonly Tag[]; saving: boolean; error: unknown; listError: unknown;
@@ -47,10 +51,13 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
   const [quotaTouched, setQuotaTouched] = useState(false);
   const quotaBytes = quotaTouched ? parseQuota(quota, unit) : node.trafficQuotaBytes;
   const label = withId(node.name, node.id);
-  const valid = quotaBytes !== null && draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= RESET_DAY_MIN && draft.trafficResetDay <= RESET_DAY_MAX && /^\d+$/.test(draft.offlineGraceS);
+  const resetMinute = parseResetTime(draft.trafficResetTime);
+  const valid = quotaBytes !== null && resetMinute !== null && billingTimezoneValid(draft.billingTimezone) && draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= RESET_DAY_MIN && draft.trafficResetDay <= RESET_DAY_MAX && /^\d+$/.test(draft.offlineGraceS);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!saving && valid && quotaBytes !== null) onSave({ ...draft, ipv4Pin: draft.ipv4Pin.trim(), ipv6Pin: draft.ipv6Pin.trim(), trafficQuotaBytes: quotaBytes, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
+    if (saving || !valid || quotaBytes === null || resetMinute === null) return;
+    const { trafficResetTime: _, ...rest } = draft;
+    onSave({ ...rest, ipv4Pin: draft.ipv4Pin.trim(), ipv6Pin: draft.ipv6Pin.trim(), billingTimezone: draft.billingTimezone.trim(), trafficQuotaBytes: quotaBytes, trafficResetMinute: resetMinute, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
   };
   return <Drawer title={`编辑节点 · ${label}`} busy={saving} onClose={onClose} opener={opener}>
     <form onSubmit={submit}>
@@ -85,7 +92,14 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
             <label>周期流量配额<input aria-label={`流量配额 ${label}`} inputMode="decimal" value={quota} onChange={(e) => { setQuota(e.target.value); setQuotaTouched(true); }} /><span className="muted">留空为未设配额；小数换算后四舍五入到整数字节，须在 1 至 2^62 字节（不含）之间。</span>{quotaBytes === null && <span role="alert">配额无效，换算后必须是有效的正整数字节数。</span>}</label>
             <Select label={`配额单位 ${label}`} caption="配额单位" value={unit} options={QUOTA_UNIT_OPTIONS} onChange={(next) => { setUnit(next); setQuotaTouched(true); }} />
             <Select label={`流量口径 ${label}`} caption="流量口径" value={String(draft.trafficQuotaMode)} options={QUOTA_MODE_OPTIONS} onChange={(next) => setDraft({ ...draft, trafficQuotaMode: Number(next) })} />
-            <label>每月流量重置日<input type="number" min={RESET_DAY_MIN} max={RESET_DAY_MAX} aria-label={`重置日 ${label}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><span className="muted">当月不足该日时在当月最后一日重置，之后的月份仍按该日。若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</span></label>
+            <BillingTimezoneInput id={`billing-timezone-${node.id}`} label={label} value={draft.billingTimezone} onChange={(billingTimezone) => setDraft({ ...draft, billingTimezone })} />
+            <label>每月流量重置日<input type="number" min={RESET_DAY_MIN} max={RESET_DAY_MAX} aria-label={`重置日 ${label}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><span className="muted">当月不足该日时在当月最后一日重置，之后的月份仍按该日。改重置日、重置时刻或计费时区后，本周期用量按新的起点从历史数据重算；离线期间与 hub 重启后首次上报的流量、手动校正不在历史里，不计入。</span></label>
+            <div>
+              <TimeInput label={`重置时刻 ${label}`} caption="重置时刻" required value={draft.trafficResetTime} onChange={(trafficResetTime) => setDraft({ ...draft, trafficResetTime })} />
+              <p className="muted">计费时区里的时刻，00:00–23:59。夏令时拨快跳过这个时刻的那天在跳变后立即重置，拨慢重复的那天按第一次出现重置。</p>
+              {/* 没填完或越界时 TimeInput 自己给出提示；全空时它只设表单有效性，而保存按钮此时已禁用，浏览器不会弹出那条提示。 */}
+              {draft.trafficResetTime === "" && <p role="alert">请填写重置时刻。</p>}
+            </div>
             <label>离线宽限期（秒）<input type="number" min={0} aria-label={`离线宽限期（秒） ${label}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><span className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。</span></label>
             <label className="switch-field"><span>维护中<small>告警事件照常记录但不投递，关闭后仍未恢复、且不在维护静默窗口内的告警补发通知；在线状态照实显示；到期的提醒不受影响；与已出租互斥</small></span><input type="checkbox" aria-label={`维护 ${label}`} checked={draft.maintenance} disabled={draft.rented} onChange={(e) => setDraft({ ...draft, maintenance: e.target.checked })} /></label>
             <label className="switch-field"><span>已出租<small>机器租给了别人、不会有上报：离线与到期都不评估，不参与 agent 更新；与维护中互斥</small></span><input type="checkbox" aria-label={`已出租 ${label}`} checked={draft.rented} disabled={draft.maintenance} onChange={(e) => setDraft({ ...draft, rented: e.target.checked })} /></label>

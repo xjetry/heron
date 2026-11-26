@@ -82,7 +82,7 @@ func newTestServicesOn(t *testing.T, st *store.Store, clk clock.Clock) (http.Han
 	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: heartbeat.New(heartbeatSource{st: st, live: l}, client, "test", clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: geo.NewHTTP(client)},
+	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: heartbeat.New(heartbeatSource{st: st, live: l}, client, "test", clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Geo: geo.NewHTTP(client)},
 		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: slog.Default()}),
 			Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC},

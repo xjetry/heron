@@ -867,8 +867,10 @@ type Metrics struct {
 	// 首样本、设备集合变化或任一设备计数回退时缺失，不伪造零值。
 	DiskReadBps  *uint64 `protobuf:"varint,21,opt,name=disk_read_bps,json=diskReadBps,proto3,oneof" json:"disk_read_bps,omitempty"`
 	DiskWriteBps *uint64 `protobuf:"varint,22,opt,name=disk_write_bps,json=diskWriteBps,proto3,oneof" json:"disk_write_bps,omitempty"`
-	// steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
-	// 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
+	// steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分（softirq 见
+	// cpu_softirq_pct，同一次差分）。cpu_pct 把 iowait 计为空闲、把 steal 计为忙碌：iowait 在 cpu_pct 之外，
+	// steal 是 cpu_pct 里可以单独看的部分。任意计数回退或 Δtotal = 0 时这几项一起缺失；来源没有该计数时
+	// （darwin、内核不提供该列）只缺该项。CPU 范围是执行环境（cgroup）时 cpu_pct 改由本环境用量得出，这几项是全机计数，不设置。
 	CpuStealPct  *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
 	CpuIowaitPct *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
 	// 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
@@ -893,8 +895,12 @@ type Metrics struct {
 	//     与逐盘采集出现之前的磁盘口径相同，不比那时更差；逐盘采集失败由诊断的 DISK_MOUNTS 点名。
 	//   - 两者都没有（根盘读不出）时缺失，不是 0。
 	DiskMaxUsedPct *float64 `protobuf:"fixed64,30,opt,name=disk_max_used_pct,json=diskMaxUsedPct,proto3,oneof" json:"disk_max_used_pct,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 软中断（softirq）占全部 CPU tick 的百分比，与 cpu_steal_pct、cpu_iowait_pct 同一次差分、同一组缺失条件。
+	// 网络收发包处理主要记在这里，转发、代理一类节点的 CPU 瓶颈常在此。softirq 不计为空闲，是 cpu_pct 里可以单独看的部分。
+	// /proc/stat 首行不足 7 个计数（2.6 之前的内核）时缺失；darwin 不设置。
+	CpuSoftirqPct *float64 `protobuf:"fixed64,31,opt,name=cpu_softirq_pct,json=cpuSoftirqPct,proto3,oneof" json:"cpu_softirq_pct,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Metrics) Reset() {
@@ -1133,6 +1139,13 @@ func (x *Metrics) GetTcpRetransSegsPs() float64 {
 func (x *Metrics) GetDiskMaxUsedPct() float64 {
 	if x != nil && x.DiskMaxUsedPct != nil {
 		return *x.DiskMaxUsedPct
+	}
+	return 0
+}
+
+func (x *Metrics) GetCpuSoftirqPct() float64 {
+	if x != nil && x.CpuSoftirqPct != nil {
+		return *x.CpuSoftirqPct
 	}
 	return 0
 }
@@ -2350,9 +2363,11 @@ type Traffic struct {
 	// 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
 	TotalRx uint64 `protobuf:"varint,1,opt,name=total_rx,json=totalRx,proto3" json:"total_rx,omitempty"`
 	TotalTx uint64 `protobuf:"varint,2,opt,name=total_tx,json=totalTx,proto3" json:"total_tx,omitempty"`
-	// 当前周期内的字节数。周期起点因重置日或 hub 时区改变而移动时按分钟桶重算：起点往后挪，新周期的量取
-	// [新起点, 现在) 的桶和，此前的校正不再算数；起点往前挪，原周期量加上两个起点之间的桶和。桶里没有 hub 重启后
-	// 首报与跨过离线 TTL 的增量（与 QueryMetrics 的 rx_bytes 同一来源），重算后的值可能比实际少，可经 AdjustTraffic 校正。
+	// 当前周期内的字节数。周期起点因重置日、重置时刻、计费时区或 hub 时区（节点没设计费时区时）改变而移动时按分钟桶
+	// 重算：起点往后挪，新周期的量取 [新起点, 现在) 的桶和，此前的校正不再算数；起点往前挪，原周期量加上两个起点之间的
+	// 桶和。起点不在整点上（如 +05:30 的时区或 08:30 的重置时刻）时，起点所在那一小时按仍保留的 1m 或 5m 历史逐分钟
+	// 分到两侧；那一小时的细级历史都已过保留期时，它整块算在起点之前。桶里没有 hub 重启后首报与跨过离线 TTL 的增量
+	// （与 QueryMetrics 的 rx_bytes 同一来源），重算后的值可能比实际少，可经 AdjustTraffic 校正。
 	PeriodRx uint64 `protobuf:"varint,3,opt,name=period_rx,json=periodRx,proto3" json:"period_rx,omitempty"`
 	PeriodTx uint64 `protobuf:"varint,4,opt,name=period_tx,json=periodTx,proto3" json:"period_tx,omitempty"`
 	// 当前周期起点与下次重置时刻，Unix 秒。
@@ -2366,9 +2381,17 @@ type Traffic struct {
 	// 按 quota_mode 计算的周期用量；未设配额时仍有值。
 	QuotaUsedBytes uint64 `protobuf:"varint,10,opt,name=quota_used_bytes,json=quotaUsedBytes,proto3" json:"quota_used_bytes,omitempty"`
 	// 用量占配额的百分比；未设配额时缺失。实时展示可能领先于告警使用的已提交观测。
-	QuotaUsedPct  *float64 `protobuf:"fixed64,11,opt,name=quota_used_pct,json=quotaUsedPct,proto3,oneof" json:"quota_used_pct,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	QuotaUsedPct *float64 `protobuf:"fixed64,11,opt,name=quota_used_pct,json=quotaUsedPct,proto3,oneof" json:"quota_used_pct,omitempty"`
+	// 重置时刻：timezone 里当地零点起的分钟数 0–1439（见 Node.traffic_reset_minute）。
+	ResetMinute uint32 `protobuf:"varint,12,opt,name=reset_minute,json=resetMinute,proto3" json:"reset_minute,omitempty"`
+	// 周期按其判定的时区（IANA 名），恒非空：节点的计费时区，节点没设时是 hub 的 --timezone。reset_day 与 reset_minute
+	// 是这个时区里的日与墙钟，按日切这个节点的流量（每日用量）也按它；period_start / next_reset_at 是 Unix 秒，本身无歧义。
+	Timezone string `protobuf:"bytes,13,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	// 上一周期的起点，Unix 秒：按当前的周期规则，严格早于 period_start 的最近一个周期边界。上一周期是
+	// [previous_period_start, period_start)；客户端按周期切历史用它，不自己按重置日推算（短月钳位与夏令时都在 hub 算）。
+	PreviousPeriodStart int64 `protobuf:"varint,14,opt,name=previous_period_start,json=previousPeriodStart,proto3" json:"previous_period_start,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Traffic) Reset() {
@@ -2478,6 +2501,27 @@ func (x *Traffic) GetQuotaUsedPct() float64 {
 	return 0
 }
 
+func (x *Traffic) GetResetMinute() uint32 {
+	if x != nil {
+		return x.ResetMinute
+	}
+	return 0
+}
+
+func (x *Traffic) GetTimezone() string {
+	if x != nil {
+		return x.Timezone
+	}
+	return ""
+}
+
+func (x *Traffic) GetPreviousPeriodStart() int64 {
+	if x != nil {
+		return x.PreviousPeriodStart
+	}
+	return 0
+}
+
 // 节点的计费与到期。价格与币种是记录值：hub 不汇总、不换算，也不拿它们做任何计算（管理面板的续费日历在浏览器里
 // 按原币种分列汇总，同样不换算）；到期日与周期
 // 驱动 days_left、自动续期与到期规则。Node、CreateNodeRequest 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
@@ -2491,10 +2535,12 @@ type Billing struct {
 	BillingCycle BillingCycle `protobuf:"varint,3,opt,name=billing_cycle,json=billingCycle,proto3,enum=heron.v1.BillingCycle" json:"billing_cycle,omitempty"`
 	// 到期日 YYYY-MM-DD；空表示没有到期日。保存时须为空或存在的日期。
 	ExpiresOn string `protobuf:"bytes,4,opt,name=expires_on,json=expiresOn,proto3" json:"expires_on,omitempty"`
-	// 开着时，到期日早于今天（hub 时区）即按周期推后到不早于今天。hub 启动、每个日界（零点不存在的日子取新一天的
-	// 第一个时刻）、计费字段变化与保存启用的到期规则时检查。保存时要求 billing_cycle 与 expires_on 都非空。
+	// 开着时，到期日早于今天（节点计费时区，见 Node.billing_timezone）即按周期推后到不早于今天。hub 启动、每个在用时区的
+	// 日界（零点不存在的日子取新一天的第一个时刻）、计费字段或计费时区变化与保存启用的到期规则时检查。保存时要求
+	// billing_cycle 与 expires_on 都非空。
 	AutoRenew bool `protobuf:"varint,5,opt,name=auto_renew,json=autoRenew,proto3" json:"auto_renew,omitempty"`
-	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
+	// 到期日减去今天的天数，今天按节点计费时区（Node.billing_timezone，空即 hub 的 --timezone）取日历日；负数是已过期的
+	// 天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
 	// 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
 	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2577,7 +2623,7 @@ var File_heron_v1_types_proto protoreflect.FileDescriptor
 
 const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x14heron/v1/types.proto\x12\bheron.v1\"\xb0\f\n" +
+	"\x14heron/v1/types.proto\x12\bheron.v1\"\xf1\f\n" +
 	"\aMetrics\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
@@ -2616,7 +2662,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x14tcp_passive_opens_ps\x18\x1b \x01(\x01H\x18R\x11tcpPassiveOpensPs\x88\x01\x01\x12*\n" +
 	"\x0ftcp_out_segs_ps\x18\x1c \x01(\x01H\x19R\ftcpOutSegsPs\x88\x01\x01\x122\n" +
 	"\x13tcp_retrans_segs_ps\x18\x1d \x01(\x01H\x1aR\x10tcpRetransSegsPs\x88\x01\x01\x12.\n" +
-	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01B\n" +
+	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01\x12+\n" +
+	"\x0fcpu_softirq_pct\x18\x1f \x01(\x01H\x1cR\rcpuSoftirqPct\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -2650,7 +2697,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x15_tcp_passive_opens_psB\x12\n" +
 	"\x10_tcp_out_segs_psB\x16\n" +
 	"\x14_tcp_retrans_segs_psB\x14\n" +
-	"\x12_disk_max_used_pct\"_\n" +
+	"\x12_disk_max_used_pctB\x12\n" +
+	"\x10_cpu_softirq_pct\"_\n" +
 	"\x13NetInterfaceCounter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\brx_bytes\x18\x02 \x01(\x04R\arxBytes\x12\x19\n" +
@@ -2757,7 +2805,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"ProbeTasks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12)\n" +
-	"\x05tasks\x18\x02 \x03(\v2\x13.heron.v1.ProbeTaskR\x05tasks\"\xa1\x03\n" +
+	"\x05tasks\x18\x02 \x03(\v2\x13.heron.v1.ProbeTaskR\x05tasks\"\x94\x04\n" +
 	"\aTraffic\x12\x19\n" +
 	"\btotal_rx\x18\x01 \x01(\x04R\atotalRx\x12\x19\n" +
 	"\btotal_tx\x18\x02 \x01(\x04R\atotalTx\x12\x1b\n" +
@@ -2772,7 +2820,10 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"quota_mode\x18\t \x01(\x0e2\x1a.heron.v1.TrafficQuotaModeR\tquotaMode\x12(\n" +
 	"\x10quota_used_bytes\x18\n" +
 	" \x01(\x04R\x0equotaUsedBytes\x12)\n" +
-	"\x0equota_used_pct\x18\v \x01(\x01H\x00R\fquotaUsedPct\x88\x01\x01B\x11\n" +
+	"\x0equota_used_pct\x18\v \x01(\x01H\x00R\fquotaUsedPct\x88\x01\x01\x12!\n" +
+	"\freset_minute\x18\f \x01(\rR\vresetMinute\x12\x1a\n" +
+	"\btimezone\x18\r \x01(\tR\btimezone\x122\n" +
+	"\x15previous_period_start\x18\x0e \x01(\x03R\x13previousPeriodStartB\x11\n" +
 	"\x0f_quota_used_pct\"\xe6\x01\n" +
 	"\aBilling\x12\x14\n" +
 	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +

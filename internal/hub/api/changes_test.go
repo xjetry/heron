@@ -1007,12 +1007,14 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 		}, func(r *heronv1.UpdateNodeRequest) {
 			r.TrafficQuotaMode = heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_TX
 		}},
-		"name":              {func(r *heronv1.UpdateNodeRequest) { r.Name = "first" }, func(r *heronv1.UpdateNodeRequest) { r.Name = "second" }},
-		"public":            {func(r *heronv1.UpdateNodeRequest) { r.Public = true }, func(r *heronv1.UpdateNodeRequest) { r.Public = false }},
-		"note":              {func(r *heronv1.UpdateNodeRequest) { r.Note = "first note" }, func(r *heronv1.UpdateNodeRequest) { r.Note = "second note" }},
-		"public_remark":     {func(r *heronv1.UpdateNodeRequest) { r.PublicRemark = "first remark" }, func(r *heronv1.UpdateNodeRequest) { r.PublicRemark = "second remark" }},
-		"traffic_reset_day": {func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 12 }, func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 13 }},
-		"offline_grace_s":   {func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(60) }, func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(120) }},
+		"name":                 {func(r *heronv1.UpdateNodeRequest) { r.Name = "first" }, func(r *heronv1.UpdateNodeRequest) { r.Name = "second" }},
+		"public":               {func(r *heronv1.UpdateNodeRequest) { r.Public = true }, func(r *heronv1.UpdateNodeRequest) { r.Public = false }},
+		"note":                 {func(r *heronv1.UpdateNodeRequest) { r.Note = "first note" }, func(r *heronv1.UpdateNodeRequest) { r.Note = "second note" }},
+		"public_remark":        {func(r *heronv1.UpdateNodeRequest) { r.PublicRemark = "first remark" }, func(r *heronv1.UpdateNodeRequest) { r.PublicRemark = "second remark" }},
+		"traffic_reset_day":    {func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 12 }, func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 13 }},
+		"traffic_reset_minute": {func(r *heronv1.UpdateNodeRequest) { r.TrafficResetMinute = 30 }, func(r *heronv1.UpdateNodeRequest) { r.TrafficResetMinute = 510 }},
+		"billing_timezone":     {func(r *heronv1.UpdateNodeRequest) { r.BillingTimezone = "UTC" }, func(r *heronv1.UpdateNodeRequest) { r.BillingTimezone = "Asia/Kolkata" }},
+		"offline_grace_s":      {func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(60) }, func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(120) }},
 		"billing": {func(r *heronv1.UpdateNodeRequest) {
 			r.Billing = &heronv1.Billing{Price: "10", Currency: "USD", ExpiresOn: "2030-01-01"}
 		}, func(r *heronv1.UpdateNodeRequest) {
@@ -1316,10 +1318,15 @@ func traceNode(t *testing.T, h *harness, id int64) nodeTrace {
 	if err := db.QueryRow("SELECT name, token_hash FROM node WHERE id=?", id).Scan(&out.name, &out.tokenHash); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow("SELECT COUNT(*) FROM operation").Scan(&out.receipts); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM operation WHERE method='ExecuteChange'").Scan(&out.receipts); err != nil {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// sessionCaller 是绕过拦截器直接调 runChange 时的 ctx：拦截器给会话的 ExecuteChange 放的那份 Caller。
+func sessionCaller(ctx context.Context) context.Context {
+	return store.WithCaller(ctx, store.Caller{Kind: store.PrincipalSession, Session: strings.Repeat("ab", 32), Source: "127.0.0.1", Method: "ExecuteChange"})
 }
 
 // 轮换 token 的 handler 若在主写之前接错线、先做一次同一节点上改节点目标的写，整次变更必须失败且不留任何痕迹：
@@ -1339,7 +1346,7 @@ func TestChangeSiblingFirstWriteLeavesNoTrace(t *testing.T) {
 				}
 				return rotate(ctx)
 			}
-			if _, err := h.svc.runChange(t.Context(), c, miswired); connect.CodeOf(err) != connect.CodeInternal {
+			if _, err := h.svc.runChange(sessionCaller(t.Context()), c, miswired); connect.CodeOf(err) != connect.CodeInternal {
 				t.Fatalf("miswired rotate: %v, want Internal", err)
 			}
 			if after := traceNode(t, h, node); after.name != before.name || !bytes.Equal(after.tokenHash, before.tokenHash) || after.receipts != 0 {
@@ -1375,10 +1382,11 @@ func TestRunChangeTerminalStates(t *testing.T) {
 		logs.Reset()
 		c, _ := stagedChange(t, h, update("never"), false)
 		idle := func(ctx context.Context) (proto.Message, error) {
-			// 一次普通写不消费变更；handler 随后成功返回却没有主写。
-			return nil, h.store.ReorderNodes(ctx, []int64{node})
+			// 一次普通写（账本刷出，不属于记录链）不消费变更；handler 随后成功返回却没有主写。
+			_, err := h.store.WriteTraffic(ctx, []store.TrafficRecord{{NodeID: node, PeriodStart: time.Unix(1, 0)}})
+			return nil, err
 		}
-		if _, err := h.svc.runChange(t.Context(), c, idle); connect.CodeOf(err) != connect.CodeInternal {
+		if _, err := h.svc.runChange(sessionCaller(t.Context()), c, idle); connect.CodeOf(err) != connect.CodeInternal {
 			t.Fatalf("handler without primary write: %v, want Internal", err)
 		}
 		if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "without committing its primary write") || !strings.Contains(logs.String(), "action=update_node") {
@@ -1392,7 +1400,7 @@ func TestRunChangeTerminalStates(t *testing.T) {
 	t.Run("business rejection", func(t *testing.T) {
 		c, _ := stagedChange(t, h, update("rejected"), false)
 		rejected := func(context.Context) (proto.Message, error) { return nil, invalid("note: rejected") }
-		if _, err := h.svc.runChange(t.Context(), c, rejected); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if _, err := h.svc.runChange(sessionCaller(t.Context()), c, rejected); connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("business error was not passed through: %v", err)
 		}
 		if c.Claimed() || traceNode(t, h, node).receipts != 0 {
@@ -1402,7 +1410,7 @@ func TestRunChangeTerminalStates(t *testing.T) {
 
 	t.Run("preview", func(t *testing.T) {
 		c, call := stagedChange(t, h, update("previewed"), true)
-		r, err := h.svc.runChange(t.Context(), c, call)
+		r, err := h.svc.runChange(sessionCaller(t.Context()), c, call)
 		if err != nil || r.Msg.ExpectedVersion == "" || !strings.Contains(r.Msg.Operation.AfterJson, "previewed") || r.Msg.Operation.CommittedAt != 0 {
 			t.Fatalf("preview: %v %v", r, err)
 		}
@@ -1420,7 +1428,7 @@ func TestRunChangeTerminalStates(t *testing.T) {
 			_, err := h.store.UpdateNode(ctx, node, store.NodeEdit{Name: "original", Note: "second", TrafficResetDay: 1})
 			return nil, err
 		}
-		r, err := h.svc.runChange(t.Context(), c, twice)
+		r, err := h.svc.runChange(sessionCaller(t.Context()), c, twice)
 		if err != nil || r.Msg.Operation.CommittedAt == 0 {
 			t.Fatalf("committed receipt lost: %v %v", r, err)
 		}
@@ -1432,7 +1440,7 @@ func TestRunChangeTerminalStates(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		c, call := stagedChange(t, h, update("done"), false)
 		c.RequestID = "success"
-		r, err := h.svc.runChange(t.Context(), c, call)
+		r, err := h.svc.runChange(sessionCaller(t.Context()), c, call)
 		if err != nil || r.Msg.Operation.CommittedAt == 0 || r.Msg.Result == nil || note() != "done" {
 			t.Fatalf("success: %v %v", r, err)
 		}

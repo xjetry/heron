@@ -77,7 +77,7 @@ type Auth struct {
 // LoginSender 把已落库的登录通知交给投递队列（serve 里是 alert.Queue）。
 type LoginSender interface{ Enqueue(store.AlertEvent) }
 
-// New 要求 loc 非 nil：通知文案里的时刻按 hub 的 --timezone 写，与面板、流量周期、到期日同一个时区；
+// New 要求 loc 非 nil：通知文案里的时刻按 hub 的 --timezone 写，与面板、维护静默、流量报告同一个时区；
 // 缺省成某个固定时区，通知与面板的时刻对不上，也不会有任何报错。
 //
 // sender 为 nil 时登录通知只写库、不入队：投递队列只在启动时的 Requeue 与溢出后的补货里从库取行，已写库的通知要

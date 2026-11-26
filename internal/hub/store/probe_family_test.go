@@ -146,6 +146,8 @@ func TestProbeTaskFamilySurvivesConfigSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeV57Config(t, db)
+	removeV56Config(t, db)
 	removeV52Config(t, db)
 	removeV51Config(t, db)
 	if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 50"); err != nil {

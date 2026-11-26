@@ -69,6 +69,7 @@ func TestFullestDiskSurvivesWriteReadAndRollup(t *testing.T) {
 		{NodeID: id, TS: base + 60, CoverageStart: base, Bucket: busy},
 		{NodeID: id, TS: base + 120, CoverageStart: base, Bucket: later},
 	}
+	clk.SetWall(time.Unix(base+3*3600, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,6 @@ func TestFullestDiskSurvivesWriteReadAndRollup(t *testing.T) {
 	if len(minutes) != 3 || minutes[0].Bucket.N[fullest] != 0 || minutes[1].Bucket.Sum[fullest] != 170 || minutes[1].Bucket.N[fullest] != 2 {
 		t.Fatalf("1m rows = %+v, want the second minute to hold 170 over 2 samples and the first none", minutes)
 	}
-	clk.SetWall(time.Unix(base+3*3600, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,11 @@ func TestRestoreV52MetricsSnapshotBackfillsFullestDisk(t *testing.T) {
 			t.Fatal(err)
 		}
 		if layer == "metrics" {
+			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
+		} else {
+			removeV57Config(t, db)
+			removeV56Config(t, db)
 		}
 		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=52"); err != nil {
 			t.Fatal(err)

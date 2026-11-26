@@ -32,7 +32,7 @@ type genConfig struct {
 	// End 是时间轴终点（Unix 秒，整点）。生成结束时 hub 的墙钟是 End + 242（见 timeline），水位、最老行都由它推出。
 	End  int64  `json:"end"`
 	Seed uint64 `json:"seed"`
-	// ContainerFrac 是环境范围（LXC 一类）节点的比例，这些节点的 steal、iowait、负载与磁盘速率列 n = 0（见 nodeProfile）。
+	// ContainerFrac 是环境范围（LXC 一类）节点的比例，这些节点的 steal、iowait、softirq、负载与磁盘速率列 n = 0（见 nodeProfile）。
 	ContainerFrac float64 `json:"container_frac"`
 	// Churn 为真时按生产节奏重放写入与清理：每张表先写满一个保留期、再在第二个保留期里边写边删，最终布局是持续运行一年以上
 	// 的稳态（见 timeline）。为假时只写最终留存的行、从不删除，作对照。

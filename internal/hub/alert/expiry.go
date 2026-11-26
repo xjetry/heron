@@ -1,17 +1,22 @@
 package alert
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/xjetry/heron/internal/hub/calendar"
 	"github.com/xjetry/heron/internal/hub/store"
+	"github.com/xjetry/heron/internal/hub/traffic"
 )
 
 // 到期日按日历日计。日期一律表示为该日 UTC 零点的 time.Time：解析、"今天"与相减都在这种值上做，两个日期
-// 相差几天与任何时区的夏令时无关。日期值里 hub 时区（--timezone）只经 Today 进入：把一个时刻换成那里的日历日；
-// 下一个日界的时刻由 nextDayStart 按同一时区算（RunExpirySweep 传入 cfg.Location）。
+// 相差几天与任何时区的夏令时无关。时区只经 Today 进入：把一个时刻换成那里的日历日。节点的到期（剩余天数、到期告警、
+// 自动与手动续期）按节点的计费时区取今天（NodeToday，计费时区为空即 hub 的 --timezone）；证书到期与告警样例不属于
+// 任何节点的计费，按 hub 时区。下一个日界的时刻由 nextDayStart 算，到期扫描在每个在用时区的日界各醒一次（nextSweepAt）。
 
 // ParseDate 解析 YYYY-MM-DD。写侧（api 的 UpdateNode）与读侧（到期扫描、days_left）都用它，"合法日期"只有这一个
 // 口径：time.Parse 按 time.DateOnly 要求四位年、两位月日，并拒绝不存在的日子（2026-02-30、非闰年的 02-29）。
@@ -23,6 +28,12 @@ func ParseDate(s string) (time.Time, error) {
 func Today(now time.Time, loc *time.Location) time.Time {
 	y, m, d := now.In(loc).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+// NodeToday 是 now 在节点计费时区里的日历日（traffic.BillingZone：计费时区为空即 hub，hub 是 hub 生效的 --timezone）。
+// 到期剩余天数（api 的 days_left）、到期告警与自动、手动续期的"今天"都只经它取，同一节点在几处得到同一天。
+func NodeToday(now time.Time, n store.Node, hub *time.Location) time.Time {
+	return Today(now, traffic.BillingZone(n.BillingTimezone, hub))
 }
 
 // daysBetween 用 Unix 秒相减：time.Time.Sub 相差约 292 年以上就饱和，ParseDate 接受的 0000–9999 年会算错。
@@ -126,23 +137,11 @@ func RenewedExpiry(b store.Billing, today time.Time) (string, error) {
 	return stepExpiry(addMonths(d, months), months, today).Format(time.DateOnly), nil
 }
 
-// nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻。一般就是 time.Date(y, m, d+1, 0, 0, 0, 0, loc)。
-// 夏令时在零点开始的时区当天的零点不存在，go1.27.1 的 time.Date 对它的归一方向随 UTC 偏移的正负而异（它先把墙钟
-// 读数当作 UTC 去查偏移，再按换算结果是否越出该时段复核）：
-// 偏移为负的时区（America/Santiago、America/Havana）往回给前一天的 23:00（仍按旧偏移），本地日期没变；拿它定时会在旧的一天里
-// 触发，之后每一轮算出的都是这个已经过去的时刻，定时器立即触发，循环空转到夏令时生效为止。这时新的一天从夏令时
-// 生效的那一刻开始，也就是该时刻所在时段的结束处（ZoneBounds 的 end）。
-// 偏移为正的时区（Africa/Cairo、Asia/Beirut）往前给新一天的 01:00（新偏移），本地日期已变，它本身就是新一天的第一个时刻，
-// 走普通分支直接返回。判断只看本地日期有没有变，不看时分：按"不存在的零点会变成非零点的时刻"去判，会把偏移为正的
-// 时区的日界定到几个月后夏令时结束的那次切换。
+// nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻：明天本地读数不早于 00:00 的第一个时刻（calendar.Moment）。
+// 零点因夏令时不存在（America/Santiago、America/Havana、Africa/Cairo、Asia/Beirut）时是跳变时刻，新的一天从那一刻开始。
 func nextDayStart(now time.Time, loc *time.Location) time.Time {
 	y, m, d := now.In(loc).Date()
-	next := time.Date(y, m, d+1, 0, 0, 0, 0, loc)
-	if ny, nm, nd := next.Date(); ny == y && nm == m && nd == d {
-		_, end := next.ZoneBounds()
-		return end
-	}
-	return next
+	return calendar.Moment(y, m, d+1, 0, loc)
 }
 
 // nodeExpiry 是一个节点在本次扫描里的到期观测；valid 为假表示本轮不评估这个节点，已有状态原样保留：库里的到期日
@@ -170,17 +169,18 @@ func (e *Engine) SweepExpiry(ctx context.Context) error {
 func (e *Engine) sweepExpiry(ctx context.Context) error {
 	cy := newCycle()
 	defer e.flush(cy)
-	today := Today(e.clk.Now(), e.cfg.Location)
+	now := e.clk.Now()
 	nodes, err := e.st.ListMonitoringNodes(ctx)
 	if err != nil {
 		return err
 	}
+	e.publishExpiryZones(nodes)
 	var errs []error
 	// 续期写回没有落定的节点本轮不评估，见下面两处 skip 的说明。
 	skip := map[int64]bool{}
 	for i := range nodes {
 		n := &nodes[i]
-		to, ok := renewedExpiry(n.Billing, today)
+		to, ok := renewedExpiry(n.Billing, NodeToday(now, *n, e.cfg.Location))
 		if !ok {
 			continue
 		}
@@ -213,7 +213,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 				e.log.Warn("node expires_on is not a YYYY-MM-DD date; expiry rules skip this node", "node_id", n.ID, "expires_on", n.Billing.ExpiresOn)
 				o.valid = false
 			} else {
-				o.hasExpiry, o.daysLeft = true, daysBetween(today, d)
+				o.hasExpiry, o.daysLeft = true, daysBetween(NodeToday(now, n, e.cfg.Location), d)
 			}
 		}
 		observed[n.ID] = o
@@ -250,8 +250,42 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
-	errs = e.sweepCertExpiry(ctx, cy, nodes, today, errs)
+	// 证书到期属于探测目标，不属于哪个节点的计费，按 hub 时区的今天。
+	errs = e.sweepCertExpiry(ctx, cy, nodes, Today(now, e.cfg.Location), errs)
 	return errors.Join(errs...)
+}
+
+// expiryZones 是到期扫描要在其日界醒来的时区：hub 时区（证书到期，以及没设计费时区的节点），加上每个有到期日的节点的
+// 计费时区。没有到期日的节点不进来：它的日界不改变任何评估，给它补上到期日的 UpdateNode 本来就会立刻重扫并重新发布。
+// 去重、按名字排序，以便比较前后两次是否相同。
+func expiryZones(nodes []store.Node, hub *time.Location) []*time.Location {
+	zones := []*time.Location{hub}
+	for _, n := range nodes {
+		if n.Billing.ExpiresOn == "" {
+			continue
+		}
+		loc := traffic.BillingZone(n.BillingTimezone, hub)
+		if !slices.ContainsFunc(zones, func(z *time.Location) bool { return z.String() == loc.String() }) {
+			zones = append(zones, loc)
+		}
+	}
+	slices.SortFunc(zones, func(a, b *time.Location) int { return cmp.Compare(a.String(), b.String()) })
+	return zones
+}
+
+// publishExpiryZones 发布本次扫描看到的时区集合（expiryZones），调用方持 writeMu。集合变了（节点换了计费时区、新有了
+// 到期日）就叫醒 RunExpirySweep：它按旧集合定的下一次醒来可能晚于新时区的日界。信号是容量 1 的非阻塞投递，多次变化
+// 合成一次唤醒；被叫醒的一轮总按唤醒之后读到的最新集合定时（sweepRound）。
+func (e *Engine) publishExpiryZones(nodes []store.Node) {
+	zones := expiryZones(nodes, e.cfg.Location)
+	if prev := e.sweepZones.Load(); prev != nil && slices.EqualFunc(*prev, zones, func(a, b *time.Location) bool { return a.String() == b.String() }) {
+		return
+	}
+	e.sweepZones.Store(&zones)
+	select {
+	case e.expiryRearm <- struct{}{}:
+	default:
+	}
 }
 
 // expirySummary 是到期告警的文案；value 是剩余天数，因清除到期日而恢复时为 0。一条规则对一个节点只提醒一次：
@@ -283,11 +317,16 @@ const (
 	expiryRetryMax   = time.Hour
 )
 
-// nextSweepAt 是下一次到期扫描的时刻。start 是这一轮扫描开始前读到的钟，failures 是到这一轮为止连续失败的次数。
-// 没有失败时是 start 之后的第一个日界；有失败时是退避到期与日界中较早的那个：日界到了照常按新的一天扫描，退避只是
-// 让出错的一天不必等到下一个日界。
-func nextSweepAt(start time.Time, loc *time.Location, failures int) time.Time {
-	boundary := nextDayStart(start, loc)
+// nextSweepAt 是下一次到期扫描的时刻。start 是这一轮扫描开始前读到的钟，zones 是要在其日界醒来的时区（expiryZones），
+// failures 是到这一轮为止连续失败的次数。没有失败时是 start 之后各时区日界中最早的那个；有失败时是退避到期与它之中
+// 较早的那个：日界到了照常按新的一天扫描，退避只是让出错的一天不必等到下一个日界。
+func nextSweepAt(start time.Time, zones []*time.Location, failures int) time.Time {
+	var boundary time.Time
+	for i, loc := range zones {
+		if next := nextDayStart(start, loc); i == 0 || next.Before(boundary) {
+			boundary = next
+		}
+	}
 	if failures == 0 {
 		return boundary
 	}
@@ -301,8 +340,9 @@ func nextSweepAt(start time.Time, loc *time.Location, failures int) time.Time {
 	return boundary
 }
 
-// RunExpirySweep 先扫描一次（hub 停机跨过的零点由这一次补上），此后在 hub 时区每个日历日开始时扫描一次；扫描出错时
-// 按退避重扫（nextSweepAt），成功即回到日界节奏。
+// RunExpirySweep 先扫描一次（hub 停机跨过的零点由这一次补上），此后在每个在用时区（expiryZones：hub 时区与有到期日的
+// 节点的计费时区）的每个日历日开始时扫描一次；扫描出错时按退避重扫（nextSweepAt），成功即回到日界节奏。时区集合在两次
+// 扫描之间变了（别处触发的扫描发布了新集合，publishExpiryZones）时立刻再扫一轮并按新集合重新定时。
 //
 // 下一次触发时刻由本轮扫描之前读到的钟（sweepRound 记下的 start）算出，nextSweepAt 保证它不晚于 start 之后的第一个
 // 日界：没有失败时恰是那个日界，有失败时是退避到期与它之中较早的那个。所以扫描期间跨过的日界至多引起一次立即的重扫，
@@ -323,12 +363,17 @@ func (e *Engine) RunExpirySweep(ctx context.Context) {
 			timer.Stop()
 			return
 		case <-timer.C:
+		case <-e.expiryRearm:
+			timer.Stop()
 		}
 	}
 }
 
 // sweepRound 是 RunExpirySweep 的一轮：扫描一次，返回距下一次扫描的时长与更新后的连续失败次数（出错加一，成功清零）。
 // 下一次的时刻按扫描之前读到的钟算（nextSweepAt），时长按扫描之后读到的钟算，理由见 RunExpirySweep。
+//
+// 时区集合在扫描之后才取：本轮扫描自己发布的变化已经在里面，先清掉它留下的唤醒信号，免得紧接着白扫一轮；清掉之后
+// 别处再发布的变化会重新投递信号。扫描出错、一次都没发布过集合时只按 hub 时区定时。
 func (e *Engine) sweepRound(ctx context.Context, failures int) (time.Duration, int) {
 	start := e.clk.Now()
 	err := e.SweepExpiry(ctx)
@@ -337,7 +382,15 @@ func (e *Engine) sweepRound(ctx context.Context, failures int) (time.Duration, i
 	} else {
 		failures = 0
 	}
-	wait := nextSweepAt(start, e.cfg.Location, failures).Sub(e.clk.Now())
+	select {
+	case <-e.expiryRearm:
+	default:
+	}
+	zones := []*time.Location{e.cfg.Location}
+	if published := e.sweepZones.Load(); published != nil {
+		zones = *published
+	}
+	wait := nextSweepAt(start, zones, failures).Sub(e.clk.Now())
 	if err != nil {
 		e.log.Error("expiry sweep failed", "err", err, "retry_in", max(wait, 0))
 	}

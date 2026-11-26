@@ -23,16 +23,16 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 ## 预授权写入
 
-`updateNode` 的 `trafficResetDay` 取 1–31，越界被拒绝；当月不足该日（如 31 遇到 4 月或 2 月）时在当月最后一日重置，之后的月份仍按原日号，读回的始终是配置的原值。
+`updateNode` 的 `trafficResetDay` 取 1–31，越界被拒绝；当月不足该日（如 31 遇到 4 月或 2 月）时在当月最后一日重置，之后的月份仍按原日号，读回的始终是配置的原值。`trafficResetMinute` 是重置时刻，计费时区零点之后的分钟数，取 0–1439（00:00–23:59，如 510 即 08:30）；`billingTimezone` 是计费时区，IANA 名（如 `UTC`、`Asia/Shanghai`），空串表示沿用 hub 的 `--timezone`（缺省，不是放宽），`Local` 与 `posix/`、`right/` 前缀不接受。周期在计费时区里重置日的重置时刻开始：该时刻因夏令时拨快而不存在时取跳变那一刻，因拨慢出现两次时取第一次。越界的时刻与加载不了的时区被拒绝，错误点名字段与期望取值。改这两项（掩码路径 `trafficResetMinute`、`billingTimezone`）与改重置日一样，本周期用量按新起点从分钟桶重算；`daysLeft`、到期告警与续费推后的"今天"也改按新的计费时区。
 `updateNode` 支持 `trafficQuotaBytes`（[0, 2^62) 字节，0 停用）、`trafficQuotaMode`（SUM/RX/TX/MAX，非零配额必须指定）与 `rented`（已出租开关；与 `maintenance` 同真被拒绝），按 updateMask 只改指定字段。
 `saveAlertRule.rule.kind = ALERT_KIND_TRAFFIC` 只接受 `threshold`（用量占配额的百分比，范围 (0, 100]），不带持续分钟或探测字段。
 
 1. 用 `ListNodes`、`ListProbeTasks`、`ListAlertRules` 读取授权范围；用 `ListNotifyChannelRefs` 取得渠道 id、名称、类型，不读地址、模板或密钥。指定节点凭据不能调用全站设置、备份与存储统计。
 2. 调 `ExecuteChange`，给出一种 change 和 `preview: true`。修改已有配置需 `updateMask`，节点路径如 `note,publicRemark,tags`，探测路径如 `task.target`，告警路径如 `rule.enabled`。JSON FieldMask 是逗号分隔的 lowerCamelCase 字符串，例如 `"updateMask":"note,trafficResetDay"`，不是 paths 对象。
 3. 查看 `operation.beforeJson` / `afterJson`。执行相同变更，设 `preview: false`，附上预览返回的 `expectedVersion` 和唯一 `requestId`。版本过时返回 `aborted`，重新读取和预览，不盲目覆盖。
-4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询回执，`operation.id` 是跨重试和恢复稳定的回执标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
+4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询这次写入的操作记录，`operation.id` 是跨重试和恢复稳定的记录标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
 
-首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不落审计，不在重试中重放。`createNode` 与 `updateNode.billing` 一样接受 `billing`（价格、币种、周期、到期日、自动续期，同一处校验），也接受 `rented`（已出租开关，缺失即 false）：看到价格与到期信息时一步建档，不必建完再改。续费后用 `renewNodeBilling`（`{"nodeId":"42"}`）把到期日按计费周期推后，规则与自动续期相同（未过期恰推后一个周期，已过期步进到不早于 hub 时区的今天）；节点须有周期与到期日，不必开自动续期；推后日期由 hub 计算，不要自己算好再经 `updateNode` 写入。丢失秘密后查询回执，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
+首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不进操作记录，不在重试中重放。`createNode` 与 `updateNode.billing` 一样接受 `billing`（价格、币种、周期、到期日、自动续期，同一处校验），也接受 `rented`（已出租开关，缺失即 false）与 `billingTimezone`（计费时区，缺失即沿用 hub 的 `--timezone`，取值约束同 `updateNode`）：看到价格、到期与服务商账期时区时一步建档，不必建完再改。续费后用 `renewNodeBilling`（`{"nodeId":"42"}`）把到期日按计费周期推后，规则与自动续期相同（未过期恰推后一个周期，已过期步进到不早于节点计费时区的今天）；节点须有周期与到期日，不必开自动续期；推后日期由 hub 计算，不要自己算好再经 `updateNode` 写入。丢失秘密后查询操作记录，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
 
 `ExecuteChange.createNode` 与 `rotateNodeToken` 的 `result.token` 是带 `heron_install_` 前缀的一次性安装凭据，不是运行 token，也不是管理接口的 `HERON_TOKEN`。在目标主机用 `heron-agent register --hub URL --key KEY --config PATH` 注册；它向 `POST /heron.v1.AgentService/Register` 发送 `{"key":"安装凭据"}`，用返回的运行 `token` 写入配置。直接调用 Register 时由请求体 key 授权，不需要管理 bearer。认领保留节点 ID、名称和公开范围，不消费窗口名额；安装凭据不能 Report，运行 token 只能作为 Report 的 bearer，不能再次 Register。
 
@@ -40,7 +40,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 指定节点授权同时约束读写；普通标签不扩权。显式包含未授权节点、全站和动态标签规则不能由指定节点凭据编辑。创建和经自己注册窗口接入的节点自动纳入范围，不增加操作权限。注册窗口互不覆盖；吊销凭据或去掉注册权限会关闭其窗口，过期的凭据开的窗口不可认领。尚未下发的更新在下发时按凭据当时的授权重判：吊销、过期、编辑后不再有更新权限或节点移出范围，都会撤下；已下发更新不能据此撤回。管理员可在面板编辑授权，明文不变，下一个请求即按新授权。
 
-详细差异在后续写入时清理超过 90 天的记录，幂等回执永久保留。配置备份保存授权与回执，恢复时合并回执历史，并清除所有注册窗口和节点更新任务。回执描述原事务，不保证当前配置仍未变化。
+每次成功写入都在同一事务里留一条操作记录：`principal`（`OPERATION_PRINCIPAL_API_TOKEN` 是 token，面板会话与 hub 自身各有一种）、`source`（来源地址）、`method`（经 ExecuteChange 写入的是 `ExecuteChange`）、`action`、对象（`resourceId`，以文本标识的对象在 `resourceKey`）与改动前后的对象快照；快照不含任何凭据。token 调 `ListOperations` 只看得到自己的记录，可按 `requestId`、`action` 过滤，`ownerId` 只能给 0 或自己的 id。详细差异在后续写入时清理超过 90 天的记录，其余字段（含幂等用的 requestId）永久保留。配置备份保存授权与操作记录，恢复时合并记录历史，并清除所有注册窗口和节点更新任务。记录描述原事务，不保证当前配置仍未变化。
 
 例如只修改节点备注：
 
@@ -83,7 +83,7 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 本地数据盘的逐盘容量不进历史，也不在 `GetSnapshot` 里：`GetNodeDisks`（`{"nodeId":"42"}`）返回节点最近一次上报的逐盘读数，只在 hub 内存里，hub 重启后到节点再次上报前为空。`mounts` 按使用率（`used ÷ total`）降序、同使用率按 `path` 升序，至多 16 项；`total` 是截断前的盘数，0 表示那次上报没有逐盘读数（采集失败或 agent 版本不提供）；`sampledAt` 缺席表示 hub 启动后还没收到该节点的上报，`online` 为 false 时是离线前的最后一次读数。共享同一块设备或存储池的挂载点只出现一项（根所在的那组报 `/`，其余报最短路径）。快照与历史里的 `diskTotal` / `diskUsed`（历史序列 `disk_used`、`disk_used_pct`）始终是根盘 `/`；`metrics.diskMaxUsedPct`（历史序列 `disk_max_used_pct`，percent）是最满盘使用率：纳入监测的盘里最满那一块的百分比，hub 取逐盘列表的首项，节点没有逐盘读数（旧版 agent、逐盘采集失败）时取根盘，根盘也没有读数时缺席。问"磁盘满没满"看 `diskMaxUsedPct`，再用 `GetNodeDisks` 看是哪块盘。公开端没有对应接口，挂载路径不公开；公开快照只有 `diskMaxUsedPct` 这个百分比。资源告警 `RESOURCE_METRIC_DISK_USED_PCT` 按 `disk_max_used_pct` 的分钟均值判定；触发事件的 `summary` 在 hub 持有逐盘读数时写成「磁盘（/data）」，否则只写「磁盘」，不要从摘要里解析路径当作数据。
 
-历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
+历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。级别取两条下限中较粗的一级：按跨度（不超过 6 小时 1m，不超过 7 天 5m，否则 1h），以及 hub 保留期此刻仍保有 `from` 处数据的最细级。各级保留期在 `GetStorageStats` 的 `series[].retentionS` 里（默认 1m 七天、5m 三十天、1h 一年）。所以按日历切过去的时段（十天前的某天、上个月的晚高峰），或先用粗步长找峰再缩窗放大时，窗口起点超出细级保留期的那一段只能拿到更粗的级，`stepS` 不会细于那一级的桶长；数据不会因此缺失。起点早于所有级的保留期时取 1h，保留期之外那段没有点，`coverageSummary` 里计为未知分钟。
 
 两个服务的 QueryMetrics 均返回与 ts 对齐的 coverage：minutes 为留存的已准入上报分钟数，observed 为 hub 观测分钟数，observedReported 为两者交集；三项独立可缺席（未知）。纯观测点的指标 n=0，不能画成零读数。coverageSummary 按请求窗口的完整已闭合分钟汇总，不随 maxPoints 改变：覆盖率为 observedReportedMinutes/observedMinutes，未知分钟为 eligibleMinutes−observedMinutes；分母为零时无可观测区间，coverageStart 缺席时尚无覆盖记录。覆盖起点是接收首报的分钟，迁移前节点为最早留存证据；不等于在线率或 SLA。公开节点的 observed 暴露 hub 在保留期内的观测分钟。
 
@@ -158,7 +158,7 @@ else
 fi
 ```
 
-节点的费用与到期。`daysLeft` 是到期日减去今天的天数，今天按 hub 的时区（`--timezone`）取日历日，负数是已过期的天数，由 hub 算好下发；没有到期日（或库里的到期日无法解析）时它缺失，这样的节点不列出。价格与币种是记录用的展示值，hub 不汇总、不换算。替站长算花费时用面板「续费日历」费用概览的同一口径：按币种分列、不换算汇率；只计价格与周期都填了的节点（没有周期是一次性买断）；`rented` 为 true 的已出租节点不计入自用花费；月均按周期月数（月 1、季 3、半年 6、年 12、两年 24、三年 36、五年 60）摊销；`daysLeft` 在 0 到 30 之间的是近 30 天待续费，负数的是逾期未处理，两者分开报：
+节点的费用与到期。`daysLeft` 是到期日减去今天的天数，今天按节点的计费时区（`billingTimezone`，空即 hub 的 `--timezone`）取日历日，负数是已过期的天数，由 hub 算好下发；没有到期日（或库里的到期日无法解析）时它缺失，这样的节点不列出。价格与币种是记录用的展示值，hub 不汇总、不换算。替站长算花费时用面板「续费日历」费用概览的同一口径：按币种分列、不换算汇率；只计价格与周期都填了的节点（没有周期是一次性买断）；`rented` 为 true 的已出租节点不计入自用花费；月均按周期月数（月 1、季 3、半年 6、年 12、两年 24、三年 36、五年 60）摊销；`daysLeft` 在 0 到 30 之间的是近 30 天待续费，负数的是逾期未处理，两者分开报：
 
 ```sh example
 curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
@@ -174,7 +174,7 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 ## 公开数据
 
-总闸 `Settings.public_enabled` 是 `optional bool`：`GetSettings` 总是带值，未保存时为 true。`UpdateSettings` 按组判定、各组彼此独立：外观五项（`title`、`theme`、`accent_color`、`logo`、`custom_css`）是一组，任一项非空即视为给出，给出就整体替换（`theme` 必填，其余为空即清空）；总闸 `public_enabled`、国家查询、备份 `backup` 与登录通知 `login_notify` 各自是一组，显式给出才修改，缺席表示不变：国家查询两项（`geo_enabled`、`geo_url`）合为一组，逐项按 presence 判定，给出任一项即算这一组给出、只改给出的那项；`backup` 内各项的 presence 见 `BackupSettings`；`login_notify` 给出空的 `channel_ids` 即关闭登录通知，响应里总带它。两个渠道列表（`backup.notify.channel_ids`、`login_notify.channel_ids`）各至多 16 条（按原始条数计，含重复），每个 ID 必须是存在的渠道。`geo_backend`、`geo_mmdb_path` 是只读回显，请求里给出也被忽略，不算给出任何一组。一组都没给出返回 `invalid_argument` 并点名各组。所以只开关公开页的请求只带 `public_enabled` 即可，旧客户端修改标题等外观也不会顺带改变总闸。 `GetSettings` 的响应另带 `timezone`：hub 实际生效的 `--timezone`（IANA 名），与 `GetTraffic.timezone`、公开端 `GetSite` 的 `timezone` 同值；它是启动参数，不在 `Settings` 里，`UpdateSettings` 改不了它。按日历替站长切时段（某天、晚高峰 20:00–24:00）时用它，不用你所在机器的时区。
+总闸 `Settings.public_enabled` 是 `optional bool`：`GetSettings` 总是带值，未保存时为 true。`UpdateSettings` 按组判定、各组彼此独立：外观五项（`title`、`theme`、`accent_color`、`logo`、`custom_css`）是一组，任一项非空即视为给出，给出就整体替换（`theme` 必填，其余为空即清空）；总闸 `public_enabled`、国家查询、备份 `backup` 与登录通知 `login_notify` 各自是一组，显式给出才修改，缺席表示不变：国家查询两项（`geo_enabled`、`geo_url`）合为一组，逐项按 presence 判定，给出任一项即算这一组给出、只改给出的那项；`backup` 内各项的 presence 见 `BackupSettings`；`login_notify` 给出空的 `channel_ids` 即关闭登录通知，响应里总带它。两个渠道列表（`backup.notify.channel_ids`、`login_notify.channel_ids`）各至多 16 条（按原始条数计，含重复），每个 ID 必须是存在的渠道。`geo_backend`、`geo_mmdb_path` 是只读回显，请求里给出也被忽略，不算给出任何一组。一组都没给出返回 `invalid_argument` 并点名各组。所以只开关公开页的请求只带 `public_enabled` 即可，旧客户端修改标题等外观也不会顺带改变总闸。 `GetSettings` 的响应另带 `timezone`：hub 实际生效的 `--timezone`（IANA 名），与公开端 `GetSite` 的 `timezone` 同值；它是启动参数，不在 `Settings` 里，`UpdateSettings` 改不了它。按日历替站长切时段（某天、晚高峰 20:00–24:00）时用它，不用你所在机器的时区。流量周期与到期天数按各节点的计费时区：`GetTraffic` 逐节点给出 `traffic.timezone`（没设计费时区的节点就是 hub 的这个值）与 `traffic.resetMinute`，按某个节点的日历切流量时用它的 `traffic.timezone`。
 
 标为公开的节点在 `Settings.public_enabled` 开启时另经 `PublicService` 对外提供，不需要 token：只能查到公开节点，未公开与不存在的节点得到同一个 `not_found`。总闸从未保存过时为开；关闭后全部公开方法（含 `GetSite`）返回 `not_found`，快照仍可能在 1 秒内命中字节缓存，节点的公开标记不变。按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源），每个来源瞬时 60 次、此后每秒 10 次，超出返回 `resource_exhausted`，关闭后仍计数。方法与字段见 `heron/v1/public.proto`，都可以用 GET 调用，请求消息放在查询串里。
 

@@ -173,7 +173,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "heron.db", "SQLite database path")
 	geoMMDB := fs.String("geo-mmdb", "", fmt.Sprintf("local MaxMind country database (at most %d MiB); overrides the HTTP lookup service and makes no network requests; read fully into memory and structurally verified at startup (the file carries no checksum, so a value replaced by another valid value is not detected, only structural damage such as invalid UTF-8 is) and not read again while running, so a replaced file takes effect on restart; geo.enabled still controls lookup", geo.MaxMMDBBytes>>20))
-	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
+	tz := fs.String("timezone", "", "IANA time zone of the hub: daily maintenance silences, traffic report delivery and the panel's calendar slices use it, and so do the traffic periods and expiry days of nodes without their own billing time zone (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); for those nodes, already-persisted period starts are interpreted in the new zone and usage of the current period may be recomputed at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	publicListen := fs.String(publicListenFlag, "", "additional listen address that serves only the public side: /healthz, the public API without the admin entry, and the public page with published themes behind the public page switch; the admin panel, the admin API and agent reporting are not served there (404), so a reverse proxy can give the status page its own hostname without path rules. --listen keeps serving everything. Both listeners share the public API's per-source rate limit and response cache, --trusted-proxies and the stall timeout; empty disables it; must not overlap --listen")
 	adminOrigin := fs.String(adminOriginFlag, "", "legacy Passkey origin, used only to migrate existing credentials without a persisted binding; new registrations bind the current HTTPS origin automatically; an invalid value is rejected at startup even when a binding is persisted")
@@ -300,7 +300,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 			"geo_mmdb_built", md.BuildTime().UTC().Format(time.RFC3339)}
 	}
 
-	st, err := store.Open(opts.db, clk, log, store.MigrateSchema)
+	st, err := store.Open(opts.db, clk, log, store.MigrateSchema, store.WithRetention(opts.retention))
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +370,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
 	nodes := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: log})
 	reload := nodeops.NewReloader(nodes, nodeops.ReloadDeps{Generation: st, Tokens: a, Tasks: reg, Log: log}, offlineGen, opts.offlineReload)
-	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, HubVersion: version, Location: loc, Retention: opts.retention, PublicDir: opts.publicDir != "", Geo: geoBackend},
+	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, HubVersion: version, Location: loc, PublicDir: opts.publicDir != "", Geo: geoBackend},
 		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodes,
 			Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: log})
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, Location: loc},
@@ -418,13 +418,13 @@ func warnExposed(log *slog.Logger, key, addr string) {
 func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer func() { result = errors.Join(result, h.st.Close()) }()
 	// 两个监听都绑上才过更新门：门报告就绪即确认这个版本可用，任一端口绑不上的 hub 不能被确认。
-	listener, err := net.Listen("tcp", h.opts.listen)
+	listener, err := listenTCP(context.Background(), h.opts.listen)
 	if err != nil {
 		return err
 	}
 	var publicListener net.Listener
 	if h.publicHandler != nil {
-		if publicListener, err = net.Listen("tcp", h.opts.publicListen); err != nil {
+		if publicListener, err = listenTCP(context.Background(), h.opts.publicListen); err != nil {
 			_ = listener.Close()
 			return fmt.Errorf("%s: %w", flagSource(publicListenFlag), err)
 		}
@@ -446,12 +446,12 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 		servers = append(servers, publicSrv)
 	}
 
-	retention := h.opts.retention
+	retention := h.st.Retention()
 	defer startLoop(h.ingest.RunFlusher)()
 	defer startLoop(l.RunObservation)()
 	defer startLoop(h.updates.Run)()
 	defer startLoop(h.relay.Run)()
-	defer startLoop(func(ctx context.Context) { h.st.RunMaintenance(ctx, retention) })()
+	defer startLoop(h.st.RunMaintenance)()
 	defer startLoop(h.book.Run)()
 	stopSweep := startLoop(h.alerts.RunOfflineSweep)
 	defer startLoop(h.alerts.RunProbeEvaluation)()
@@ -464,7 +464,7 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer startLoop(h.hb.Run)()
 	defer startLoop(h.reload.Run)()
 
-	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
+	// 监听在 listenTCP 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。
 	// 离线告警在 ttl 与节点宽限期中较大者之后至多再等一个 offline_sweep 才触发（NextOffline 两者都要满足），
 	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；delivery_retry_wait 只给出固定重试间隔的总和，不是投递

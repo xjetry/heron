@@ -103,6 +103,7 @@ func TestHistoryTailMatchesMinuteTruth(t *testing.T) {
 	}
 	base := clk.Now().Truncate(6 * time.Hour).Unix()
 	batch := historyMinutes(id, base, 197)
+	clk.SetWall(time.Unix(base+197*60, 0))
 	if _, err := s.WriteMinuteBatch(t.Context(), batch); err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +170,7 @@ func TestHistoryTailReadsOneSnapshot(t *testing.T) {
 				}
 				base := clk.Now().Truncate(6 * time.Hour).Unix()
 				batch := historyMinutes(id, base, 197)
+				clk.SetWall(time.Unix(base+197*60, 0))
 				if _, err := s.WriteMinuteBatch(t.Context(), batch); err != nil {
 					t.Fatal(err)
 				}

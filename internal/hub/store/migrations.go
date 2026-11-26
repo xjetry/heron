@@ -80,6 +80,77 @@ var migrations = map[int]func(*sql.Tx) error{
 	52: execAll(migrationV52Config),
 	53: migrateV53Metrics,
 	54: migrateV54Config,
+	55: migrateV55Metrics,
+	56: execAll(migrationV56Config),
+	57: execAll(append(append([]string{}, migrationV57Config...), migrationV57Trigger...)),
+}
+
+// v57：节点的重置时刻与计费时区两列（含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。旧行取列默认值
+// ——00:00 与空串（沿用 hub 的 --timezone），周期边界与到期日界与升级前逐一相同。
+// 回滚边界同其它迁移：写入后 schema 56 的二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV57Config = []string{
+	`ALTER TABLE node ADD COLUMN traffic_reset_minute INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE node ADD COLUMN billing_timezone TEXT NOT NULL DEFAULT ''`,
+}
+
+// 两列都出现在 Node 里，改动要推进节点资料版本（ddlNodeListRevision）：重建 node 的更新触发器，WHEN 条件在 v46 的
+// 基础上加这两列。触发器属于运行态，配置快照不带，所以与 migrationV57Config 分开。
+var migrationV57Trigger = []string{
+	`DROP TRIGGER node_list_revision_node_update`,
+	`CREATE TRIGGER node_list_revision_node_update AFTER UPDATE ON node WHEN
+  OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.sort_order IS NOT NEW.sort_order OR OLD.public IS NOT NEW.public
+  OR OLD.note IS NOT NEW.note OR OLD.offline_grace_s IS NOT NEW.offline_grace_s OR OLD.traffic_reset_day IS NOT NEW.traffic_reset_day
+  OR OLD.created_at IS NOT NEW.created_at OR OLD.price IS NOT NEW.price OR OLD.currency IS NOT NEW.currency
+  OR OLD.billing_cycle IS NOT NEW.billing_cycle OR OLD.expires_on IS NOT NEW.expires_on OR OLD.auto_renew IS NOT NEW.auto_renew
+  OR OLD.last_source IS NOT NEW.last_source OR OLD.country IS NOT NEW.country OR OLD.country_ip IS NOT NEW.country_ip
+  OR OLD.country_pin IS NOT NEW.country_pin OR OLD.maintenance IS NOT NEW.maintenance OR OLD.public_remark IS NOT NEW.public_remark
+  OR OLD.traffic_quota_bytes IS NOT NEW.traffic_quota_bytes OR OLD.traffic_quota_mode IS NOT NEW.traffic_quota_mode
+  OR OLD.ipv4_pin IS NOT NEW.ipv4_pin OR OLD.ipv6_pin IS NOT NEW.ipv6_pin OR OLD.rented IS NOT NEW.rented
+  OR OLD.traffic_reset_minute IS NOT NEW.traffic_reset_minute OR OLD.billing_timezone IS NOT NEW.billing_timezone
+BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
+}
+
+// metricDDLV55 冻结引入 softirq 占比时的指标表 DDL：v53 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
+func metricDDLV55(table string) string {
+	type col struct {
+		name, sqlType string
+		max           bool
+	}
+	cols := []col{
+		{"cpu", "REAL", true}, {"mem_used", "INTEGER", true}, {"swap_used", "INTEGER", false}, {"disk_used", "INTEGER", false},
+		{"load1", "REAL", false}, {"tcp", "INTEGER", false}, {"udp", "INTEGER", false}, {"procs", "INTEGER", false},
+		{"rx_bytes", "INTEGER", false}, {"tx_bytes", "INTEGER", false}, {"memory_used_pct", "REAL", false}, {"disk_used_pct", "REAL", false},
+		{"net_rx_bps", "INTEGER", true}, {"net_tx_bps", "INTEGER", true}, {"disk_read_bps", "INTEGER", true}, {"disk_write_bps", "INTEGER", true},
+		{"cpu_steal_pct", "REAL", true}, {"cpu_iowait_pct", "REAL", true}, {"load1_per_core", "REAL", false},
+		{"tcp_active_opens_ps", "REAL", true}, {"tcp_passive_opens_ps", "REAL", true}, {"tcp_out_segs_ps", "REAL", false}, {"tcp_retrans_segs_ps", "REAL", false},
+		{"disk_max_used_pct", "REAL", false}, {"cpu_softirq_pct", "REAL", true},
+	}
+	parts := []string{"node_id INTEGER NOT NULL", "ts INTEGER NOT NULL"}
+	for _, c := range cols {
+		parts = append(parts, c.name+"_sum "+c.sqlType+" NOT NULL DEFAULT 0", c.name+"_n INTEGER NOT NULL DEFAULT 0")
+		if c.max {
+			parts = append(parts, c.name+"_max "+c.sqlType+" NOT NULL DEFAULT 0")
+		}
+	}
+	if strings.TrimSuffix(table, "_new") == "metric_1m" {
+		parts = append(parts, "reported INTEGER NOT NULL DEFAULT 1", "observed INTEGER")
+	} else {
+		parts = append(parts, "minutes INTEGER", "observed INTEGER", "both INTEGER")
+	}
+	return "CREATE TABLE " + table + " (" + strings.Join(parts, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"
+}
+
+// v55：softirq 占比一列（cpu_softirq_pct 的 sum/n/max），只在指标层，迁移与指标快照恢复共用。与 v43 同理：覆盖列已在
+// 指标列之后，ADD COLUMN 只能加在表尾、列序会与新建库不同，所以按冻结 DDL 重建三张表。
+// 不回填：升级前的 agent 不采集 softirq，旧行新列取默认值，n=0 表示这一分钟没有读数，不是测得的 0%。
+// 回滚边界同 v43：写入后 schema 54 的二进制不能直接启动，回退须恢复升级前的数据库备份。
+func migrateV55Metrics(tx *sql.Tx) error {
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		if err := rebuildTable(tx, table, metricDDLV55); err != nil {
+			return fmt.Errorf("rebuilding %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // metricDDLV53 冻结引入最满盘使用率时的指标表 DDL：v43 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
@@ -287,6 +358,32 @@ func migrateV54Config(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v56：操作记录加主体、会话、来源、方法与文本对象五列，会话的全量查询加按时刻的索引。重建而不是 ADD COLUMN：
+// principal 要 NOT NULL 且不带默认值（漏写的写者必须报错，不能被默认成某个主体），而 ADD COLUMN 的 NOT NULL 列
+// 必须带默认值。迁移之前只有 ExecuteChange 写回执，所以旧行的主体由 owner_key 推出（'session' 是会话，其余是 API
+// token 的身份），方法都是 ExecuteChange；会话 id 与来源当时没有记录，取空串，读侧把空串当作未知。
+var migrationV56Config = []string{
+	`CREATE TABLE operation_v56 (owner_key TEXT NOT NULL,owner_id INTEGER NOT NULL,request_id TEXT NOT NULL,request_hash TEXT NOT NULL,action TEXT NOT NULL,resource_id INTEGER NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL,committed_at INTEGER NOT NULL,principal TEXT NOT NULL CHECK (principal IN ('session', 'api_token', 'system')),session_id TEXT NOT NULL,source TEXT NOT NULL,method TEXT NOT NULL,resource_key TEXT NOT NULL,PRIMARY KEY(owner_key,request_id)) WITHOUT ROWID`,
+	`INSERT INTO operation_v56 SELECT owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at,CASE owner_key WHEN 'session' THEN 'session' ELSE 'api_token' END,'','','ExecuteChange','' FROM operation`,
+	`DROP TABLE operation`,
+	`ALTER TABLE operation_v56 RENAME TO operation`,
+	`CREATE INDEX operation_by_owner ON operation(owner_id,committed_at DESC,request_id)`,
+	`CREATE INDEX operation_details_by_time ON operation(committed_at) WHERE before_json!='' OR after_json!=''`,
+	`CREATE INDEX operation_by_time ON operation(committed_at DESC,request_id)`,
+}
+
+// migrationV56Snapshot 是迁移 56 在配置快照上的同源步骤：快照的表是 CREATE TABLE AS 拷出的，没有主键与约束，重建
+// 无从谈起，改为加列后按同一规则回填。默认值只为 ADD COLUMN 存在，回填之后每行都是显式值；恢复按目标库的列名搬运，
+// 目标库的 CHECK 再核一遍主体取值。
+var migrationV56Snapshot = []string{
+	`ALTER TABLE operation ADD COLUMN principal TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE operation ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE operation ADD COLUMN source TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE operation ADD COLUMN method TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE operation ADD COLUMN resource_key TEXT NOT NULL DEFAULT ''`,
+	`UPDATE operation SET principal=CASE owner_key WHEN 'session' THEN 'session' ELSE 'api_token' END,method='ExecuteChange'`,
 }
 
 // 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。

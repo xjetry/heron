@@ -289,6 +289,8 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV57Config(t, cfg)
+			removeV56Config(t, cfg)
 			removeV52Config(t, cfg)
 			removeV51Config(t, cfg)
 			removeV50Config(t, cfg)
@@ -303,6 +305,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			removeV36Config(t, cfg)
 			removeV35Config(t, cfg)
 			removeV34Config(t, cfg)
+			removeV55Metrics(t, met)
 			removeV53Metrics(t, met)
 			removeV43Metrics(t, met)
 			removeV34Metrics(t, met)
@@ -371,6 +374,19 @@ func removeV47Config(t *testing.T, config *sql.DB) {
 	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
 }
 
+// 57 给 node 加了重置时刻与计费时区两列，在配置层。
+func removeV57Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node DROP COLUMN billing_timezone; ALTER TABLE node DROP COLUMN traffic_reset_minute")
+}
+
+// 56 给操作记录加了主体、会话、来源、方法与文本对象五列，在配置层。整库降级时列上的 CHECK 只约束列自身，可以随列删掉。
+func removeV56Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, `ALTER TABLE operation DROP COLUMN principal; ALTER TABLE operation DROP COLUMN session_id;
+		ALTER TABLE operation DROP COLUMN source; ALTER TABLE operation DROP COLUMN method; ALTER TABLE operation DROP COLUMN resource_key`)
+}
+
 // 52 给 probe_task 加了 HTTP 状态码判据两列，在配置层。
 func removeV52Config(t *testing.T, config *sql.DB) {
 	t.Helper()
@@ -381,6 +397,14 @@ func removeV52Config(t *testing.T, config *sql.DB) {
 func removeV51Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN ip_family; ALTER TABLE probe_task DROP COLUMN dns_record_type")
+}
+
+// 55 给三张指标表加了 softirq 占比的 sum/n/max，在指标层。
+func removeV55Metrics(t *testing.T, metrics *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		restoreExec(t, metrics, "ALTER TABLE "+table+" DROP COLUMN cpu_softirq_pct_sum; ALTER TABLE "+table+" DROP COLUMN cpu_softirq_pct_n; ALTER TABLE "+table+" DROP COLUMN cpu_softirq_pct_max")
+	}
 }
 
 // 53 给三张指标表加了最满盘使用率的 sum/n，在指标层。
@@ -522,6 +546,8 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV57Config(t, cfg)
+	removeV56Config(t, cfg)
 	removeV52Config(t, cfg)
 	removeV51Config(t, cfg)
 	removeV50Config(t, cfg)
@@ -927,13 +953,18 @@ func TestRestoreRejectsNodeWithInvalidPriceCurrency(t *testing.T) {
 	}
 }
 
-// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据，v53 快照与当前版本
-// 结构相同，改 schema_version 即得到一份 v53 快照。
+// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据，配置层撤掉 57 的计费时区两列
+// 与 56 的操作记录列、指标层撤掉 55 加的列之后与 v53 结构相同，改 schema_version 即得到 v53 快照。
 func TestRestoreNormalizesPriceCurrencyOfV53Snapshot(t *testing.T) {
 	t.Parallel()
 	config, metrics := restoreSnapshots(t)
+	cfg := restoreDB(t, config)
+	removeV57Config(t, cfg)
+	removeV56Config(t, cfg)
 	restoreExec(t, restoreDB(t, config), "UPDATE node SET price='5', currency=' usd ' WHERE id=1; UPDATE snapshot_meta SET schema_version=53")
-	restoreExec(t, restoreDB(t, metrics), "UPDATE snapshot_meta SET schema_version=53")
+	met := restoreDB(t, metrics)
+	removeV55Metrics(t, met)
+	restoreExec(t, met, "UPDATE snapshot_meta SET schema_version=53")
 	path := restoreTarget(t)
 	if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)

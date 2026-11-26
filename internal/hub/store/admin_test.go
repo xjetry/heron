@@ -42,7 +42,7 @@ func seedSession(t *testing.T, s *Store, hash [32]byte, now, expires time.Time, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CommitAdminSecurity(ctx, before, before.Data, false, &hash, now, expires, source); err != nil {
+	if err := s.CommitAdminSecurity(ctx, 0, before, before.Data, false, &hash, now, expires, source); err != nil {
 		t.Fatal(err)
 	}
 }

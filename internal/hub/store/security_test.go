@@ -35,7 +35,7 @@ func TestSecurityAuditFailureRollsBackCredentialChanges(t *testing.T) {
 				err = s.ResetAdminSecurity(ctx)
 			case "factor":
 				before.Event = &AlertEvent{Transition: TransitionAuthChanged, At: clk.Now(), Summary: "认证方式变更"}
-				err = s.CommitAdminSecurity(ctx, before, `{"secret":"SECRET"}`, true, nil, clk.Now(), clk.Now().Add(time.Hour), "")
+				err = s.CommitAdminSecurity(ctx, 0, before, `{"secret":"SECRET"}`, true, nil, clk.Now(), clk.Now().Add(time.Hour), "")
 			}
 			if err == nil {
 				t.Fatal("credential change ignored failed audit")

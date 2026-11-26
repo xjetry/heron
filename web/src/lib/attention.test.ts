@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { liveById } from "./adminStatus";
-import { attentionCards } from "./attention";
+import { alertTabTitle, attentionCards, DEFAULT_ADMIN_TITLE, firingCount } from "./attention";
 
 const nodes = [
   { id: 1n, name: "on", maintenance: false, facts: { agentVersion: "v0.8.0" }, billing: { daysLeft: 12 } },
@@ -29,4 +29,15 @@ it("绑定版本未知时落后数是 null 并说明原因；告警状态未到�
   expect(unknown[2]).toMatchObject({ count: null, note: "无法取得 hub 绑定的 agent 版本" });
   expect(unknown[3].count).toBeNull();
   expect(attentionCards({ nodes: [], live: new Map(), boundAgentVersion: "v0.8.0", states: [] }).map((c) => c.count)).toEqual([0, 0, 0, 0]);
+});
+
+it("firingCount 只计 firing 且区分未知，alertTabTitle 仅在有触发中告警时加前缀", () => {
+  expect(firingCount(undefined)).toBeNull();
+  expect(firingCount([])).toBe(0);
+  expect(firingCount(states)).toBe(2);
+  expect(alertTabTitle("Heron", null)).toBe("Heron");
+  expect(alertTabTitle("Heron", 0)).toBe("Heron");
+  expect(alertTabTitle("Heron", 3)).toBe("(3) Heron");
+  expect(alertTabTitle("", 2)).toBe(`(2) ${DEFAULT_ADMIN_TITLE}`);
+  expect(alertTabTitle("", 0)).toBe("");
 });

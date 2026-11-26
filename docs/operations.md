@@ -86,7 +86,7 @@ hub 只提供明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止。
 - `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信；为空则不信任任何转发头。反代经 IPv6 链路本地地址连 hub 时写 `fe80::/10` 或不带区域标识的地址；可信与否不区分接口，带 `%eth0` 的写法启动时被拒绝。
 - HTTPS 反代必须保留浏览器访问的 Host（含非默认端口），并设置 `X-Forwarded-Proto: https`。否则管理接口的同源检查会拒绝浏览器请求（包括密码登录），返回 403。不要通过改写或删除浏览器的 Origin 头绕过检查。
 - 不信任转发头时，公开页与注册的限流按 TCP 对端地址计，反代后的访客共用代理地址的一个桶，登录锁定也按代理地址计；节点来源 IP 同样记成代理地址。
-- 反代与 CDN 必须对 `/heron.v1.AdminService/` 路径禁用响应压缩，并保留 hub 的 `Cache-Control: no-store, no-transform`；公开 API 与静态资源可继续压缩。hub 自己只压缩 `GetSnapshot` 与 `ListNodes` 两个管理过程，其余管理响应不压缩。部署后用带 `Accept-Encoding: gzip` 的其它管理请求（例如 `ListTags`）检查最终响应没有 `Content-Encoding`、缓存头完整。
+- 反代与 CDN 必须对 `/heron.v1.AdminService/` 路径禁用响应压缩，并保留 hub 的 `Cache-Control: no-store, no-transform`。hub 自己只压缩 `GetSnapshot` 与 `ListNodes` 两个管理过程，其余管理响应不压缩；内置管理面板与公开页的静态资源已在构建期预压缩（生成 br 与 gzip 副本，按请求的 `Accept-Encoding` 直接下发，带 `Vary: Accept-Encoding` 与各自编码的 `ETag`），反代无需再为静态资源开启压缩，开了也无害（已带 `Content-Encoding` 的响应不会被重复压缩）；公开 API 也可继续由反代或 hub 压缩。部署后用带 `Accept-Encoding: gzip` 的其它管理请求（例如 `ListTags`）检查最终响应没有 `Content-Encoding`、缓存头完整。
 - 公开服务按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源）：每个来源瞬时 60 次，此后每秒 10 次，超出返回 429。
 - 经过 CDN 时在反代验证 CDN 来源后解析真实客户端地址，再转发给 hub；不要无条件信任客户端自带的地址头。
 
@@ -126,6 +126,15 @@ docker exec -it heron heron-hub passwd --db /data/heron.db
 docker exec heron heron-hub security-reset --db /data/heron.db --yes
 ```
 
+## 操作记录
+
+面板「操作记录」页列出每一次成功写入：面板会话的直接操作、API token 经 `ExecuteChange` 的写入，以及 hub 自己发起的写入（目前只有到期节点的自动续期，主体显示为「hub 自身」）。每条记录有时间、主体（会话以会话 id 的前 8 位区分）、来源地址、方法、动作、对象，以及改动前后的对象快照，展开后按字段列出差异。
+
+- 快照不含任何密钥：密码与其哈希、节点与 API 凭据、Webhook 地址与模板、Telegram token、S3 secret、心跳地址、TOTP 秘密与恢复码、Passkey 材料都不进快照，只写不读的设置只记是否已设置。
+- 失败的调用（参数无效、版本过时、权限不足、测试通知发送失败）与只读调用不留记录。测试通知、hub 在线更新这类不改库的操作在动作发出之后留记录。
+- 不经面板与 API 的写入不留记录：agent 的上报与注册、指标归并与清理、告警状态推进、登录签发会话，以及在 hub 主机上执行的 `passwd`、`security-reset`、`token revoke`、`restore`。
+- 快照在 90 天后由之后的写入清空，其余字段一直保留。配置备份带着全部记录，恢复时与目标库已有的记录合并。
+
 ## 环境变量
 
 `serve` 的每个 flag 都可以用环境变量 `HERON_<FLAG>` 给出：flag 名的横线换成下划线、转大写，例如 `--offline-after` ↔ `HERON_OFFLINE_AFTER`、`--trusted-proxies` ↔ `HERON_TRUSTED_PROXIES`。同一项两处都给时以显式 flag 为准。环境变量设为空串等于显式给出空值，空值的含义与该 flag 写成空值时相同（`HERON_OFFLINE_AFTER=` 取默认值）。
@@ -139,7 +148,11 @@ systemd 安装把这类定制放进 drop-in（`systemctl edit heron-hub`）：�
 
 ## 时区
 
-hub 按 `--timezone` 判定流量周期的重置日与节点到期日的天边界。不指定时取宿主时区（`TZ` 或 `/etc/localtime`），都解析不到时按 UTC 并在启动日志里告警。Docker 镜像里没有 `/etc/localtime`，用 `-e TZ=Asia/Shanghai`（不替换默认参数），或在写全的参数里加 `--timezone`；两者都给时以 `--timezone` 为准。换时区会让每个节点的流量周期起点按新时区重算，当前周期用量随之按分钟桶重算（口径见 proto 的 `Traffic.period_rx`）。流量重置日取 1–31：周期在该日的第一个时刻开始（通常是零点；零点因夏令时被跳过的时区取跳变后的时刻），当月不足该日时在当月最后一日开始，之后的月份仍按原日号，每年恰好 12 个周期（口径见 proto 的 `Node.traffic_reset_day`）。
+`--timezone` 是 hub 的时区：静默窗口、流量报告的投递时刻、面板与公开页的晚高峰切片都按它，也是节点没设计费时区时的缺省。不指定时取宿主时区（`TZ` 或 `/etc/localtime`），都解析不到时按 UTC 并在启动日志里告警。Docker 镜像里没有 `/etc/localtime`，用 `-e TZ=Asia/Shanghai`（不替换默认参数），或在写全的参数里加 `--timezone`；两者都给时以 `--timezone` 为准。
+
+每个节点可以另设计费时区（IANA 名，节点编辑里的「计费时区」，接口字段 `billing_timezone`）与重置时刻（00:00–23:59，`traffic_reset_minute`），按服务商的账期填：流量周期在计费时区里重置日的重置时刻开始，节点的到期剩余天数、到期告警与续费推后的"今天"也按计费时区的日界。计费时区留空即按 `--timezone`。流量重置日取 1–31：当月不足该日时在当月最后一日开始，之后的月份仍按原日号，每年恰好 12 个周期；重置时刻因夏令时拨快而不存在时取跳变那一刻，因拨慢出现两次时取第一次（口径见 proto 的 `Node.traffic_reset_day`）。
+
+换 `--timezone` 会让没设计费时区的节点按新时区重算周期起点；改节点的计费时区、重置日或重置时刻同理。周期起点挪动后，当前周期用量按分钟桶重算（口径见 proto 的 `Traffic.period_rx`）：起点不在整点上（如 `+05:30` 时区或 08:30 重置）时，起点所在的那一小时按更细的 5 分钟、1 分钟数据拆分；拆分所需的细数据已过保留期时，跨起点的那一桶整块计入它开始的一侧。
 
 ## 宿主机本地策略
 
@@ -173,6 +186,10 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
   某块合格的盘读不出（权限、I/O 错误）时整份逐盘读数缺失，节点诊断的采集失败项记「逐盘容量」，agent 日志点名路径；不需要监测它就把它加进排除规则。
 - 在线更新经 hub 中转（`--update-source hub`）的节点：更新器从 agent 配置里只取 `hub`、`token`、`insecure_http`，其余字段一律忽略，agent 以后新增配置项也不影响它取更新。只有本版本之前安装的更新器还会拒读它不认识的字段（写上 `disk_exclude` 后取不到更新）：这类节点先重跑一次新版安装器升级更新器，再写 `disk_exclude`（或在此之前改用 `run --disk-exclude`）；升级之后不再受 agent 配置新增字段影响。
 - agent 日志有总量上限（突发之后被压掉的行数记在下一条日志里）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
+
+## 墙钟
+
+分钟历史按 hub 收到上报时的墙钟归属，hub 主机需要 NTP 校时。墙钟快过之后被往回校（例如开机时 RTC 偏快、随后由 NTP 校正），hub 在下一次写入分钟数据或下一轮数据整理时自动清理快钟留下的痕迹：把推进到未来的数据整理水位退回按现在算的位置，删掉标在未来时刻的分钟数据（它们实际属于更早的时刻，无法还原到正确的分钟），之后的数据照常写入、照常整理。日志各记一条 Warn：`rollup watermark was ahead of the wall clock` 带回退幅度（`rolled_back`），`minute rows ahead of the wall clock deleted` 带删除行数。快钟期间的历史清理也按快钟的"现在"计算保留期，每一级最老的历史会多删掉与快出幅度等长的一段，删掉的无法找回。
 
 ## 排查
 

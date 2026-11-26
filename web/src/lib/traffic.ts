@@ -8,6 +8,25 @@ export const RESET_DAY_MAX = 31;
 // 2 月最少 28 天，大于 28 的重置日才会在某些月份被钳到月末。
 export const resetDayClamps = (day: number) => day > 28;
 
+// 重置时刻是计费时区零点之后的分钟数，准入范围与 hub 的 store.MaxTrafficResetMinute 一致：0–1439，即 00:00–23:59。
+// 页面上写成 HH:MM，与 TimeInput（components/DateInput.tsx）的取值同一写法。
+export const RESET_MINUTE_MAX = 24 * 60 - 1;
+export const resetTimeText = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+
+// HH:MM → 分钟数；不是两位时、两位分或超出 00:00–23:59 时返回 null（TimeInput 没填完时给的是空串或不完整的各段）。
+export function parseResetTime(text: string): number | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(text);
+  if (!m) return null;
+  const minute = Number(m[1]) * 60 + Number(m[2]);
+  return Number(m[2]) < 60 && minute <= RESET_MINUTE_MAX ? minute : null;
+}
+
+// 周期规则的一句话说明："每月 31 日 08:30，不足该日的月份取最后一日，UTC"。时区取 hub 下发的周期时区（Traffic.timezone），
+// 它恒非空：节点没设计费时区时就是 hub 的 --timezone。
+export function resetRuleText(t: Pick<Traffic, "resetDay" | "resetMinute" | "timezone">): string {
+  return `每月 ${t.resetDay} 日 ${resetTimeText(t.resetMinute)}${resetDayClamps(t.resetDay) ? "，不足该日的月份取最后一日" : ""}，${t.timezone}`;
+}
+
 export const QUOTA_UNITS = { GiB: 1n << 30n, TiB: 1n << 40n, GB: 1000000000n, TB: 1000000000000n };
 export type QuotaUnit = keyof typeof QUOTA_UNITS;
 
@@ -53,4 +72,40 @@ export const QUOTA_MODE_LABELS: Record<TrafficQuotaMode, string> = {
 
 export function trafficDetail(t: Traffic): string {
   return t.quotaBytes > 0n ? QUOTA_MODE_LABELS[t.quotaMode] : `${QUOTA_MODE_LABELS[TrafficQuotaMode.SUM]} · 未设配额`;
+}
+
+export type PeriodBreakdown = {
+  rx: string;
+  tx: string;
+  rxNote?: string;
+  txNote?: string;
+  note?: string;
+};
+
+// 本周期下行、上行分量及各方向相对当前配额口径的归属标注。
+// 未设配额时与 hub 的 traffic.Quota 一致落回下载 + 上传（SUM），不沿用配置表里残留的 quotaMode。
+export function periodBreakdown(t: Traffic): PeriodBreakdown {
+  const rx = bytes(t.periodRx);
+  const tx = bytes(t.periodTx);
+  const mode = t.quotaBytes > 0n ? t.quotaMode : TrafficQuotaMode.SUM;
+  switch (mode) {
+    case TrafficQuotaMode.RX:
+      return { rx, tx, rxNote: "计入配额", txNote: "不计入配额" };
+    case TrafficQuotaMode.TX:
+      return { rx, tx, rxNote: "不计入配额", txNote: "计入配额" };
+    case TrafficQuotaMode.MAX:
+      if (t.periodRx > t.periodTx) return { rx, tx, rxNote: "当前取大" };
+      if (t.periodTx > t.periodRx) return { rx, tx, txNote: "当前取大" };
+      return { rx, tx, note: "两向相等" };
+    default:
+      return { rx, tx, note: "两向合计" };
+  }
+}
+
+// 紧凑表格与摘要卡片的悬停提示文本，在不撑宽列的前提下给出上下行分量与口径归属。
+export function trafficBreakdownText(t: Traffic): string {
+  const b = periodBreakdown(t);
+  const rx = `↓ ${b.rx}${b.rxNote ? `（${b.rxNote}）` : ""}`;
+  const tx = `↑ ${b.tx}${b.txNote ? `（${b.txNote}）` : ""}`;
+  return b.note ? `${rx} ${tx}（${b.note}）` : `${rx} ${tx}`;
 }

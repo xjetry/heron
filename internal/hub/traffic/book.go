@@ -22,9 +22,13 @@ const FlushPeriod = 10 * time.Second
 type Storage interface {
 	LoadTraffic(ctx context.Context) ([]store.TrafficRecord, error)
 	WriteTraffic(ctx context.Context, recs []store.TrafficRecord) ([]int64, error)
-	TrafficResetDays(ctx context.Context) (map[int64]int, error)
+	// AdjustTraffic 写入面板校正的一条记录并留操作记录（store.Store.AdjustTraffic）；节点不存在返回 store.ErrNotFound。
+	// 账本的周期刷出不是谁的操作，走 WriteTraffic。
+	AdjustTraffic(ctx context.Context, r store.TrafficRecord) error
+	TrafficSchedules(ctx context.Context) (map[int64]store.TrafficSchedule, error)
 	// NetBytesBetween 是节点在 [from, to) 内分钟桶里的收发字节和（store.Store.NetBytesBetween）：只含 ingest 能归到
-	// 某一分钟的增量，不含 hub 重启后首报、跨过离线 TTL 的增量与校正，所以不大于账本在同一区间的入账。
+	// 某一分钟的增量，不含 hub 重启后首报、跨过离线 TTL 的增量与校正，所以不大于账本在同一区间的入账。区间端点不在
+	// 整点上时按分钟读两端（读法与细级不在了时的归属规则见 store 的实现）。
 	NetBytesBetween(ctx context.Context, nodeID int64, from, to time.Time) (rx, tx int64, err error)
 }
 
@@ -71,11 +75,12 @@ func (s State) totalsView() totalsView {
 	return totalsView{epoch: sum.Epoch, rx: clamp(sum.Rx), tx: clamp(sum.Tx)}
 }
 
-// Entry 是读侧视图：状态加上由重置日推出的边界，后两项不落盘。
+// Entry 是读侧视图：状态加上节点的周期规则与由它推出的上一周期起点、下次重置，后三项不落盘。
 type Entry struct {
 	State
-	ResetDay  int
-	NextReset time.Time
+	Schedule Schedule
+	// PreviousStart 是严格早于 PeriodStart 的最近一个边界（上一周期的起点），NextReset 是严格晚于它的第一个边界。
+	PreviousStart, NextReset time.Time
 }
 
 // Delta 是一次上报入账的字节增量。
@@ -92,34 +97,38 @@ type entry struct {
 type Book struct {
 	st  Storage
 	clk clock.Clock
-	tz  *time.Location
+	// hub 是 hub 生效的 --timezone：节点没设计费时区时周期按它算（ScheduleOf）。构造后只读。
+	hub *time.Location
 	log *slog.Logger
 
 	// 同一节点写库的顺序与内存状态更新的顺序一致，否则 Flush 的旧快照会盖掉已成功的校正。
 	// Flush、Adjust 与 Commit 统一按 writeMu → mu 取锁；Flush 等待写库时释放 mu，入账不等待数据库。
 	writeMu sync.Mutex
 
-	// mu 保护 entries 与 resetDay。Adjust 与 Commit 在 mu 下同步写库：持锁期间所有入账等待，
+	// mu 保护 entries 与 schedules。Adjust 与 Commit 在 mu 下同步写库：持锁期间所有入账等待，
 	// 换来"返回成功即已持久化、返回失败则内存与库都未变"；校正是罕见的管理操作。
-	mu       sync.Mutex
-	entries  map[int64]*entry
-	resetDay map[int64]int
+	mu        sync.Mutex
+	entries   map[int64]*entry
+	schedules map[int64]store.TrafficSchedule
 }
 
-func New(st Storage, clk clock.Clock, tz *time.Location, log *slog.Logger) *Book {
-	return &Book{st: st, clk: clk, tz: tz, log: log, entries: map[int64]*entry{}, resetDay: map[int64]int{}}
+// New 的 hub 是 hub 生效的 --timezone，非 nil。
+func New(st Storage, clk clock.Clock, hub *time.Location, log *slog.Logger) *Book {
+	return &Book{st: st, clk: clk, hub: hub, log: log, entries: map[int64]*entry{}, schedules: map[int64]store.TrafficSchedule{}}
 }
 
-func (b *Book) Zone() *time.Location { return b.tz }
+// HubZone 是装配给账本的 hub 时区。api 据它核对自己拿到的 hub 时区是同一个对象：节点没设计费时区时，周期边界（这里）
+// 与 days_left（api）都回落到它，两边回落到不同的区就会让同一节点的周期与日界各算各的。
+func (b *Book) HubZone() *time.Location { return b.hub }
 
-// Load 从库恢复条目与重置日。只要 agent 未换启动周期、网卡集合且计数器未倒退，恢复的基线
+// Load 从库恢复条目与周期规则。只要 agent 未换启动周期、网卡集合且计数器未倒退，恢复的基线
 // 就让重启后的首次上报通过差分补回最后一次成功刷出之后丢失的内存增量。
 func (b *Book) Load(ctx context.Context) error {
 	recs, err := b.st.LoadTraffic(ctx)
 	if err != nil {
 		return err
 	}
-	days, err := b.st.TrafficResetDays(ctx)
+	schedules, err := b.st.TrafficSchedules(ctx)
 	if err != nil {
 		return err
 	}
@@ -134,7 +143,7 @@ func (b *Book) Load(ctx context.Context) error {
 		s := b.entries[r.NodeID].State
 		b.entries[r.NodeID].committed = &s
 	}
-	b.resetDay = days
+	b.schedules = schedules
 	return nil
 }
 
@@ -155,13 +164,15 @@ func satAdd(a, d int64) int64 {
 	return a + d
 }
 
-// day 是节点配置的重置日原值；Load 之后新建、尚未 SetResetDay 的节点取列默认值（store.DefaultTrafficResetDay），
-// 与告警引擎、流量报告直接读库得到的日号相同。
-func (b *Book) day(nodeID int64) int {
-	if d, ok := b.resetDay[nodeID]; ok {
-		return d
+// schedule 是节点的周期规则。节点的配置由 Load 读入、之后经 SetSchedule 跟随每次提交（nodeops 在建节点与改节点提交后
+// 调用，见那里的 mu 不变式）；不在表里的节点取列默认值（store.DefaultTrafficSchedule），与告警引擎、流量报告直接读库
+// 得到的相同。
+func (b *Book) schedule(nodeID int64) Schedule {
+	c, ok := b.schedules[nodeID]
+	if !ok {
+		c = store.DefaultTrafficSchedule
 	}
-	return store.DefaultTrafficResetDay
+	return ScheduleOf(c, b.hub)
 }
 
 // backfillTimeout 限制周期起点移动时在 mu 下读分钟桶的时长：读挂住时所有入账跟着等，这个上界让它不无限期等下去。
@@ -169,13 +180,14 @@ const backfillTimeout = 10 * time.Second
 
 // rolled 只计算状态副本，校正写库失败时不能把周期滚动留在内存里。
 //
-// 周期起点应当是按当前重置日与 hub 时区算出的、不晚于 now 的最近边界（PeriodStart）。落盘的起点与它不同有三种来由：
-// 时间越过了边界（正常滚动）、重置日改了（SetResetDay）、时区改了（起点按旧时区落盘）。三种都按同一规则收敛到应当的
-// 起点，周期量按分钟桶重算：
+// 周期起点应当是按节点当前的周期规则算出的、不晚于 now 的最近边界（PeriodStart）。落盘的起点与它不同有三种来由：
+// 时间越过了边界（正常滚动）、周期规则改了（SetSchedule：重置日、重置时刻或计费时区）、hub 时区改了（没设计费时区的
+// 节点起点按旧时区落盘）。三种都按同一规则收敛到应当的起点，周期量按分钟桶重算（端点不在整点上时两端按分钟读，见
+// Storage.NetBytesBetween）：
 //   - 应当的起点晚于落盘起点：新周期 [want, now) 的量取桶的和，旧周期的入账与校正不再算数（校正断言的是旧区间的用量）。
 //     正常滚动时这个和为 0：Account 先滚动再入账、再进桶，边界之后第一次触碰之前没有任何上报进过新周期的桶。
 //     连续错过多个周期时直接跳到 now 所在的周期——中间周期的用量没有载体，本来就丢了。
-//   - 应当的起点早于落盘起点，且落盘起点在当前重置日与时区下不是边界：只有重置日或时区改了才会这样，周期延长，
+//   - 应当的起点早于落盘起点，且落盘起点在当前周期规则下不是边界：只有周期规则或时区改了才会这样，周期延长，
 //     旧周期的入账与校正仍整个落在新周期内，只把 [want, old) 的桶量加上；这段桶量当时已记进总量，总量仍不小于周期量。
 //   - 应当的起点早于落盘起点，但落盘起点仍是当前配置下的边界：配置没变，是墙钟回拨越过了边界。保持原状：延长会把
 //     上一周期的桶量并进来、再次越过边界时又用桶和替掉这个周期的入账与校正；不动则起点留在未来，告警引擎对这样的
@@ -184,8 +196,8 @@ const backfillTimeout = 10 * time.Second
 // 桶的和不含 hub 重启后首报与跨离线 TTL 的增量，也不含校正（Storage.NetBytesBetween），重算后的周期量不大于账本本会
 // 记到的量，差额由 Adjust 校正。读桶失败时：起点往后挪按 0 起算并记日志——不滚动会让后续入账继续记进旧周期，而那些
 // 增量到下一次重算时未必已刷进桶；起点往前挪保持原状、下次触碰重试——旧周期的入账本来就整个落在新周期内，不会丢。
-func (b *Book) rolled(ctx context.Context, nodeID int64, s State, day int, now time.Time) (State, bool) {
-	want := PeriodStart(now, day, b.tz)
+func (b *Book) rolled(ctx context.Context, nodeID int64, s State, sched Schedule, now time.Time) (State, bool) {
+	want := PeriodStart(now, sched)
 	if want.Equal(s.PeriodStart) {
 		return s, false
 	}
@@ -200,7 +212,7 @@ func (b *Book) rolled(ctx context.Context, nodeID int64, s State, day int, now t
 		s.PeriodStart, s.PeriodRx, s.PeriodTx = want, max(rx, 0), max(tx, 0)
 		return s, true
 	}
-	if PeriodStart(s.PeriodStart, day, b.tz).Equal(s.PeriodStart) {
+	if PeriodStart(s.PeriodStart, sched).Equal(s.PeriodStart) {
 		return s, false
 	}
 	rx, tx, err := b.st.NetBytesBetween(ctx, nodeID, want, s.PeriodStart)
@@ -213,18 +225,18 @@ func (b *Book) rolled(ctx context.Context, nodeID int64, s State, day int, now t
 }
 
 func (b *Book) roll(ctx context.Context, nodeID int64, e *entry, now time.Time) {
-	if next, changed := b.rolled(ctx, nodeID, e.State, b.day(nodeID), now); changed {
+	if next, changed := b.rolled(ctx, nodeID, e.State, b.schedule(nodeID), now); changed {
 		e.State, e.dirty = next, true
 	}
 }
 
 func (b *Book) view(nodeID int64, s State) Entry {
-	day := b.day(nodeID)
-	return Entry{State: s, ResetDay: day, NextReset: NextResetAfter(s.PeriodStart, day, b.tz)}
+	sched := b.schedule(nodeID)
+	return Entry{State: s, Schedule: sched, PreviousStart: PeriodStart(s.PeriodStart.Add(-time.Nanosecond), sched), NextReset: NextResetAfter(s.PeriodStart, sched)}
 }
 
 func (b *Book) fresh(nodeID int64, now time.Time) State {
-	return State{PeriodStart: PeriodStart(now, b.day(nodeID), b.tz)}
+	return State{PeriodStart: PeriodStart(now, b.schedule(nodeID))}
 }
 
 // Account 入账一次上报：返回可供分钟桶使用的增量；false 表示本次只换基线或缺读数。
@@ -350,7 +362,7 @@ func (b *Book) Get(nodeID int64) (Entry, bool) {
 	return b.view(nodeID, e.State), true
 }
 
-// View 是每个节点都有的视图：没有条目的节点得到零用量与按重置日算出的当前周期边界，
+// View 是每个节点都有的视图：没有条目的节点得到零用量与按周期规则算出的当前周期边界，
 // 不创建条目。hub 对从未上报的节点确实累计了 0 字节，这与"无读数"不同。
 func (b *Book) View(nodeID int64) Entry {
 	if e, ok := b.Get(nodeID); ok {
@@ -362,7 +374,7 @@ func (b *Book) View(nodeID int64) Entry {
 	return b.view(nodeID, b.fresh(nodeID, now))
 }
 
-// Committed 原样复制已提交观测，不按当前重置日滚动。Load、成功的 Flush、Adjust、Commit
+// Committed 原样复制已提交观测，不按当前周期规则滚动。Load、成功的 Flush、Adjust、Commit
 // 是唯一发布点；告警引擎另检查周期有效性，未提交的清零不能造成恢复事件。
 func (b *Book) Committed() map[int64]State {
 	b.mu.Lock()
@@ -386,7 +398,7 @@ func (b *Book) Commit(ctx context.Context, nodeID int64) (Entry, error) {
 	if e == nil {
 		e = &entry{State: b.fresh(nodeID, b.clk.Now())}
 	}
-	next, _ := b.rolled(ctx, nodeID, e.State, b.day(nodeID), b.clk.Now())
+	next, _ := b.rolled(ctx, nodeID, e.State, b.schedule(nodeID), b.clk.Now())
 	written, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
 	if err != nil {
 		return Entry{}, err
@@ -399,12 +411,12 @@ func (b *Book) Commit(ctx context.Context, nodeID int64) (Entry, error) {
 	return b.view(nodeID, next), nil
 }
 
-// SetResetDay 只更新配置。周期起点在下一次入账、读取或刷出时按新日子重算（rolled）：起点往后挪时新周期的量按
+// SetSchedule 只更新配置。周期起点在下一次入账、读取或刷出时按新规则重算（rolled）：起点往后挪时新周期的量按
 // 分钟桶重算，往前挪时原周期量加上起点之间的桶量。
-func (b *Book) SetResetDay(nodeID int64, day int) {
+func (b *Book) SetSchedule(nodeID int64, c store.TrafficSchedule) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.resetDay[nodeID] = day
+	b.schedules[nodeID] = c
 }
 
 func record(nodeID int64, s State) store.TrafficRecord {
@@ -429,16 +441,12 @@ func (b *Book) Adjust(ctx context.Context, nodeID int64, periodRx, periodTx uint
 	if e == nil {
 		e = &entry{State: b.fresh(nodeID, now)}
 	}
-	next, _ := b.rolled(ctx, nodeID, e.State, b.day(nodeID), now)
+	next, _ := b.rolled(ctx, nodeID, e.State, b.schedule(nodeID), now)
 	next.TotalRx = satAdd(max(next.TotalRx-next.PeriodRx, 0), rx)
 	next.TotalTx = satAdd(max(next.TotalTx-next.PeriodTx, 0), tx)
 	next.PeriodRx, next.PeriodTx = rx, tx
-	written, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
-	if err != nil {
+	if err := b.st.AdjustTraffic(ctx, record(nodeID, next)); err != nil {
 		return Entry{}, err
-	}
-	if len(written) == 0 {
-		return Entry{}, store.ErrNotFound
 	}
 	e.State, e.dirty = next, false
 	e.committed = &next
@@ -451,7 +459,7 @@ func (b *Book) Forget(nodeID int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.entries, nodeID)
-	delete(b.resetDay, nodeID)
+	delete(b.schedules, nodeID)
 }
 
 // Flush 判定周期滚动并把脏条目一次写库。写失败时把这些条目重新标脏，下一轮重试；

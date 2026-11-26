@@ -5,6 +5,7 @@ import { Link, useLocation, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
+import { Missing } from "../components/Bar";
 import { CountryBadge } from "../components/CountryBadge";
 import { DailyTraffic, useDailyTraffic } from "../components/DailyTraffic";
 import { DiskMounts } from "../components/DiskMounts";
@@ -18,12 +19,13 @@ import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { useHubTimeZone } from "../api/useHubTimeZone";
 import { useNodeList } from "../api/useNodeList";
+import { useAlertRules } from "../api/useAlertRules";
 import { liveStatus, neverReported } from "../lib/adminStatus";
 import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { ago, bytes, dateTime } from "../lib/format";
 import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
-import { resetDayClamps, trafficDetail, trafficText } from "../lib/traffic";
+import { periodBreakdown, resetRuleText, trafficDetail, trafficText } from "../lib/traffic";
 import { laggingNode } from "../lib/lagging";
 import { NodeEditor } from "./NodeEditor";
 
@@ -47,7 +49,7 @@ export function NodeDetail() {
   const tags = useQuery(AdminService.method.listTags, {}, { enabled: validId });
   // 逐盘容量只在概览 tab 显示，只在那里轮询；与快照同一节奏，hub 也不会比上报间隔更新得更快。
   const disks = useQuery(AdminService.method.getNodeDisks, { nodeId }, { enabled: validId && tab === "overview", refetchInterval: POLL_MS });
-  const rules = useQuery(AdminService.method.listAlertRules, {}, { enabled: validId && tab === "events" });
+  const rules = useAlertRules({ enabled: validId && tab === "events" });
   const channels = useQuery(AdminService.method.listNotifyChannels, {}, { enabled: validId && tab === "events" });
   // 流量响应同时携带历史窗口要用的 hub now；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
@@ -55,7 +57,7 @@ export function NodeDetail() {
   const timeZone = useHubTimeZone();
   const history = useHistory(ADMIN_HISTORY, nodeId, validId && traffic.data ? Number(traffic.data.now) : undefined, timeZone);
   const nodeTraffic = traffic.data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
-  const daily = useDailyTraffic(nodeId, nodeTraffic?.periodStart, traffic.data ? Number(traffic.data.now) : undefined, validId && tab === "traffic");
+  const daily = useDailyTraffic(nodeId, nodeTraffic?.previousPeriodStart, traffic.data ? Number(traffic.data.now) : undefined, validId && tab === "traffic");
   // 事件 tab 才取事件：它是低频内容，不该随每次打开详情多发一条请求。
   const events = useAlertEvents(validId && tab === "events" ? nodeId : null);
   const [editor, setEditor] = useState<HTMLElement | null>(null);
@@ -88,7 +90,7 @@ export function NodeDetail() {
         </> : time.loading}
       </>}
       {tab === "traffic" && <>
-        {nodeTraffic && traffic.data && <DailyTraffic response={daily.data} traffic={nodeTraffic} timeZone={traffic.data.timezone} now={Number(traffic.data.now)} />}
+        {nodeTraffic && traffic.data && <DailyTraffic response={daily.data} traffic={nodeTraffic} now={Number(traffic.data.now)} />}
         <TrafficCard nodeId={nodeId} data={traffic.data} />
       </>}
       {tab === "diagnostics" && (gate.ready && node ? <>
@@ -161,8 +163,21 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
     },
   });
   const t = data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
-  const timeZone = data?.timezone;
-  if (!t) return null;
+  if (!data) return null;
+  // GetTraffic 已到达但响应里没有该节点的流量记录时显式标出无读数，不隐藏整张卡，也不开放无法提交基线的校正表单。
+  if (!t) {
+    return (
+      <div className="card">
+        <h2>流量</h2>
+        <dl className="facts">
+          <dt>本周期</dt><dd><Missing /></dd>
+          <dt>本周期上下行</dt><dd><Missing /></dd>
+          <dt>总量</dt><dd><Missing /></dd>
+        </dl>
+      </div>
+    );
+  }
+  const breakdown = periodBreakdown(t);
   // 编辑框首次出现时预填当前值；之后由用户输入驱动。
   const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
   const rx = toBytes(form.rx);
@@ -176,9 +191,17 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
       <h2>流量</h2>
       <dl className="facts">
         <dt>本周期</dt><dd><span className="num">{trafficText(t)}</span> <span className="muted">{trafficDetail(t)}</span></dd>
-        <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
-        <dt>周期起点</dt><dd>{dateTime(t.periodStart, timeZone)}</dd>
-        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, timeZone)}（每月 {t.resetDay} 日{resetDayClamps(t.resetDay) ? "，不足该日的月份取最后一日" : ""}，{timeZone}）</dd>
+        <dt>本周期上下行</dt>
+        <dd>
+          <span className="num">↓ {breakdown.rx}</span> <span className="muted">下行{breakdown.rxNote ? `（${breakdown.rxNote}）` : ""}</span>
+          {" · "}
+          <span className="num">↑ {breakdown.tx}</span> <span className="muted">上行{breakdown.txNote ? `（${breakdown.txNote}）` : ""}</span>
+          {breakdown.note && <> <span className="muted">（{breakdown.note}）</span></>}
+        </dd>
+        <dt>总量</dt><dd className="num">↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
+        {/* 周期按节点的计费时区（t.timezone，没设时是 hub 的 --timezone）判定，起点与下次重置也按它显示。 */}
+        <dt>周期起点</dt><dd>{dateTime(t.periodStart, t.timezone)}</dd>
+        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, t.timezone)}（{resetRuleText(t)}）</dd>
       </dl>
       <form onSubmit={onSubmit} className="row">
         <label>本周期下行 (GiB)<input value={form.rx} onChange={(e) => setDraft({ ...form, rx: e.target.value })} inputMode="decimal" /></label>

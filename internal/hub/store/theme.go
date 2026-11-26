@@ -36,9 +36,10 @@ var ErrThemeInUse = errors.New("theme version is current or previous")
 var ErrThemeContentMissing = errors.New("theme has no files; upload the original package again")
 
 // 所有在线元数据、选择与文件写者经此入口；先提交后递增，读者不会将旧内容标成新代数。
-// 迁移发生在 Open 返回前，离线恢复要求 hub 停机，原包备份状态不影响托管内容。
-func (s *Store) writeTheme(ctx context.Context, fn func(*sql.Tx) error) error {
-	if err := s.write(ctx, fn); err != nil {
+// 迁移发生在 Open 返回前，离线恢复要求 hub 停机，原包备份状态不影响托管内容。每个写者都是一次面板操作，按 target
+// 留操作记录。
+func (s *Store) writeTheme(ctx context.Context, target ChangeTarget, fn func(*sql.Tx) error) error {
+	if err := s.writeChange(ctx, target, fn); err != nil {
 		return err
 	}
 	s.themeGen.Add(1)
@@ -58,7 +59,7 @@ func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, conten
 	}
 	t.Digest = fmt.Sprintf("%x", sha256.Sum256(content))
 	var out Theme
-	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
+	err := s.writeTheme(ctx, ChangeTarget{Action: ActionInstallTheme, ResourceKey: t.ID}, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM theme WHERE id=?)", t.ID).Scan(&exists); err != nil {
 			return err
@@ -290,7 +291,7 @@ func (s *Store) EnableTheme(ctx context.Context, id, digest string) error {
 	if (id == "") != (digest == "") {
 		return ErrNotFound
 	}
-	return s.writeTheme(ctx, func(tx *sql.Tx) error {
+	return s.writeTheme(ctx, ChangeTarget{Action: ActionEnableTheme, ResourceKey: id}, func(tx *sql.Tx) error {
 		if id != "" {
 			t, err := scanTheme(tx.QueryRow(themeSelect+" WHERE v.theme_id=? AND v.digest=?", id, digest))
 			if err != nil {
@@ -317,7 +318,7 @@ func (s *Store) EnableTheme(ctx context.Context, id, digest string) error {
 }
 
 func (s *Store) DeleteThemeVersion(ctx context.Context, id, digest string) error {
-	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
+	err := s.writeTheme(ctx, ChangeTarget{Action: ActionDeleteThemeVersion, ResourceKey: id}, func(tx *sql.Tx) error {
 		t, err := scanTheme(tx.QueryRow(themeSelect+" WHERE v.theme_id=? AND v.digest=?", id, digest))
 		if err != nil {
 			return err
@@ -342,7 +343,7 @@ func (s *Store) DeleteThemeVersion(ctx context.Context, id, digest string) error
 // 整主题删除是显式卸载；与版本清理不同，它同时撤销该主题的全站选择。
 // 当前引用被删除时回到内置页，其他主题的回滚引用不受影响。
 func (s *Store) DeleteTheme(ctx context.Context, id string) error {
-	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
+	err := s.writeTheme(ctx, ChangeTarget{Action: ActionDeleteTheme, ResourceKey: id}, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM theme WHERE id=?)", id).Scan(&exists); err != nil {
 			return err

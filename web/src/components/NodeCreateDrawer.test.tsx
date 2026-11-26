@@ -38,3 +38,17 @@ it("说明随已出租切换：未勾仍是安装命令，勾了就不给安装�
   fireEvent.click(screen.getByRole("checkbox", { name: "已出租（这台机器不装 agent）" }));
   expect(dialog).toHaveAccessibleDescription(installHint);
 });
+
+// 计费时区留空不带（缺席即沿用 hub 的 --timezone）；填了才带去首尾空白后的值；浏览器不认得的名字不让创建。
+it("计费时区填了才带，去首尾空白；浏览器不认得的名字禁止创建", () => {
+  const onCreate = vi.fn();
+  render(<NodeCreateDrawer opener={opener()} pending={false} error={null} onClose={() => {}} onCreate={onCreate} />);
+  fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "edge" } });
+  const zone = screen.getByRole("combobox", { name: "计费时区 新节点" });
+  fireEvent.change(zone, { target: { value: "Mars/Olympus" } });
+  expect(screen.getByRole("button", { name: "创建" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("浏览器不认得这个时区名");
+  fireEvent.change(zone, { target: { value: " America/New_York " } });
+  fireEvent.click(screen.getByRole("button", { name: "创建" }));
+  expect(onCreate).toHaveBeenLastCalledWith({ name: "edge", billingTimezone: "America/New_York" });
+});

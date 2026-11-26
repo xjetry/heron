@@ -54,7 +54,7 @@ func seedAdminSecurity(t *testing.T, db, data string) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err := st.CommitAdminSecurity(ctx, before, data, false, nil, now, now, ""); err != nil {
+	if err := st.CommitAdminSecurity(ctx, 0, before, data, false, nil, now, now, ""); err != nil {
 		t.Fatal(err)
 	}
 }

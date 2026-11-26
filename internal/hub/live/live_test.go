@@ -93,6 +93,40 @@ func TestWallClockSetBackLandsInEarlierMinute(t *testing.T) {
 	}
 }
 
+// 墙钟快过一阵又被校回：快钟时打点的桶起点晚于 metric.LatestMinute，下一次 Flush 就交出去（由写入口按同一个上界拒绝），
+// 不留到它标的那一分钟到来、与那时的真实上报并进同一个桶。当前分钟与其后一分钟仍开着——后者是不足一分钟的向后校时
+// 留下的真实数据。
+func TestFlushHandsOverBucketsAheadOfTheClock(t *testing.T) {
+	clk := clock.NewFake(at(600 + 8*3600))
+	l := New(clk, 30*time.Second)
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(90)})
+	l.AddProbe(1, clk.Now(), 7, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_RttUs{RttUs: 9000}})
+	clk.SetWall(at(661))
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(20)})
+	clk.SetWall(at(630))
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(10)})
+	l.AddProbe(1, clk.Now(), 7, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_RttUs{RttUs: 100}})
+	batch := l.Flush()
+	if len(batch.Rows) != 1 || batch.Rows[0].TS != 600+8*3600 || batch.Rows[0].Bucket.Sum[metric.Index("cpu")] != 90 {
+		t.Fatalf("rows=%+v, want only the bucket stamped by the fast clock", batch.Rows)
+	}
+	if len(batch.Probes) != 1 || batch.Probes[0].TS != 600+8*3600 || batch.Probes[0].Bucket.RttSumUs != 9000 {
+		t.Fatalf("probes=%+v, want only the bucket stamped by the fast clock", batch.Probes)
+	}
+	clk.SetWall(at(720))
+	batch = l.Flush()
+	got := map[int64]float64{}
+	for _, r := range batch.Rows {
+		got[r.TS] = r.Bucket.Sum[metric.Index("cpu")]
+	}
+	if len(batch.Rows) != 2 || got[600] != 10 || got[660] != 20 {
+		t.Fatalf("rows=%v, want the current minute and the one within the tolerance to close normally", got)
+	}
+	if len(batch.Probes) != 1 || batch.Probes[0].TS != 600 || batch.Probes[0].Bucket.RttSumUs != 100 {
+		t.Fatalf("probes=%+v", batch.Probes)
+	}
+}
+
 func TestGetReflectsLatestReport(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)

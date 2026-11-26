@@ -63,18 +63,22 @@ func (f NodeFilter) where() (string, []any, error) {
 	return tagFilterWhere(len(folds)), append(folds, len(folds)), nil
 }
 
-// NodeList 是一次 ReadNodeList 的结果。Revision 与 Nodes 读自同一个只读事务（WAL 下事务的第一次读定下快照），
-// 所以 Nodes 恰是 Revision 时刻的内容：调用方拿 Revision 去问"之后变没变"，不会因版本号比数据新而漏掉一次变化。
+// NodeList 是一次 ReadNodeList 的结果。Revision、BillingTimezones 与 Nodes 读自同一个只读事务（WAL 下事务的第一次读
+// 定下快照），所以 Nodes 恰是 Revision 时刻的内容：调用方拿 Revision 去问"之后变没变"，不会因版本号比数据新而漏掉一次变化。
 type NodeList struct {
 	Revision uint64
-	Nodes    []Node
-	// Unchanged 为真时没有读节点行（Nodes 为 nil）：unchanged(Revision) 返回了真。
+	// BillingTimezones 是全部节点（不按调用方可见范围裁剪）用到的计费时区名，去重、升序，空串（沿用 hub 时区）有节点用
+	// 时也在内。节点资料里按"今天"算出的值（billing.days_left）随这些时区各自的日期变化，而 Revision 只计库的改动：
+	// 调用方把每个时区的今天拼进它交给客户端的版本，任何一个时区换了日期，版本就变。
+	BillingTimezones []string
+	Nodes            []Node
+	// Unchanged 为真时没有读节点行（Nodes 为 nil）：unchanged(Revision, BillingTimezones) 返回了真。
 	Unchanged bool
 }
 
-// ReadNodeList 读节点资料版本与按 filter、调用方可见范围筛出的节点。unchanged 在读出版本之后、读节点行之前调用
-// （nil 视为恒假），返回真时不读节点行：条件读取省下整份查询与序列化。
-func (s *Store) ReadNodeList(ctx context.Context, filter NodeFilter, unchanged func(revision uint64) bool) (NodeList, error) {
+// ReadNodeList 读节点资料版本、计费时区集合与按 filter、调用方可见范围筛出的节点。unchanged 在读出前两者之后、读节点行
+// 之前调用（nil 视为恒假），返回真时不读节点行：条件读取省下整份查询与序列化。
+func (s *Store) ReadNodeList(ctx context.Context, filter NodeFilter, unchanged func(revision uint64, timezones []string) bool) (NodeList, error) {
 	where, args, err := filter.where()
 	if err != nil {
 		return NodeList{}, err
@@ -89,12 +93,16 @@ func (s *Store) ReadNodeList(ctx context.Context, filter NodeFilter, unchanged f
 	if err != nil {
 		return NodeList{}, err
 	}
-	if unchanged != nil && unchanged(rev) {
-		return NodeList{Revision: rev, Unchanged: true}, nil
+	zones, err := scanColumn[string](tx.QueryContext(ctx, "SELECT DISTINCT billing_timezone FROM node ORDER BY billing_timezone"))
+	if err != nil {
+		return NodeList{}, err
+	}
+	if unchanged != nil && unchanged(rev, zones) {
+		return NodeList{Revision: rev, BillingTimezones: zones, Unchanged: true}, nil
 	}
 	nodes, err := queryNodesTx(ctx, tx, where, args...)
 	if err != nil {
 		return NodeList{}, err
 	}
-	return NodeList{Revision: rev, Nodes: nodes}, nil
+	return NodeList{Revision: rev, BillingTimezones: zones, Nodes: nodes}, nil
 }

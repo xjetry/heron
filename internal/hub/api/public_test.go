@@ -260,11 +260,13 @@ var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 	"heron.v1.PublicNetworkInfo":      {"ipv4", "ipv6"},
 	"heron.v1.PublicAddressDetection": {"state"},
 	"heron.v1.PublicBilling":          {"price", "currency", "billing_cycle", "expires_on", "days_left"},
-	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "load1", "load5", "load15", "load1_per_core", "mem_total", "mem_used", "swap_total", "swap_used",
+	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "cpu_softirq_pct", "load1", "load5", "load15", "load1_per_core", "mem_total", "mem_used", "swap_total", "swap_used",
 		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "disk_read_bps", "disk_write_bps", "tcp_conns", "udp_conns", "procs", "uptime_s", "tcp_active_opens_ps", "tcp_passive_opens_ps", "tcp_out_segs_ps", "tcp_retrans_segs_ps",
 		// 最满盘使用率只是一个百分比；是哪块盘（挂载路径）只经管理端的 GetNodeDisks 给出，不在公开面上。
 		"disk_max_used_pct"},
-	"heron.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day", "quota_bytes", "quota_mode", "quota_used_bytes", "quota_used_pct"},
+	// 重置时刻、周期时区与上一周期起点随 reset_day 一起公开：它们一起才说清周期在哪一刻重置，时区名是 IANA 名或 hub 的
+	// --timezone，与 GetSite.timezone 同一类公开信息；上一周期起点与 next_reset_at 一样由公开的周期规则推出。
+	"heron.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "previous_period_start", "next_reset_at", "reset_day", "reset_minute", "timezone", "quota_bytes", "quota_mode", "quota_used_bytes", "quota_used_pct"},
 	"heron.v1.QueryMetricsResponse": {"level", "step_s", "ts", "series", "coverage", "coverage_summary"},
 	"heron.v1.PointCoverage":        {"minutes", "observed", "observed_reported"},
 	"heron.v1.CoverageSummary":      {"eligible_minutes", "observed_minutes", "observed_reported_minutes", "coverage_start"},

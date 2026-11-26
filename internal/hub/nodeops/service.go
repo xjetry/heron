@@ -1,20 +1,22 @@
 // Package nodeops 编排节点生命周期：建、改、删、轮换 token、批量改标签，以及删除之后清理进程内状态。
 //
 // 一个节点的状态分在几处：库（节点行、标签、计费、token hash），auth 的 token 映射，探测任务注册表的覆盖索引，
-// 告警引擎的规则作用域与状态，流量账本的重置日与累计，ingest 名下的在线快照、待刷出分钟桶、更新状态与 facts 摘要。
+// 告警引擎的规则作用域与状态，流量账本的周期规则与累计，ingest 名下的在线快照、待刷出分钟桶、更新状态与 facts 摘要。
 // 每个协作者各自保证"先提交库、成功后才改自己的内存"；本包负责的是跨协作者的那部分：哪些写要串行、哪些
 // 内存更新必须跟在哪次提交之后、哪些慢操作不能挡住别的节点。
 //
-// mu（节点编辑锁）的不变式：流量账本里的重置日与库里的 traffic_reset_day 一致，ingest 的逐族探测开关与库里的手填
-// 出口地址一致，节点删除并 Forget 之后不再为它建内存状态。Update 在 mu 下完成"库提交 → SetResetDay、SetAddressPins
-// → 流量 Commit"，Delete 在 mu 下提交库删除；于是
-//   - 两个 Update 的"提交、改内存"不交错，内存里的重置日是最后提交的那一次；
-//   - Delete 提交之后才开始的 Update 在库层得到 ErrNotFound，不会调 SetResetDay，锁外的 Forget 不会被它重建；
-//   - Delete 提交之前已提交的 Update 在放锁前已改完内存，Forget 在 Delete 放锁之后才运行，排在它后面。
+// mu（节点编辑锁）的不变式：流量账本里的周期规则（store.TrafficSchedule：重置日、重置时刻、计费时区）与库里的三列
+// 一致，ingest 的逐族探测开关与库里的手填出口地址一致，节点删除并 Forget 之后不再为它建内存状态。Update 在 mu 下完成
+// "库提交 → SetSchedule、SetAddressPins → 流量 Commit"，Create 在 mu 下完成"库提交 → SetSchedule"，Delete 在 mu 下
+// 提交库删除；于是
+//   - 两个写的"提交、改内存"不交错，内存里的周期规则是最后提交的那一次；
+//   - Delete 提交之后才开始的 Update 在库层得到 ErrNotFound，不会调 SetSchedule，锁外的 Forget 不会被它重建；
+//   - Delete 提交之前已提交的 Create 或 Update 在放锁前已改完内存，Forget 在 Delete 放锁之后才运行，排在它后面。
 //
 // mu 之下会去取的别包的锁与不成环的依据见 internal/hub 的包注释（doc.go）。
 //
-// Create 与 RotateToken 不取 mu：二者都不写流量账本，与 mu 守护的不变式无关；token 映射与库的一致由 auth.mutMu 保证。
+// RotateToken 不取 mu：它不写流量账本，与 mu 守护的不变式无关；token 映射与库的一致由 auth.mutMu 保证。Create 取 mu：
+// 新节点可以带计费时区建，账本要在提交后登记它的周期规则，否则在下一次编辑之前账本按缺省（hub 时区）算它的周期。
 //
 // 慢操作都在 mu 之外：到期扫描与流量评估要等 alert.writeMu（离线巡检、探测评估、日界扫描都可能正持有）再做一整轮
 // 写回；Forget 要等在途上报与评估退出。持 mu 等它们只会挡住其它节点的编辑与删除。
@@ -53,13 +55,13 @@ type Alerts interface {
 
 // Traffic 是流量账本，实现是 traffic.Book。
 type Traffic interface {
-	SetResetDay(nodeID int64, day int)
+	SetSchedule(nodeID int64, c store.TrafficSchedule)
 	Commit(ctx context.Context, nodeID int64) (traffic.Entry, error)
 }
 
 // NodeState 是上报侧的进程内状态持有者，实现是 ingest.Service。它的 Forget 是上报侧节点状态的唯一清单：
 // 任务注册表的覆盖索引、更新状态、在线快照、流量账本、限流桶、facts 与任务摘要、逐族探测开关、待刷出的分钟桶。
-// SetAddressPins 发布已提交的手填出口地址，Update 在 mu 下、库提交成功之后调用，与 SetResetDay 同一口径。
+// SetAddressPins 发布已提交的手填出口地址，Update 在 mu 下、库提交成功之后调用，与 SetSchedule 同一口径。
 type NodeState interface {
 	SetAddressPins(nodeID int64, ipv4Pin, ipv6Pin string)
 	Forget(nodeID int64)
@@ -117,7 +119,15 @@ func New(deps Deps) *Service {
 // 带着计费建节点与 Update 改计费同理由立刻扫描一次：新建即过期或在提醒窗口内的节点不等到零点才触发。
 // 节点已提交，扫描失败只记日志，日界扫描会补上。新节点此前没有状态，也不存在被裁剪的作用域，不经 UpdateScope。
 func (s *Service) Create(ctx context.Context, spec store.NewNode) (int64, string, error) {
+	s.mu.Lock()
 	id, tok, err := s.creds.CreateNode(ctx, spec)
+	if err == nil {
+		// 重置日与重置时刻建节点时不写、取列默认值，计费时区取建节点时给的值：与库里新行的三列相同。
+		schedule := store.DefaultTrafficSchedule
+		schedule.Timezone = spec.BillingTimezone
+		s.traffic.SetSchedule(id, schedule)
+	}
+	s.mu.Unlock()
 	if err != nil {
 		return 0, "", err
 	}
@@ -144,7 +154,7 @@ func (s *Service) Update(ctx context.Context, id int64, edit store.NodeEdit) err
 	})
 	if err == nil {
 		// 只有库提交成功才改内存；mu 跨越库写入与内存更新并与删除共用，失败或并发请求都不能使两者分叉。
-		s.traffic.SetResetDay(id, edit.TrafficResetDay)
+		s.traffic.SetSchedule(id, store.TrafficSchedule{Day: edit.TrafficResetDay, Minute: edit.TrafficResetMinute, Timezone: edit.BillingTimezone})
 		// 库里存的是规范形，开关只看空与非空，规范化不改变它，所以按 edit 发布与按库发布相同。
 		s.state.SetAddressPins(id, edit.IPv4Pin, edit.IPv6Pin)
 		if trafficChanged {
@@ -201,7 +211,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	// 删除已提交，Update 在库层得到不存在后不会再调 SetResetDay，锁外 Forget 不会与编辑交错重建流量状态。
+	// 删除已提交，Update 在库层得到不存在后不会再调 SetSchedule，锁外 Forget 不会与编辑交错重建流量状态。
 	// 持 mu 等待在途上报与评估只会阻塞其它节点的编辑，因此清理放在锁外。
 	s.Forget(id)
 	return nil
@@ -210,9 +220,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // Forget 清掉一个已不在库里的节点的全部进程内状态，是这份清理的唯一实现。
 //
 // 前提：节点的库删除已提交、token 已从 auth 的映射里撤销（之后不再有该节点的上报能通过鉴权），且库删除不与任何
-// Update 的"库提交 → 改内存"交错。Delete 在 mu 下提交删除，三条都由它保证；库外删除（离线子命令）由 Reloader
-// 经 forgetRemoved 调用，后两条由那里保证，否则一次在库删除之前提交的 Update 可能在 Forget 之后才调 SetResetDay，
-// 重建已删节点的重置日。
+// Create 或 Update 的"库提交 → 改内存"交错。Delete 在 mu 下提交删除，三条都由它保证；库外删除（离线子命令）由
+// Reloader 经 forgetRemoved 调用，后两条由那里保证，否则一次在库删除之前提交的 Create 或 Update 可能在 Forget 之后
+// 才调 SetSchedule，重建已删节点的周期规则。
 //
 // 调用方不得持 mu 或任何协作者的锁：上报侧的清理要等在途上报与写协程回调退出，告警侧要等 writeMu（见各自的 Forget）。
 // 先清上报侧、后清告警：上报侧返回后，该节点不再有观测进入在线快照与待刷出队列（见 ingest.Service.Forget），
@@ -224,10 +234,11 @@ func (s *Service) Forget(id int64) {
 }
 
 // forgetRemoved 清掉库外删除的节点的进程内状态，ids 来自 Reloader：token 映射已按库重建、这些节点已不在映射里，
-// Forget 的前两条前提成立。第三条——库删除不与 Update 的"库提交 → 改内存"交错——在这里补上：库外删除不经 mu，
-// 一次在库删除之前提交的 Update 此刻可能仍持着 mu、尚未调 SetResetDay。先取一次 mu 再放：库删除在调用之前已提交
-// （Reloader 已读到它），所以屏障之前持过 mu 的 Update 已改完内存，屏障之后才取得 mu 的 Update 的库写在库删除之后，
-// 在库层得到 ErrNotFound、不改内存；随后的 Forget 不会被任何一个 Update 重建。
+// Forget 的前两条前提成立。第三条——库删除不与 Create、Update 的"库提交 → 改内存"交错——在这里补上：库外删除不经
+// mu，一次在库删除之前提交的 Create 或 Update 此刻可能仍持着 mu、尚未调 SetSchedule。先取一次 mu 再放：库删除在调用
+// 之前已提交（Reloader 已读到它），所以屏障之前持过 mu 的写已改完内存，屏障之后才取得 mu 的 Update 的库写在库删除
+// 之后，在库层得到 ErrNotFound、不改内存（屏障之后的 Create 建的是另一个 id，id 永不复用）；随后的 Forget 不会被任何
+// 一个写重建。
 //
 // 屏障取一次而不是让 Forget 每次自取：Delete 调 Forget 时屏障已由它自己的持锁区间给出，Forget 自取只是多一次争用。
 // Forget 不在 mu 之下做，理由见 Forget。

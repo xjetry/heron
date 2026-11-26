@@ -428,7 +428,7 @@ func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
 		}
 		signed[i] = int64(id)
 	}
-	return s.reorder(ctx, "probe_task", signed)
+	return s.reorder(ctx, ActionReorderProbeTasks, "probe_task", signed)
 }
 
 // DeleteProbeTask 删任务、分配、标签关联与该任务的证书观测并加版本，并在同一事务里登记 kind=task 的清理作业；
@@ -484,18 +484,21 @@ func (s *Store) ProbeTaskNodeIDs(ctx context.Context, taskID uint64) ([]int64, e
 	return scanIDs(s.r.QueryContext(ctx, coveredNodesQuery, int64(taskID)))
 }
 
-func scanIDs(rows *sql.Rows, err error) ([]int64, error) {
+func scanIDs(rows *sql.Rows, err error) ([]int64, error) { return scanColumn[int64](rows, err) }
+
+// scanColumn 读单列查询的全部行，按行序；rows, err 直接接查询的两个返回值。
+func scanColumn[T any](rows *sql.Rows, err error) ([]T, error) {
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []int64
+	var out []T
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var v T
+		if err := rows.Scan(&v); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		out = append(out, v)
 	}
-	return ids, rows.Err()
+	return out, rows.Err()
 }

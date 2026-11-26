@@ -8,6 +8,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -83,12 +84,9 @@ type Config struct {
 	// HubVersion 原样经 GetSnapshotResponse.hub_version 下发。空串（装配时没传）与 dev 一样
 	// 被面板当作非正式版本：给出 latest 安装命令、不标落后节点。
 	HubVersion string
-	// Location 是 hub 的 --timezone，days_left 按它的日历日算，GetSettings.timezone 下发它的名字；New 要求非 nil，
-	// 且与 Deps.Traffic 的时区是同一个对象。
+	// Location 是 hub 的 --timezone，GetSettings.timezone 下发它的名字，维护静默按它判定；节点没设计费时区时 days_left
+	// 也按它的日历日算（alert.NodeToday）。New 要求非 nil，且与 Deps.Traffic 的 hub 时区是同一个对象。
 	Location *time.Location
-	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
-	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
-	Retention store.Retention
 	// PublicDir 为真时可信目录接管公开页，禁止启用托管主题。
 	PublicDir bool
 	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
@@ -122,6 +120,8 @@ type Service struct {
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
 	access map[string]heronv1.Access
+	// audit 是每个过程的操作记录口径，与 access 同时读出并互相核对（auditTable），之后只读。
+	audit map[string]heronv1.Audit
 
 	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
 	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
@@ -130,7 +130,7 @@ type Service struct {
 	// nodeListEpoch 是本进程的随机纪元，拼进 ListNodesResponse.revision：库里的计数在恢复备份后可能回到旧值，换进程
 	// 即换纪元，旧标签页带来的版本一定对不上，不依赖计数单调。
 	nodeListEpoch string
-	github        *theme.GitHubClient
+	github        themeReleaseClient
 	previewMu     sync.Mutex
 	previews      map[string]themePreviewGrant
 	updateLocal   localUpdateClient
@@ -181,9 +181,6 @@ func New(cfg Config, deps Deps) *Service {
 	if cfg.Heartbeat == nil {
 		panic("api.Config.Heartbeat must be set")
 	}
-	if err := cfg.Retention.Validate(); err != nil {
-		panic("api.Config.Retention: " + err.Error())
-	}
 	if cfg.Geo == nil {
 		panic("api.Config.Geo must be set")
 	}
@@ -217,25 +214,24 @@ func New(cfg Config, deps Deps) *Service {
 	if deps.Log == nil {
 		panic("api.Deps.Log must be set")
 	}
-	// days_left、静默窗口与 GetSettings.timezone 读 cfg.Location，GetTraffic.timezone 与周期边界读账本的时区；面板把
-	// 这几个值放在同一张日历上，两者必须是 serve 装配的同一个 *time.Location，否则周期与日界按不同的区各算各的。
-	if deps.Traffic.Zone() != cfg.Location {
-		panic("api.Config.Location must be the traffic book's zone")
+	// 没设计费时区的节点，days_left 回落到 cfg.Location、周期边界回落到账本的 hub 时区（traffic.BillingZone）；同一节点
+	// 的到期日界与周期必须按同一个区算，所以两者必须是 serve 装配的同一个 *time.Location。
+	if deps.Traffic.HubZone() != cfg.Location {
+		panic("api.Config.Location must be the traffic book's hub zone")
 	}
+	adminService := heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")
+	access := accessTable(adminService)
 	return &Service{
 		cfg: cfg, store: deps.Store, auth: deps.Auth, live: deps.Live, nodes: deps.Nodes, traffic: deps.Traffic, probes: deps.Probes,
 		alerts: deps.Alerts, notifier: deps.Notifier, clk: deps.Clock, log: deps.Log,
 		history:   history{store: deps.Store, probes: deps.Probes, log: deps.Log, gate: newHistoryGate()},
 		heartbeat: cfg.Heartbeat,
-		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
+		access:    access, audit: auditTable(adminService, access),
 		uploading: make(chan struct{}, 1), nodeListEpoch: rand.Text(),
 		github: theme.NewGitHubClient(), previews: make(map[string]themePreviewGrant),
 		updateLocal: update.NewClient("hub"), updateSource: update.NewOfficialSource(),
 	}
 }
-
-// today 是 hub 时区（--timezone）的今天，days_left 以它为基准。
-func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Location) }
 
 // Handler 是 AdminService 的挂载点。三个 connect 处理器挂同一个 Service 与同一个鉴权拦截器，只差解码预算与响应压缩；
 // 请求按路径分给它们：UploadTheme 走大预算，compressed 里的过程走可压缩的那个，其余走小预算、不压缩的那个。生成的
@@ -315,6 +311,19 @@ func invalid(format string, args ...any) error {
 	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(format, args...))
 }
 
+// listLimit 是所有带 limit 的列表共用的裁决：0 取缺省，超过上限返回 InvalidArgument 并点名 limit，不截断。
+// 这些列表要么没有翻页游标，要么调用方按"不满一页即到底"翻页；按上限截断会让请求 1000 条的调用方拿到 500 条后
+// 以为已经取完。
+func listLimit(got uint32, def, maxLimit int) (int, error) {
+	if got == 0 {
+		return def, nil
+	}
+	if int64(got) > int64(maxLimit) {
+		return 0, invalid("limit must be between 1 and %d (0 means %d), got %d", maxLimit, def, got)
+	}
+	return int(got), nil
+}
+
 func notFound(id int64) error {
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("node %d does not exist", id))
 }
@@ -346,6 +355,26 @@ func bearerCredential(h http.Header) (string, bool, error) {
 	return found[0], true, nil
 }
 
+// missingCredential 是既无 Bearer 也无会话 cookie 时的文案，按方法准入指向调用方真正能用的那种凭据。
+// 程序化调用方（AI、脚本）按设计不持有管理员密码：可用 token 的方法若只说"去 Login"，它会被引向一条走不通的路，
+// 而真正缺的常是 Authorization 头被反代剥掉或 scheme 写错。只接受会话的方法反过来要直说 token 不行，免得它换 token 重试。
+// 非 Bearer 的 Authorization 头按 bearerCredential 的口径视为不存在；可用 token 的方法上点出 scheme 不对，不回显头的内容。
+func missingCredential(level heronv1.Access, procedure string, h http.Header) string {
+	var msg string
+	switch level {
+	case heronv1.Access_ACCESS_SESSION:
+		return fmt.Sprintf("no session cookie: %s requires a panel session, call Login first; API tokens cannot call it", procedure)
+	case heronv1.Access_ACCESS_CHANGE:
+		msg = "no credentials: send Authorization: Bearer <API token> whose grant preauthorizes this write (an administrator creates tokens on the panel's API token page), or call Login for a panel session"
+	default:
+		msg = "no credentials: send Authorization: Bearer <API token> (an administrator creates tokens on the panel's API token page), or call Login for a panel session"
+	}
+	if len(h.Values("Authorization")) > 0 {
+		msg += "; the Authorization header present is not a hub credential, API tokens use the Bearer scheme"
+	}
+	return msg
+}
+
 type accessInterceptor struct{ s *Service }
 
 func (s *Service) accessInterceptor() connect.Interceptor { return accessInterceptor{s: s} }
@@ -353,7 +382,8 @@ func (s *Service) accessInterceptor() connect.Interceptor { return accessInterce
 func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	s := i.s
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		level, ok := s.access[req.Spec().Procedure]
+		procedure := req.Spec().Procedure
+		level, ok := s.access[procedure]
 		if !ok {
 			return nil, unauthenticated("unauthenticated")
 		}
@@ -363,6 +393,8 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			scheme: scheme,
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
+		// 写操作记录的发起方：来源与登录锁定、会话来源列同一取法（peer.from 经 --trusted-proxies 解析）。
+		caller := store.Caller{Source: auth.SourceText(peer.from), Method: procedure[strings.LastIndexByte(procedure, '/')+1:]}
 		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401；有效 token 只读 READ，
 		// 写入只能经 CHANGE 再检查具体权限，不能借已有写权限直接调用会话方法。
 		// Login 带 Bearer 也落在 403，但文案不能写成"去开一个面板会话"：token 代替不了密码。
@@ -381,7 +413,7 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			case store.TokenExpired:
 				return nil, unauthenticated(fmt.Sprintf("API token expired at %s; an administrator can extend it with UpdateApiToken or issue a new one", principal.ExpiresAt.UTC().Format(time.RFC3339)))
 			default:
-				return nil, unauthenticated("API token unknown or revoked")
+				return nil, unauthenticated("API token unknown or revoked; an administrator can issue a new one on the panel's API token page")
 			}
 			if level != heronv1.Access_ACCESS_READ && !(level == heronv1.Access_ACCESS_CHANGE && len(principal.Permissions) > 0) {
 				if level == heronv1.Access_ACCESS_LOGIN {
@@ -392,7 +424,9 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			if !principal.AllNodes && !scopedReadAllowed(req.Spec().Procedure) && level != heronv1.Access_ACCESS_CHANGE {
 				return nil, permissionDenied("this method requires a site-wide API token")
 			}
-			return next(store.WithPrincipal(ctx, principal), req)
+			// token 只能调 READ 与 CHANGE：前者不写，后者的记录由类型化变更的回执承担，都不需要直调审计。
+			caller.Kind = store.PrincipalAPIToken
+			return next(store.WithCaller(store.WithPrincipal(ctx, principal), caller), req)
 		}
 		if level == heronv1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。
@@ -400,7 +434,7 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		}
 		candidates := sessionCandidates(req.Header())
 		if len(candidates) == 0 {
-			return nil, unauthenticated("no session cookie; call Login first")
+			return nil, unauthenticated(missingCredential(level, req.Spec().Procedure, req.Header()))
 		}
 		tok, alive, err := s.auth.AuthenticateSession(ctx, candidates)
 		if err != nil {
@@ -412,8 +446,30 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		}
 		// ctx 里放通过校验的那个 token，而不是第一个候选：Logout、撤销当前会话与会话列表的"当前"都读它。
 		// 放第一个候选时，排在前面的无效值会让 Logout 吊销一个不存在的会话，真正在用的会话照旧有效。
-		return next(context.WithValue(ctx, sessionKey{}, tok), req)
+		ctx = context.WithValue(ctx, sessionKey{}, tok)
+		h := auth.HashToken(tok)
+		caller.Kind, caller.Session = store.PrincipalSession, hex.EncodeToString(h[:])
+		ctx = store.WithCaller(ctx, caller)
+		// 审计放在鉴权之后：AuthenticateSession 顺手清理过期会话的写不能认领它。ExecuteChange（ACCESS_CHANGE）由
+		// 类型化变更承担记录，不放直调审计。
+		if level == heronv1.Access_ACCESS_SESSION && s.audit[procedure] == heronv1.Audit_AUDIT_WRITE {
+			return s.audited(ctx, next, req, caller.Method)
+		}
+		return next(ctx, req)
 	}
+}
+
+// audited 给一次会话直调放一份直调审计并执行方法。方法成功返回却没有记录是接线错误——它的主写没经
+// store.writeChange，或副作用之后漏了 RecordOperation——与 ExecuteChange 的零消费同一口径：记 Error 日志点名方法，
+// 回答 Internal，不把一次没留记录的写报告为成功。
+func (s *Service) audited(ctx context.Context, next connect.UnaryFunc, req connect.AnyRequest, method string) (connect.AnyResponse, error) {
+	a := &store.Audit{}
+	resp, err := next(store.WithAudit(ctx, a), req)
+	if err == nil && !a.Recorded() {
+		s.log.Error("audited call returned without recording its operation", "method", method)
+		return nil, internalError("operation was not recorded")
+	}
+	return resp, err
 }
 
 func (i accessInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {

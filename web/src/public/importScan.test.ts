@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, extname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { build } from "vite";
 import { beforeAll, expect, it } from "vitest";
 
@@ -62,4 +63,45 @@ it("同一套检查从面板包看得到管理服务", () => {
   expect(panel.ids.some(isAdminGen)).toBe(true);
   const code = panel.output.filter((o) => o.type === "chunk").map((o) => o.code).join("\n");
   expect(code.includes(descriptorPrefix("admin_pb.ts")), "admin.proto descriptor in the panel bundle").toBe(true);
+});
+
+it("面板与公开包为达到阈值的可压缩资源产出 .gz 与 .br，解压后与原文逐字节一致且跳过已压缩格式", () => {
+  for (const [label, b] of [["public", pub], ["panel", panel]] as const) {
+    const byName = new Map(b.output.map((o) => [o.fileName, o]));
+    const rawOf = (fileName: string): Buffer => {
+      const item = byName.get(fileName);
+      if (!item) throw new Error(`${label}: missing ${fileName}`);
+      if (item.type === "chunk") return Buffer.from(item.code, "utf8");
+      return typeof item.source === "string" ? Buffer.from(item.source, "utf8") : Buffer.from(item.source);
+    };
+
+    const mainJs = b.output.filter((o) => o.type === "chunk" && o.fileName.endsWith(".js"));
+    expect(mainJs.length, `${label}: js chunks`).toBeGreaterThan(0);
+    for (const chunk of mainJs) {
+      const raw = rawOf(chunk.fileName);
+      for (const ext of [".gz", ".br"] as const) {
+        const compressed = rawOf(`${chunk.fileName}${ext}`);
+        expect(compressed.length, `${label}: ${chunk.fileName}${ext} smaller than raw`).toBeLessThan(raw.length);
+        const restored = ext === ".gz" ? gunzipSync(compressed) : brotliDecompressSync(compressed);
+        expect(Buffer.compare(restored, raw), `${label}: ${chunk.fileName}${ext} roundtrip`).toBe(0);
+      }
+    }
+
+    for (const o of b.output) {
+      if (extname(o.fileName) === ".woff2") {
+        expect(byName.has(`${o.fileName}.gz`), `${label}: ${o.fileName}.gz must not exist`).toBe(false);
+        expect(byName.has(`${o.fileName}.br`), `${label}: ${o.fileName}.br must not exist`).toBe(false);
+      }
+      if (o.fileName.endsWith(".gz") || o.fileName.endsWith(".br")) {
+        const ext = o.fileName.endsWith(".gz") ? ".gz" : ".br";
+        const origName = o.fileName.slice(0, -ext.length);
+        const raw = rawOf(origName);
+        const compressed = rawOf(o.fileName);
+        expect(raw.length, `${label}: ${origName} below min compress threshold`).toBeGreaterThanOrEqual(1024);
+        expect(compressed.length, `${label}: ${o.fileName} smaller than raw`).toBeLessThan(raw.length);
+        const restored = ext === ".gz" ? gunzipSync(compressed) : brotliDecompressSync(compressed);
+        expect(Buffer.compare(restored, raw), `${label}: ${o.fileName} roundtrip`).toBe(0);
+      }
+    }
+  }
 });

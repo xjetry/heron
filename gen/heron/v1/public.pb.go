@@ -74,6 +74,7 @@ type PublicSite struct {
 	AdminPath string `protobuf:"bytes,6,opt,name=admin_path,json=adminPath,proto3" json:"admin_path,omitempty"`
 	// hub 实际生效的 --timezone（IANA 名），与 AdminService.GetSettings 的 timezone 同一个值。公开页与主题按它切日历时段
 	// （如晚高峰 20:00–24:00），不按访客浏览器的时区：同一条线路的"晚间"对所有访客是同一段时间。主题 SDK 桥接原样转交。
+	// 节点的流量周期与到期剩余天数按节点自己的计费时区（PublicNode.traffic.timezone），可能与它不同。
 	Timezone      string `protobuf:"bytes,7,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -442,7 +443,8 @@ type PublicBilling struct {
 	BillingCycle BillingCycle `protobuf:"varint,3,opt,name=billing_cycle,json=billingCycle,proto3,enum=heron.v1.BillingCycle" json:"billing_cycle,omitempty"`
 	// 到期日 YYYY-MM-DD；空表示没有到期日。
 	ExpiresOn string `protobuf:"bytes,4,opt,name=expires_on,json=expiresOn,proto3" json:"expires_on,omitempty"`
-	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
+	// 到期日减去今天的天数，今天按节点的计费时区（与同一节点的 PublicNode.traffic.timezone 相同）取日历日；负数是已过期的天数。
+	// 没有到期日、或库里的到期日无法解析时缺失。
 	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -749,8 +751,10 @@ type PublicMetrics struct {
 	TcpRetransSegsPs  *float64 `protobuf:"fixed64,29,opt,name=tcp_retrans_segs_ps,json=tcpRetransSegsPs,proto3,oneof" json:"tcp_retrans_segs_ps,omitempty"`
 	// 最满盘使用率，与 Metrics.disk_max_used_pct 同号同义。只公开百分比：是哪一块盘（挂载路径）不公开。
 	DiskMaxUsedPct *float64 `protobuf:"fixed64,30,opt,name=disk_max_used_pct,json=diskMaxUsedPct,proto3,oneof" json:"disk_max_used_pct,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// softirq 占比，百分比，与 Metrics.cpu_softirq_pct 同号同义；与 steal、iowait 一样公开。
+	CpuSoftirqPct *float64 `protobuf:"fixed64,31,opt,name=cpu_softirq_pct,json=cpuSoftirqPct,proto3,oneof" json:"cpu_softirq_pct,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PublicMetrics) Reset() {
@@ -979,6 +983,13 @@ func (x *PublicMetrics) GetDiskMaxUsedPct() float64 {
 	return 0
 }
 
+func (x *PublicMetrics) GetCpuSoftirqPct() float64 {
+	if x != nil && x.CpuSoftirqPct != nil {
+		return *x.CpuSoftirqPct
+	}
+	return 0
+}
+
 var File_heron_v1_public_proto protoreflect.FileDescriptor
 
 const file_heron_v1_public_proto_rawDesc = "" +
@@ -1046,7 +1057,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\x04ipv6\x18\x02 \x01(\v2 .heron.v1.PublicAddressDetectionR\x04ipv6\"p\n" +
 	"\x16PublicAddressDetection\x125\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05stateJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\aaddressR\n" +
-	"checked_at\"\x99\f\n" +
+	"checked_at\"\xda\f\n" +
 	"\rPublicMetrics\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
 	"\x05load1\x18\x03 \x01(\x01H\x01R\x05load1\x88\x01\x01\x12\x19\n" +
@@ -1083,7 +1094,8 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\x14tcp_passive_opens_ps\x18\x1b \x01(\x01H\x18R\x11tcpPassiveOpensPs\x88\x01\x01\x12*\n" +
 	"\x0ftcp_out_segs_ps\x18\x1c \x01(\x01H\x19R\ftcpOutSegsPs\x88\x01\x01\x122\n" +
 	"\x13tcp_retrans_segs_ps\x18\x1d \x01(\x01H\x1aR\x10tcpRetransSegsPs\x88\x01\x01\x12.\n" +
-	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01B\n" +
+	"\x11disk_max_used_pct\x18\x1e \x01(\x01H\x1bR\x0ediskMaxUsedPct\x88\x01\x01\x12+\n" +
+	"\x0fcpu_softirq_pct\x18\x1f \x01(\x01H\x1cR\rcpuSoftirqPct\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -1117,7 +1129,8 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\x15_tcp_passive_opens_psB\x12\n" +
 	"\x10_tcp_out_segs_psB\x16\n" +
 	"\x14_tcp_retrans_segs_psB\x14\n" +
-	"\x12_disk_max_used_pctJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xca\x04\n" +
+	"\x12_disk_max_used_pctB\x12\n" +
+	"\x10_cpu_softirq_pctJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xca\x04\n" +
 	"\rPublicService\x12C\n" +
 	"\aGetSite\x12\x18.heron.v1.GetSiteRequest\x1a\x14.heron.v1.PublicSite\"\b\x90\xb5\x18\xac\x02\x90\x02\x01\x12[\n" +
 	"\vGetSnapshot\x12).heron.v1.PublicServiceGetSnapshotRequest\x1a\x18.heron.v1.PublicSnapshot\"\a\x90\xb5\x18\x01\x90\x02\x01\x12V\n" +

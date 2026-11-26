@@ -83,10 +83,26 @@ if [ -d "$ROOT/run/systemd/system" ]; then INIT=systemd
 elif [ -x "$ROOT/sbin/openrc-run" ]; then INIT=openrc
 else echo "unsupported init: expected systemd (/run/systemd/system) or OpenRC (/sbin/openrc-run)" >&2; exit 1; fi
 
+# init 是否在运行，即 rc-service、systemctl 能不能启停服务。systemd 的标记 /run/systemd/system 只在 systemd 作为 init
+# 运行时存在（sd_booted(3) 的判据），判出 systemd 即在运行。OpenRC 的 /sbin/openrc-run 只说明装了；在运行的标记是
+# OpenRC 进入运行级时写下的 /run/openrc/softlevel。Alpine 3.22（openrc 0.62.6）实测：容器里 apk add openrc、不以它
+# 为 init 启动时没有这个文件，rc-service 的 start、stop 都返回 1（status 提示 openrc did not boot）；rc-update 的
+# add、del 只改 runlevel 目录里的链接，照常返回 0。
+init_running() { [ "$INIT" = systemd ] || [ -e "$ROOT/run/openrc/softlevel" ]; }
+
 # 在线更新只支持 systemd；OpenRC 主机靠重跑安装器升级，来源参数在那里没有读者，静默接受会让人以为生效了。
 if [ -n "$UPDATE_SOURCE" ] && [ "$INIT" != systemd ]; then
   echo "--update-source applies only to systemd online updates; $INIT hosts update by rerunning the installer" >&2
   exit 2
+fi
+
+# 安装要由 init 启动服务，而注册排在启动之前：init 不在运行时装下去，注册已在 hub 上建好节点、用掉一个名额，启动
+# 却必然失败，留下一个永久离线的节点，之后的重跑也卡在启停上。所以在锁、账户、下载与注册之前拒绝，指向不依赖宿主
+# init 的 Docker 镜像。卸载不需要 init 启动任何东西，照常进行（见 stop_service）。
+if [ "$UNINSTALL" = 0 ] && ! init_running; then
+  echo "OpenRC is installed but not running (no /run/openrc/softlevel), so heron-agent could not be started as a service; nothing was changed" >&2
+  echo "in a container, run the agent Docker image ghcr.io/xjetry/heron-agent instead: $REPO/blob/main/docs/install.md#docker" >&2
+  exit 1
 fi
 
 # /run 由 root 管理且不可被服务用户写入；锁文件不删除，避免并发安装器锁住不同 inode。
@@ -102,6 +118,24 @@ if [ "$INIT" = systemd ]; then
   flock -n 9 </dev/null || { echo 'another heron-agent installer is running' >&2; exit 1; }
 fi
 
+# 暂存文件一律命名为"<目标路径>.tmp.<安装器的 pid>"（下面三个 *_TMP），在目标所在目录写好再 mv 过去，退出时由 on_exit
+# 删掉。安装器被 SIGKILL、断电打断时 on_exit 不执行，暂存文件留在 /usr/local/bin 这类持久目录里；pid 每次不同，之后的
+# 运行既不覆盖也不认得它们。所以每次启动按同一命名规则回收：只删 pid 部分全是数字的普通文件（不跟随链接），且最后修改
+# 超过一天（-mmin +1440，GNU find、busybox find 与 BSD find 实测同一口径）——同时在跑的另一次安装（OpenRC 路径没有
+# 安装锁）正在写的暂存文件不到一天，不会被删。工作目录在 mktemp 的临时目录里，归系统的临时目录清理管，不在此列。
+BIN_TMP=$BIN.tmp.$$
+UPDATER_TMP=$UPDATER_BIN.tmp.$$
+UPDATER_CFG_TMP=$UPDATER_CFG.tmp.$$
+remove_stale_temps() {
+  for target in "$@"; do
+    for f in "$target".tmp.*; do
+      case ${f#"$target".tmp.} in ''|*[!0-9]*) continue;; esac
+      if [ -f "$f" ] && [ ! -L "$f" ] && [ -n "$(find "$f" -prune -mmin +1440)" ]; then rm -f "$f"; fi
+    done
+  done
+}
+remove_stale_temps "$BIN" "$UPDATER_BIN" "$UPDATER_CFG"
+
 service_installed() {
   case "$INIT" in
     systemd) [ -e "$SYSTEMD_UNIT" ];;
@@ -116,6 +150,11 @@ STOP_POLL_MAX=10
 # 启动后等到进程出现的上限，同一口径。出现之后再固定等 3 秒，确认还是同一个 pid。
 START_POLL_INTERVAL=1
 START_POLL_MAX=10
+
+# 退出处理及其调用链用这个函数写 stderr：macOS 自带的 bash 3.2（/bin/sh）里，内建 echo/printf 写到不可写的 fd
+# （EIO、EBADF、EPIPE）失败后不会清空 C stdio 的 stdout 缓冲，留下的字节会在之后每一次 $(...) 命令替换里混进捕获结果，
+# 让 scan_svc_pids、id -u 拿到错值而打断回滚（bash 3.2.57 实测）。放在子 shell 里写，失败时缓冲随子进程丢弃，不污染父 shell。
+warn() { ( printf '%s\n' "$*" >&2 ); }
 
 # 列出本服务的进程 pid（空格分隔，写入 svc_pids）：有效 uid 为 $1 且可执行文件是 $BIN 的进程。
 # 有效 uid 是 /proc/<pid>/status 里 Uid: 行的第三列；可执行文件是 /proc/<pid>/exe 链接的目标。
@@ -135,7 +174,7 @@ START_POLL_MAX=10
 # 文件还在却读不到则无法判定，返回失败。
 scan_svc_pids() {
   svc_pids=""
-  [ -r "$PROC/self/status" ] || { echo "cannot inspect processes: /proc is not mounted" >&2; return 1; }
+  [ -r "$PROC/self/status" ] || { warn "cannot inspect processes: /proc is not mounted"; return 1; }
   for s in "$PROC"/[0-9]*/status; do
     if euid=$(awk '$1 == "Uid:" { print $3; exit }' "$s" 2>/dev/null); then
       if [ "$euid" = "$1" ]; then
@@ -149,7 +188,7 @@ scan_svc_pids() {
         fi
       fi
     elif [ -e "$s" ]; then
-      echo "cannot read $s" >&2; return 1
+      warn "cannot read $s"; return 1
     fi
   done
 }
@@ -174,7 +213,7 @@ confirm_service_stopped() {
     sleep "$STOP_POLL_INTERVAL"
     polls=$((polls + 1))
   done
-  echo "heron-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
+  warn "heron-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids"
   return 1
 }
 
@@ -185,12 +224,12 @@ confirm_service_stopped() {
 # 秒退再拉起会换成新 pid，不能算起来了。前提与停服务确认相同，由 create_account 与服务定义保证。
 start_log_hint() {
   case "$INIT" in
-    systemd) echo "see journalctl -u heron-agent" >&2;;
-    openrc) echo "see /var/log/heron-agent/heron-agent.err" >&2;;
+    systemd) warn "see journalctl -u heron-agent";;
+    openrc) warn "see /var/log/heron-agent/heron-agent.err";;
   esac
 }
 confirm_service_started() {
-  svc_uid=$(id -u "$SVC_USER") || { echo "no service user $SVC_USER" >&2; start_log_hint; return 1; }
+  svc_uid=$(id -u "$SVC_USER") || { warn "no service user $SVC_USER"; start_log_hint; return 1; }
   polls=0
   pid=""
   while :; do
@@ -205,7 +244,7 @@ confirm_service_started() {
     polls=$((polls + 1))
   done
   if [ -z "$pid" ]; then
-    echo "heron-agent did not start" >&2
+    warn "heron-agent did not start"
     start_log_hint
     return 1
   fi
@@ -214,38 +253,39 @@ confirm_service_started() {
   case " $svc_pids " in
     *" $pid "*) return 0;;
   esac
-  echo "heron-agent did not stay running (pid $pid)" >&2
+  warn "heron-agent did not stay running (pid $pid)"
   start_log_hint
   return 1
 }
 
-# 停服务之后、启动确认成功之前的任何失败退出（某一步命令失败、新版本起不来或没留在运行、被信号打断）都由 on_exit
-# 调到这里，把节点恢复成停服务之前的样子：换过二进制就把 .bak 换回来，再按原 init 启动旧版本。启停的确认口径与安装
-# 路径相同，保证"回滚完成"和"安装成功"是同一把尺子。停服务时没有旧二进制（首次安装）就没有可回滚的版本，保持服务
-# 停着、脚本非零退出。服务定义与更新器的文件不回滚：旧二进制在新的服务定义下启动。
-# 它在 EXIT trap 里执行，set -e 仍然生效：每一步都放在条件里，失败只报告，不中断 on_exit 余下的清理。
+# 停服务确认完成（ROLLBACK 置 1）之后、启动确认成功之前的任何失败退出（某一步命令失败、新版本起不来或没留在运行、
+# 被信号打断）都由 on_exit 调到这里，把节点恢复成停服务之前的样子：换过二进制就把 .bak 换回来，再按原 init 启动旧版本。
+# 启停的确认口径与安装路径相同，保证"回滚完成"和"安装成功"是同一把尺子。停服务时没有旧二进制（首次安装）就没有可回滚
+# 的版本，保持服务停着、脚本非零退出。服务定义与更新器的文件不回滚：旧二进制在新的服务定义下启动。
+# 它只由 on_exit 调用，那时信号已被忽略、set -e 已关闭、父 shell 的 stdout 缓冲已清空（理由见 on_exit 与 warn）：
+# 每一步都写成条件式，失败只报告，不中断余下的步骤；写诊断经 warn 隔离在子 shell，失败也不污染命令替换。
 # 读 stdin 的命令都显式 </dev/null：脚本本身经 curl | sh 从 stdin 来，吞掉 stdin 会让余下脚本消失。
 rollback_agent() {
   [ "$HAD_PREVIOUS" = 1 ] || return 0
-  echo "installation failed after heron-agent was stopped; rolling back to the previous version" >&2
+  warn "installation failed after heron-agent was stopped; rolling back to the previous version"
   case "$INIT" in
     systemd) systemctl stop heron-agent </dev/null || true;;
     openrc) rc-service heron-agent stop </dev/null || true;;
   esac
   if [ "$BACKED_UP" = 1 ]; then
     if ! mv -f "$BIN_BAK" "$BIN"; then
-      echo "failed to restore the previous binary; it is kept at $BIN_BAK" >&2
+      warn "failed to restore the previous binary; it is kept at $BIN_BAK"
       return 0
     fi
-    echo "restored the previous binary" >&2
+    warn "restored the previous binary"
   fi
   if start_service && confirm_service_started; then
-    echo "the previous heron-agent is running again" >&2
+    warn "the previous heron-agent is running again"
   else
-    echo "failed to restart the previous heron-agent" >&2
+    warn "failed to restart the previous heron-agent"
     start_log_hint
     # 换二进制的 mv 与记下 BACKED_UP 之间被信号打断时，旧二进制只剩 .bak 这一份；on_exit 不删它。
-    [ ! -e "$BIN_BAK" ] || echo "the previous binary is kept at $BIN_BAK" >&2
+    [ ! -e "$BIN_BAK" ] || warn "the previous binary is kept at $BIN_BAK"
   fi
 }
 
@@ -256,14 +296,16 @@ start_service() {
   esac
 }
 
-# 是否发 stop 以服务定义是否安装为准，stop 命令失败即失败；确认一步不依赖它，总是执行：
-# 定义不在而进程仍在时，不替人收拾，由确认失败退出。
+# 是否发 stop 以服务定义是否安装、init 是否在运行为准，stop 命令失败即失败；确认一步不依赖它，总是执行：
+# 定义不在而进程仍在时，不替人收拾，由确认失败退出。OpenRC 不在运行时 rc-service stop 必然返回 1（见 init_running），
+# 也没有监督进程在管这个服务，进程在不在只剩 /proc 扫描回答得了。只有卸载会在 init 不在运行时走到这里：安装在那之前
+# 已被拒绝。
 stop_service() {
-  if service_installed; then
+  if service_installed && init_running; then
     case "$INIT" in
       systemd) systemctl stop heron-agent </dev/null;;
       openrc) rc-service heron-agent stop </dev/null;;
-    esac || { echo "failed to stop heron-agent" >&2; return 1; }
+    esac || { warn "failed to stop heron-agent"; return 1; }
   fi
   confirm_service_stopped
 }
@@ -287,7 +329,7 @@ prepare_updater() {
   fi
 }
 restore_updater() {
-  if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-agent </dev/null || echo 'failed to restore heron-updater-agent; start it manually' >&2; fi
+  if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-agent </dev/null || warn 'failed to restore heron-updater-agent; start it manually'; fi
 }
 
 # 不给 --update-source 时不动已有文件：例行重跑不能把 hub 来源的节点悄悄切回 github，那样它下一次在线更新必然失败。
@@ -296,12 +338,48 @@ write_update_source() {
   [ -n "$UPDATE_SOURCE" ] || return 0
   mkdir -p "$UPDATER_CFG_DIR"
   chmod 0755 "$UPDATER_CFG_DIR"
-  printf '{"source":"%s"}\n' "$UPDATE_SOURCE" > "$UPDATER_CFG.tmp.$$"
-  chmod 0644 "$UPDATER_CFG.tmp.$$"
-  mv -f "$UPDATER_CFG.tmp.$$" "$UPDATER_CFG"
+  printf '{"source":"%s"}\n' "$UPDATE_SOURCE" > "$UPDATER_CFG_TMP"
+  chmod 0644 "$UPDATER_CFG_TMP"
+  mv -f "$UPDATER_CFG_TMP" "$UPDATER_CFG"
 }
-trap restore_updater EXIT
-trap 'exit 1' INT TERM HUP
+
+# 回滚状态（rollback_agent 的读者）：ROLLBACK 在停服务确认完成之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
+# 旧二进制；BACKED_UP 记旧二进制是否已改名成 .bak。work 是下载解包用的工作目录，建出之前为空。
+BIN_BAK=$BIN.bak
+ROLLBACK=0
+HAD_PREVIOUS=0
+BACKED_UP=0
+work=""
+# 退出处理，本脚本唯一的 EXIT trap：停服务之后的失败退出要回滚（rollback_agent），工作目录与暂存文件要删，维护握手
+# 停掉的更新器要拉起来（restore_updater）。这些必须在任何退出方式下做完，靠进门的两步保证：
+# - 先忽略 HUP、INT、QUIT、TERM、TSTP、PIPE。退出处理期间再来的信号（SSH 断开的 SIGHUP、再按一次 Ctrl-C、外部 TERM）
+#   若仍按下面的 trap 转成 exit，会在这里直接结束脚本，回滚停在半路：旧二进制留在 .bak、服务停着；SIGPIPE（tee 之类
+#   的读端先退出）与 Ctrl-Z 也一样。忽略的信号由之后启动的子进程继承（execve 保留 SIG_IGN），回滚里的 systemctl、
+#   rc-service 因而也不被同一次挂断打断。副作用只落在 OpenRC 上：systemd 与 launchd 由 init 进程派生服务，回滚启动的
+#   服务不经本脚本 fork；supervise-daemon 会重设 HUP、INT、QUIT、TERM，PIPE 与 TSTP 的忽略则传到它与 agent
+#   （openrc 0.62.6 实测）。agent 不受影响：Go 运行时不论继承什么都为 SIGPIPE 装自己的处理（实测），TSTP 对守护进程
+#   没有用处；下一次正常启停（重跑安装器、rc-service restart、重启机器）即恢复默认。
+# - 再关掉 set -e，并将父 shell 的 stdout 缓冲刷到 /dev/null 清空。写诊断在这里会失败：SSH 断开后写终端报 EIO，
+#   读端退出后写管道报 EPIPE（PIPE 已忽略，不再被它杀掉），set -e 下这一条输出失败就会结束脚本。回滚与清理的每一步
+#   都写成条件式、失败只报告，不依赖 set -e；刷空缓冲配合 warn 子 shell 隔离，防止 bash 3.2 下写失败残留的缓冲污染
+#   回滚里的 $(...) 命令替换（见 warn）。
+# rc 必须第一个取：之后的任何命令都会改写 $?。
+on_exit() {
+  rc=$?
+  trap '' HUP INT QUIT TERM TSTP PIPE
+  set +e
+  echo >/dev/null
+  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_agent; fi
+  # .bak 不在这里删：回滚用 mv 把它换回 BIN，成功安装在启动确认之后才删；回滚换不回去时它是旧版本仅存的一份。
+  if [ -n "$work" ]; then rm -rf "$work"; fi
+  rm -f "$BIN_TMP" "$UPDATER_TMP" "$UPDATER_CFG_TMP"
+  restore_updater
+}
+trap on_exit EXIT
+# EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，所以把会终止
+# 脚本的信号都转成 exit 1：Ctrl-C（INT）、Ctrl-\（QUIT）、SSH 断开（HUP）、外部 TERM、输出管道的读端退出（PIPE）
+# 都经 on_exit 回滚、清理。
+trap 'exit 1' HUP INT QUIT TERM PIPE
 
 # 用户与同名组都删并回查：各发行版删除工具对组的处理不一致，不能信退出码，也不能半成功还报成功。
 # 遗留：账户 uid 被外来进程共用时（撞号，见 reject_shared_uid），shadow 的 userdel 会以
@@ -525,7 +603,10 @@ ca_bundle_present() {
   done
   return 1
 }
-is_https() { case "$1" in https://*) return 0;; esac; return 1; }
+# URL 的 scheme 不区分大小写（RFC 3986 第 3.1 节）：curl 把 HTTPS:// 当 https 连接、按 https 受 --proto 约束（实测），
+# agent 解析 --hub 用的 Go url.Parse 也把 scheme 转成小写。这里区分大小写会让 --hub HTTPS://… 漏装 CA 证书包，让
+# --base-url HTTPS://… 漏掉下载只走 https 的限制。
+is_https() { case "$1" in [Hh][Tt][Tt][Pp][Ss]://*) return 0;; esac; return 1; }
 # systemd 更新器始终通过官方 HTTPS 下载，不能因当前 hub 与安装镜像为 HTTP 就省略 CA。
 if [ "$INIT" = systemd ] || is_https "$BASE_URL" || is_https "$HUB"; then
   if ! ca_bundle_present; then
@@ -544,35 +625,84 @@ if [ "$INIT" = systemd ] || is_https "$BASE_URL" || is_https "$HUB"; then
   fi
 fi
 
-work=$(mktemp -d)
-BIN_TMP="$BIN.tmp.$$"
-BIN_BAK="$BIN.bak"
-UPDATER_TMP="$UPDATER_BIN.tmp.$$"
-# 回滚状态（rollback_agent 的读者）：ROLLBACK 在停服务之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
-# 旧二进制；BACKED_UP 记旧二进制是否已改名成 .bak。
-ROLLBACK=0
-HAD_PREVIOUS=0
-BACKED_UP=0
-# EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，
-# 所以把 INT、TERM、HUP 转成 exit 1，Ctrl-C 或 SSH 断开时也会回滚、清掉工作目录与写了一半的临时文件。
-# .bak 不在这里删：回滚用 mv 把它换回 BIN，成功安装在启动确认之后才删；回滚换不回去时它是旧版本仅存的一份。
-on_exit() {
-  rc=$?
-  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_agent; fi
-  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"
-  restore_updater
+# 下载的超时与重试。到 GitHub 的 TLS 握手在国内主机上常被重置，单次下载在那里经常直接失败；没有超时的下载遇到不回应或
+# 中途停住的连接会一直挂着。各条规则的依据（curl 8.7.1 与 8.14.1 实测各类失败的退出码与 -w 输出）：
+# - 连接阶段（DNS、TCP、TLS 握手）最多 DL_CONNECT_TIMEOUT 秒。--connect-timeout 覆盖 TLS 握手（实测：对端接受 TCP 却不回
+#   ServerHello 时按上限以 28 退出）。握手被重置时 curl 当场以 35 或 56 失败，不等这个上限；它只截住完全不回应的对端，
+#   30 秒给慢线路的建连留足余地。
+# - 连上之后平均速度连续 DL_STALL_TIME 秒低于 DL_SPEED_LIMIT 字节/秒即中止（--speed-limit、--speed-time，退出码 28）。计时
+#   从连上起算，发出请求后迟迟收不到响应同样计入（实测）。包有数 MB，低于 1 KiB/s 时一个包要下一个多小时，这样的线路该
+#   走离线副本；60 秒的窗口给偶发的停顿留余地。不设总时长上限：慢而一直在走的下载应当下完。
+# - 只重试一个字节都没收到的失败，最多 DL_TRIES 次、间隔 DL_RETRY_DELAY 秒：curl 退出码 16、18、35、52、55、56、92（HTTP/2
+#   帧层错误、传输中断、TLS 握手失败、空响应、发送失败、接收失败、HTTP/2 流错误）且 %{size_download} 为 0，或 HTTP 502、503、
+#   504。这是握手被重置、对端瞬时过载的形态，重来一次不比第一次更糟。
+# - 不重试：连不上（7）、解析失败（6）、证书错（60）、超时（28）与其他 HTTP 错误，重来结果不变，只拖延失败；收到部分正文
+#   后断开也不重试：线路通但慢而不稳，整包重下大概率再断，提示改用离线副本（--base-url 指向本地目录或近处的服务器，
+#   接受哪些字节仍由内嵌清单决定）。
+# wget 分支（没有 curl 时用，Alpine 默认如此）只有一个 -T：busybox wget 1.37 与 GNU Wget 1.21 实测都用它限制连接阶段（含
+# TLS 握手）与两次读之间的空闲，没有低速中止：一直有字节在流、只是极慢的下载不会被中止（实测 2 字节/秒持续不超时）。取
+# DL_STALL_TIME 与 curl 的停滞窗口对齐，代价是连接阶段的上限也是它。wget 的退出码分不出失败种类（busybox 一律 1；GNU 的 4
+# 把连不上与握手被重置归在一起），所以按输出文件判：没有或为空即一个字节都没收到，重试；连不上、解析失败、证书错因此也
+# 会多试几次才失败。GNU Wget 自带重试（默认 20 次），用 --tries=1 关掉，重试次数只由这里决定；busybox wget 不认
+# --tries，按 --help 的输出分辨实现（与 adduser 同法）。
+DL_CONNECT_TIMEOUT=30
+DL_SPEED_LIMIT=1024
+DL_STALL_TIME=60
+DL_TRIES=5
+DL_RETRY_DELAY=5
+WGET_BUSYBOX=0
+if [ "$FETCH" = wget ] && wget --help </dev/null 2>&1 | grep -qi busybox; then WGET_BUSYBOX=1; fi
+# 下载一次。curl 在 stdout 写 "<HTTP 状态码> <收到的正文字节数>"（-w；失败时照样写，连不上时是 "000 0"，实测）。
+fetch_once() {
+  if [ "$FETCH" = wget ]; then
+    set -- -q -T "$DL_STALL_TIME" -O "$2" "$1"
+    [ "$WGET_BUSYBOX" = 1 ] || set -- --tries=1 "$@"
+    wget "$@" </dev/null
+    return
+  fi
+  url=$1; dest=$2
+  set --
+  # 下载地址为 https 时，请求和重定向都只走 https。http（本地验收）不加：--proto '=https' 会拒绝它。wget 没有对应开关。
+  if is_https "$url"; then set -- --proto '=https' --proto-redir '=https'; fi
+  curl "$@" --connect-timeout "$DL_CONNECT_TIMEOUT" --speed-limit "$DL_SPEED_LIMIT" --speed-time "$DL_STALL_TIME" \
+    -fsSL -w '%{http_code} %{size_download}' -o "$dest" "$url" </dev/null
 }
-trap on_exit EXIT
-trap 'exit 1' INT TERM HUP
-
 dl() {
-  # 下载地址为 https 时，请求和重定向都只走 https。http（本地验收）不加：--proto '=https' 会拒绝它。
-  # wget 没有对应开关。
-  if [ "$FETCH" = curl ]; then
-    if is_https "$1"; then curl --proto '=https' --proto-redir '=https' -fsSL -o "$2" "$1" </dev/null
-    else curl -fsSL -o "$2" "$1" </dev/null; fi
-  else wget -q -O "$2" "$1" </dev/null; fi
+  attempt=1
+  while :; do
+    rm -f "$2"
+    dl_rc=0
+    dl_out=$(fetch_once "$1" "$2") || dl_rc=$?
+    [ "$dl_rc" != 0 ] || return 0
+    retry=0
+    if [ "$FETCH" = curl ]; then
+      dl_status=${dl_out%% *}; dl_size=${dl_out##* }
+      what="curl exit $dl_rc"
+      case "$dl_status" in 502|503|504) retry=1; what="HTTP $dl_status";; esac
+      case "$dl_rc" in 16|18|35|52|55|56|92) [ "$dl_size" != 0 ] || retry=1;; esac
+      partial=0; [ "$dl_size" = 0 ] || [ -z "$dl_size" ] || partial=1
+    else
+      what="wget exit $dl_rc"
+      partial=0; [ ! -s "$2" ] || partial=1
+      [ "$partial" = 1 ] || retry=1
+    fi
+    if [ "$retry" = 0 ]; then
+      if [ "$partial" = 1 ]; then
+        echo "download of $1 broke off after part of the file arrived ($what); the link is too slow or unstable to download directly: fetch the release files another way into a local directory or a nearby web server, then rerun with --base-url pointing there" >&2
+      fi
+      return 1
+    fi
+    if [ "$attempt" -ge "$DL_TRIES" ]; then
+      echo "download of $1 failed $DL_TRIES times ($what); giving up" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    echo "download of $1 failed ($what); retrying in ${DL_RETRY_DELAY}s (attempt $attempt of $DL_TRIES)" >&2
+    sleep "$DL_RETRY_DELAY"
+  done
 }
+
+work=$(mktemp -d)
 dl "$BASE_URL/$PKG" "$work/$PKG"
 # sha256sum 的输出以摘要开头、空白之后是文件名（GNU 与 busybox 相同）；它失败时摘要为空，同样按不符拒绝。
 GOT_SHA256=$(sha256sum "$work/$PKG" </dev/null) || GOT_SHA256=""

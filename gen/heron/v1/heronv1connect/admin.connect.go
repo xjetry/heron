@@ -258,7 +258,10 @@ type AdminServiceClient interface {
 	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
 	// 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
 	ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error)
-	// API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+	// 操作记录：会话直调的写、API token 经 ExecuteChange 执行的变更，以及 hub 自身对用户可见配置的修改（自动续期），
+	// 同一条记录链、同一个查询面。会话看得到全部记录，可按 owner_id、principal、action、request_id 过滤；API token 只看
+	// 得到自己的（指定别人的 owner_id 返回 PermissionDenied）。按提交时刻倒序、同刻按 request_id 升序。快照只含白名单列，
+	// 不含任何凭据。保留期见 Operation。
 	ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error)
 	// 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
 	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
@@ -295,11 +298,12 @@ type AdminServiceClient interface {
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态、已出租状态）。计费字段有变化时，
-	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日与重置时刻、计费时区、离线宽限期、计费与到期、国家、标签、维护状态、
+	// 已出租状态）。计费字段或计费时区有变化时，返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与
+	// days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
-	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（见 store.Billing）——先推后一个周期，仍早于 hub 时区
-	// （--timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
+	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（见 store.Billing）——先推后一个周期，仍早于节点计费
+	// 时区（Node.billing_timezone，空即 hub 的 --timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
 	// 保留账单日，过期多个周期的一次跳过；日号超过目标月天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
 	// 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
 	// 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
@@ -1398,7 +1402,10 @@ type AdminServiceHandler interface {
 	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
 	// 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
 	ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error)
-	// API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+	// 操作记录：会话直调的写、API token 经 ExecuteChange 执行的变更，以及 hub 自身对用户可见配置的修改（自动续期），
+	// 同一条记录链、同一个查询面。会话看得到全部记录，可按 owner_id、principal、action、request_id 过滤；API token 只看
+	// 得到自己的（指定别人的 owner_id 返回 PermissionDenied）。按提交时刻倒序、同刻按 request_id 升序。快照只含白名单列，
+	// 不含任何凭据。保留期见 Operation。
 	ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error)
 	// 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
 	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
@@ -1435,11 +1442,12 @@ type AdminServiceHandler interface {
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态、已出租状态）。计费字段有变化时，
-	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日与重置时刻、计费时区、离线宽限期、计费与到期、国家、标签、维护状态、
+	// 已出租状态）。计费字段或计费时区有变化时，返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与
+	// days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
-	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（见 store.Billing）——先推后一个周期，仍早于 hub 时区
-	// （--timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
+	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（见 store.Billing）——先推后一个周期，仍早于节点计费
+	// 时区（Node.billing_timezone，空即 hub 的 --timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
 	// 保留账单日，过期多个周期的一次跳过；日号超过目标月天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
 	// 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
 	// 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
