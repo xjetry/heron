@@ -564,6 +564,13 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 					return fmt.Errorf("migrate metrics snapshot to 53: %w", err)
 				}
 			}
+		case 54:
+			// 与迁移 54 同源：价格与币种规范化只在配置层的 node 上。
+			if layer == "config" {
+				if err := migrateV54Config(tx); err != nil {
+					return fmt.Errorf("migrate config snapshot to 54: %w", err)
+				}
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
@@ -836,21 +843,25 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 }
 
 // validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkShortName，与 insertNode、UpdateNodeTasks 共用）、
-// 重置日范围（checkTrafficResetDay，与 UpdateNodeTasks 共用）和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
+// 重置日范围（checkTrafficResetDay，与 UpdateNodeTasks 共用）、价格与币种格式（CheckPriceCurrency，与两个写入口共用）
+// 和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
 // 规范化（迁移 48 的 AgentNodeName），所以被名字拒绝的只能是当前版本快照里就没清洗的值。
 func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,traffic_reset_day,maintenance,rented FROM config.node")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,traffic_reset_day,price,currency,maintenance,rented FROM config.node")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var name string
+		var name, price, currency string
 		var day int
 		var maintenance, rented bool
-		if err := rows.Scan(&id, &name, &day, &maintenance, &rented); err != nil {
+		if err := rows.Scan(&id, &name, &day, &price, &currency, &maintenance, &rented); err != nil {
 			return err
+		}
+		if err := CheckPriceCurrency(price, currency); err != nil {
+			return fmt.Errorf("config node %d (%q): %w", id, name, err)
 		}
 		if err := checkShortName(name); err != nil {
 			return fmt.Errorf("config node %d (%q): %w", id, name, err)

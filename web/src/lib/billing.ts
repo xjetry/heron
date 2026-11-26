@@ -34,7 +34,8 @@ export function cycleLabel(c: BillingCycle): string {
 // Intl.NumberFormat(...).formatToParts），数额保留存储的小数位数（minimumFractionDigits =
 // maximumFractionDigits = 存储值的小数位）——不按币种默认精度四舍五入（JPY 12.5 显示 12.5 而不是 13），
 // 整数也不补 ".00"。未知三字母币种 CLDR 把代码本身当符号回退，个别引擎直接拒绝时落入 catch；
-// 非三字母大写或数额不是纯小数的遗留值过不了本地检查：两种都原样显示、不抛错。
+// 非三字母大写或数额不是纯小数的值（hub 读出的不会是这样，见 internal/hub/store/billing.go）过不了本地检查：两种都
+// 原样显示、不抛错——这里只防 Intl 对非法输入抛错，不承担格式准入。
 export function moneyText(currency: string, price: string): string {
   if (!/^\d+(\.\d+)?$/.test(price) || !/^[A-Z]{3}$/.test(currency)) return `${currency} ${price}`;
   const decimals = price.includes(".") ? price.length - price.indexOf(".") - 1 : 0;
@@ -123,15 +124,15 @@ export type CostSummary = {
   rentedAmortized: AmortizedTotal[];
 };
 
-// hub 保存入口（internal/hub/api/nodes.go 的 pricePattern / currencyPattern）接受的价格与币种；库里早于这条校验的遗留值
-// 过不了这里，不参与任何金额计算（只按原文显示）。价格至多两位小数，所以按"分"（1/100）存成 BigInt 定点数，
+// hub 读出的价格与币种都满足保存时的格式（internal/hub/store/billing.go 的 CheckPriceCurrency：写入口、快照恢复预检与
+// 迁移 54 的存量规范化共用这一个判定），价格非空时币种必然是三个大写字母。这里只消费：PRICE 与 hub 的价格格式同形，
+// 用来拆出整数与小数两段，不匹配只会是没填价格。价格至多两位小数，所以按"分"（1/100）存成 BigInt 定点数，
 // 相加没有浮点误差。
 const PRICE = /^(\d{1,9})(?:\.(\d{1,2}))?$/;
-const CURRENCY = /^[A-Z]{3}$/;
 
 function priceCents(b: BillingView): bigint | undefined {
   const m = PRICE.exec(b.price);
-  if (!m || !CURRENCY.test(b.currency)) return undefined;
+  if (!m) return undefined;
   return BigInt(m[1]) * 100n + BigInt((m[2] ?? "").padEnd(2, "0"));
 }
 
@@ -170,7 +171,7 @@ class Totals {
 }
 
 // 续费日历顶部的费用概览，完全在浏览器里由 ListNodes 的计费字段算出：hub 不汇总价格（见 types.proto 的 Billing）。
-// 各币种分列、不做汇率换算。只计"带合法价格与周期"的节点：没有周期的是一次性买断，没有续费也没有摊销。
+// 各币种分列、不做汇率换算。只计"填了价格与周期"的节点：没有周期的是一次性买断，没有续费也没有摊销。
 // 已出租节点的续费是租约的事，不进自用的现金流与持有成本（与 expiryLevel 对已出租恒为中性同一口径），只单列月均。
 // 窗口按 hub 下发的 daysLeft 判定：日历日是 hub 时区的，浏览器的时钟与时区不参与（同 hubToday）；没有 daysLeft 的
 // 节点（没填到期日或 hub 读不懂）不进现金流与逾期，但照常摊销。周期是表外值（hub 比页面新）时不知道月数，

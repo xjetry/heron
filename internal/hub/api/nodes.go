@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -46,12 +45,6 @@ var trafficQuotaModes = map[heronv1.TrafficQuotaMode]string{
 	heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_MAX: "max",
 }
 
-// 价格与币种只供展示，不参与金额计算：pricePattern 只接受十进制文本，currencyPattern 只接受三个大写字母；价格非空而币种为空由 billingOf 拒绝。RE2 的 \d 只匹配 ASCII 数字，全角数字不算。
-var (
-	pricePattern    = regexp.MustCompile(`^\d{1,9}(\.\d{1,2})?$`)
-	currencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
-)
-
 // billingOf 是计费字段唯一的校验，CreateNode 与 UpdateNode 两个入口共用；UpdateNode 里它与
 // offline_grace_s 同在入口裁决。m 为 nil
 // （请求没带 billing）时各项取零值，即五项全清。days_left 由 hub 计算，请求里的值不读。到期日与到期扫描、days_left
@@ -59,14 +52,9 @@ var (
 // 另有守卫（alert.cycleMonths），不依赖这里。
 func billingOf(m *heronv1.Billing) (store.Billing, error) {
 	b := store.Billing{Price: m.GetPrice(), Currency: m.GetCurrency(), ExpiresOn: m.GetExpiresOn(), AutoRenew: m.GetAutoRenew()}
-	if b.Price != "" && !pricePattern.MatchString(b.Price) {
-		return store.Billing{}, invalid("billing.price: must match %s, e.g. 12.50; got %q", pricePattern, b.Price)
-	}
-	if b.Currency != "" && !currencyPattern.MatchString(b.Currency) {
-		return store.Billing{}, invalid("billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got %q", b.Currency)
-	}
-	if b.Price != "" && b.Currency == "" {
-		return store.Billing{}, invalid("billing.currency: required when billing.price is set")
+	// 价格与币种的格式只在 store 定义（CheckPriceCurrency），写入口在事务里复查同一个函数；这里先调用，错误点名字段。
+	if err := store.CheckPriceCurrency(b.Price, b.Currency); err != nil {
+		return store.Billing{}, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	cycle, ok := billingCycles[m.GetBillingCycle()]
 	if !ok {

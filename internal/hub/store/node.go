@@ -37,9 +37,9 @@ func BillingCycles() []BillingCycle {
 	return []BillingCycle{CycleMonthly, CycleQuarterly, CycleSemiannual, CycleYearly, CycleBiennial, CycleTriennial, CycleQuinquennial}
 }
 
-// Billing 是节点的计费与到期，随 UpdateNode 整体替换，零值即"都没填"。存储不校验取值：写入口有四个，
-// api 的 CreateNode 与 UpdateNode 校验整组取值（共用 billingOf），RenewExpiry 与 RenewNodeBilling 只写
-// alert 推后得到的日期。
+// Billing 是节点的计费与到期，随 UpdateNode 整体替换，零值即"都没填"。写入口有四个：api 的 CreateNode 与 UpdateNode
+// 校验整组取值（共用 billingOf），其中价格与币种的格式由 store 在 insertNode 与 UpdateNodeTasks 里再按
+// CheckPriceCurrency 复查（规则与保证方见 billing.go）；RenewExpiry 与 RenewNodeBilling 只写 alert 推后得到的日期。
 type Billing struct {
 	Price     string
 	Currency  string
@@ -49,7 +49,8 @@ type Billing struct {
 }
 
 // NewNode 是建节点的完整输入：名字、计费，以及已出租开关（规则见 Node 类型注释），在建的时候就能定，不再走
-// "先建再改"两步。Billing 的合法组合由 api 的 cleanBilling 校验过，这里不判取值，原样落库。
+// "先建再改"两步。Billing 的合法组合由 api 的 billingOf 校验过；价格与币种的格式 insertNode 仍按 CheckPriceCurrency
+// 复查，其余原样落库。
 type NewNode struct {
 	Name    string
 	Billing Billing
@@ -526,6 +527,9 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		if err := checkTrafficResetDay(e.TrafficResetDay); err != nil {
 			return err
 		}
+		if err := CheckPriceCurrency(e.Billing.Price, e.Billing.Currency); err != nil {
+			return err
+		}
 		v4, err := canonicalAddressPin(e.IPv4Pin, true)
 		if err != nil {
 			return err
@@ -853,6 +857,9 @@ func insertNode(tx *sql.Tx, spec NewNode, tokenHash []byte, createdAt int64, pub
 	// 节点名准入（checkShortName）：CreateNode 的调用方先过 CleanName，RegisterNode 的名字来自 AgentNodeName；
 	// 谁漏了都由这里拒绝，库里每个节点名都等于自己的清洗结果这条不变式不靠调用方自觉。
 	if err := checkShortName(spec.Name); err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	if err := CheckPriceCurrency(spec.Billing.Price, spec.Billing.Currency); err != nil {
 		return 0, NewNodeTasks{}, err
 	}
 	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public, price, currency, billing_cycle, expires_on, auto_renew, rented)

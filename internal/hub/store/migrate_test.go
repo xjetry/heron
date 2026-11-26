@@ -72,6 +72,10 @@ func userVersion(t *testing.T, db *sql.DB) int {
 	return v
 }
 
+// dataOnlyMigrations 是只改数据、不改结构的迁移（TestFrozenSchemasFollowMigrations 的说明）。54 的数据效果见
+// TestMigrationFromV53NormalizesPriceCurrency。
+var dataOnlyMigrations = map[int]bool{54: true}
+
 // frozenSchemas 按版本号登记各版本的完整 DDL，已登记的文本不随生产 DDL 改动。不变式：经 schemaV<n>、frozenSchemas、frozenSchema
 // 这三个名字拿到冻结 DDL 的途径只有 frozenSchemaFixture 与 migrateFrom 两个辅助函数，二者从同一个版本号同时
 // 得到 DDL 与 user_version，由 TestFrozenSchemasReachedOnlyByVersion 保证；拿到库之后对库的任何利用不在它的
@@ -130,6 +134,7 @@ var frozenSchemas = map[int][]string{
 	51: schemaV51,
 	52: schemaV52,
 	53: schemaV53,
+	54: schemaV54,
 }
 
 func frozenSchema(t *testing.T, version int) []string {
@@ -584,7 +589,8 @@ func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 // frozenSchemas 的每一对版本号与冻结文本都要相符。v1 是第一个发布版本，逐字冻结，作为起点；此后每个 v 的
 // 冻结文本必须恰好是 v−1 的冻结文本经 migrations[v] 之后的结构。某版文本登记到错的版本号上时，它与由前一版
 // 推出的结构对不上：例如把 schemaV11 登记成 12，第 12 步两侧差出 migrations[12] 的改动。核对只看结构，
-// 所以另要求相邻两版结构不同：某步迁移若只改数据，这里会红，届时需要把数据纳入比较。
+// 所以另要求相邻两版结构不同。只改数据的迁移登记在 dataOnlyMigrations：对它反过来要求相邻两版结构相同——登记错
+// 版本号的冻结文本仍会在上面的逐步比对里对不上——数据的效果由它自己的 migrateFrom 用例钉住。
 // 当前版本也登记冻结 DDL；冻结链核对每一步，migrateFrom 另将最终结构与新建库比较。
 func TestFrozenSchemasFollowMigrations(t *testing.T) {
 	t.Parallel()
@@ -606,8 +612,14 @@ func TestFrozenSchemasFollowMigrations(t *testing.T) {
 			if diff := schemaDifference(describe(t, stepped), want, fmt.Sprintf("v%d 经迁移", v-1), fmt.Sprintf("冻结 v%d", v)); diff != "" {
 				t.Errorf("frozen v%d is not frozen v%d plus migrations[%d]:\n%s", v, v-1, v, diff)
 			}
+			if dataOnlyMigrations[v] {
+				if !slices.Equal(previous, want) {
+					t.Errorf("migrations[%d] is registered as data-only, but frozen v%d and v%d differ in structure", v, v-1, v)
+				}
+				return
+			}
 			if slices.Equal(previous, want) {
-				t.Errorf("frozen v%d and v%d have the same structure: either a version is registered with the wrong DDL, or migrations[%d] changes only data and a structural check cannot tell the versions apart", v-1, v, v)
+				t.Errorf("frozen v%d and v%d have the same structure: either a version is registered with the wrong DDL, or migrations[%d] changes only data and must be registered in dataOnlyMigrations", v-1, v, v)
 			}
 		})
 	}

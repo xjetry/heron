@@ -992,7 +992,8 @@ export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
  */
 export type Billing = Message<"heron.v1.Billing"> & {
   /**
-   * 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。
+   * 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。hub 读出的值同样
+   * 满足这两条（写入口、快照恢复与升级时的存量规范化共用同一判定），客户端可以直接按这个格式计算。
    *
    * @generated from field: string price = 1;
    */

@@ -155,14 +155,12 @@ describe("costSummary", () => {
     ]);
   });
 
-  it("待续费现金流不含已出租、没有周期、价格不合法与没有到期日的节点；含自动续期的节点", () => {
+  it("待续费现金流不含已出租、没有周期、没填价格与没有到期日的节点；含自动续期的节点", () => {
     const renewing: Row = { name: "auto", rented: false, billing: { ...own("auto", "3", "USD", BillingCycle.MONTHLY, 5).billing!, autoRenew: true } as BillingView };
     const got = costSummary([
       renewing,
       { ...own("leased", "100", "USD", BillingCycle.MONTHLY, 5), rented: true },
       own("oneoff", "100", "USD", BillingCycle.UNSPECIFIED, 5),
-      own("legacy", "1e3", "USD", BillingCycle.MONTHLY, 5),
-      own("lower", "100", "usd", BillingCycle.MONTHLY, 5),
       own("unpriced", "", "", BillingCycle.MONTHLY, 5),
       own("undated", "100", "USD", BillingCycle.MONTHLY),
       { name: "bare", rented: false },
@@ -192,7 +190,6 @@ describe("costSummary", () => {
       own("b", "48", "EUR", BillingCycle.BIENNIAL, 1),
       own("p", "120", "EUR", BillingCycle.QUINQUENNIAL, 1),
       own("oneoff", "999", "USD", BillingCycle.UNSPECIFIED, 1),
-      own("legacy", "12.345", "USD", BillingCycle.MONTHLY, 1),
       { ...own("leased", "999", "USD", BillingCycle.MONTHLY, 1), rented: true },
     ]);
     // USD：10 + 10 + 8.333… + 0.000277… = 28.3336… → 28.33；年化 120 + 120 + 100 + 0.0033… = 340.0033… → 340。

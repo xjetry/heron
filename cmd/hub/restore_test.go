@@ -909,3 +909,40 @@ func TestRestoreRejectsNodeWithResetDayOutOfRange(t *testing.T) {
 		}
 	}
 }
+
+// 快照里不合格式的价格与币种被拒绝：当前版本的快照只可能由写入口写出，恢复预检用同一个 CheckPriceCurrency 复核，
+// 面板的费用汇总因此不必再替后端过滤。
+func TestRestoreRejectsNodeWithInvalidPriceCurrency(t *testing.T) {
+	t.Parallel()
+	config, metrics := restoreSnapshots(t)
+	restoreExec(t, restoreDB(t, config), "UPDATE node SET price='5', currency='usd' WHERE id=1")
+	path := restoreTarget(t)
+	before := restoreDump(t, path)
+	err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{})
+	if want := `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "usd"`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("restore err = %v, want %q", err, want)
+	}
+	if after := restoreDump(t, path); after != before {
+		t.Error("invalid snapshot changed target database")
+	}
+}
+
+// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据，v53 快照与当前版本
+// 结构相同，改 schema_version 即得到一份 v53 快照。
+func TestRestoreNormalizesPriceCurrencyOfV53Snapshot(t *testing.T) {
+	t.Parallel()
+	config, metrics := restoreSnapshots(t)
+	restoreExec(t, restoreDB(t, config), "UPDATE node SET price='5', currency=' usd ' WHERE id=1; UPDATE snapshot_meta SET schema_version=53")
+	restoreExec(t, restoreDB(t, metrics), "UPDATE snapshot_meta SET schema_version=53")
+	path := restoreTarget(t)
+	if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var price, currency string
+	if err := restoreDB(t, path).QueryRow("SELECT price, currency FROM node WHERE id=1").Scan(&price, &currency); err != nil {
+		t.Fatal(err)
+	}
+	if price != "5" || currency != "USD" {
+		t.Fatalf("restored (%q, %q), want (\"5\", \"USD\")", price, currency)
+	}
+}

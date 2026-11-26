@@ -79,6 +79,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	51: execAll(migrationV51Config),
 	52: execAll(migrationV52Config),
 	53: migrateV53Metrics,
+	54: migrateV54Config,
 }
 
 // metricDDLV53 冻结引入最满盘使用率时的指标表 DDL：v43 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
@@ -244,6 +245,48 @@ var migrationV51Config = []string{
 var migrationV52Config = []string{
 	`ALTER TABLE probe_task ADD COLUMN http_status_policy INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE probe_task ADD COLUMN http_expected_status INTEGER NOT NULL DEFAULT 0`,
+}
+
+// v54：把早于写入口格式校验的价格与币种规范化，之后库里每一对都满足 CheckPriceCurrency（保证方见 billing.go）。
+// 去掉首尾空白、币种转大写后合法的写回规范形；仍不合法的一对一起清空——价格离了币种、币种离了价格都不能单独成立，
+// 计费周期与到期日不动，到期提醒照常。被清空的原文留在升级前的自动备份里。只改配置层的 node，迁移与配置快照共用：
+// 恢复预检按同一个函数拒绝，旧快照必须先经这里规范化才能恢复。
+func migrateV54Config(tx *sql.Tx) error {
+	rows, err := tx.Query("SELECT id, price, currency FROM node")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type billingText struct {
+		id              int64
+		price, currency string
+	}
+	var changed []billingText
+	for rows.Next() {
+		var r billingText
+		if err := rows.Scan(&r.id, &r.price, &r.currency); err != nil {
+			return err
+		}
+		price, currency := strings.TrimSpace(r.price), strings.ToUpper(strings.TrimSpace(r.currency))
+		if CheckPriceCurrency(price, currency) != nil {
+			price, currency = "", ""
+		}
+		if price != r.price || currency != r.currency {
+			changed = append(changed, billingText{id: r.id, price: price, currency: currency})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range changed {
+		if _, err := tx.Exec("UPDATE node SET price = ?, currency = ? WHERE id = ?", r.price, r.currency, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。

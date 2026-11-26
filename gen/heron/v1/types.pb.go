@@ -2483,7 +2483,8 @@ func (x *Traffic) GetQuotaUsedPct() float64 {
 // 驱动 days_left、自动续期与到期规则。Node、CreateNodeRequest 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
 type Billing struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。
+	// 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。hub 读出的值同样
+	// 满足这两条（写入口、快照恢复与升级时的存量规范化共用同一判定），客户端可以直接按这个格式计算。
 	Price string `protobuf:"bytes,1,opt,name=price,proto3" json:"price,omitempty"`
 	// ISO 4217 币种代码（三个大写字母）；价格非空时必填，币种可以单独填。
 	Currency     string       `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
