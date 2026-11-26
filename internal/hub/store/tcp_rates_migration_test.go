@@ -162,6 +162,7 @@ func TestRestoreV42MetricsSnapshotAddsTCPRateColumns(t *testing.T) {
 			dropTCPRateColumns(t, db)
 		}
 		if layer == "config" {
+			removeV58Config(t, db)
 			removeV57Config(t, db)
 			removeV56Config(t, db)
 			removeV52Config(t, db)

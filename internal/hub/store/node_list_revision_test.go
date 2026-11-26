@@ -71,7 +71,7 @@ var nodeListColumns = map[string]map[string]bool{
 		"price": true, "currency": true, "billing_cycle": true, "expires_on": true, "auto_renew": true,
 		"last_source": true, "country": true, "country_ip": true, "country_pin": true, "maintenance": true,
 		"public_remark": true, "traffic_quota_bytes": true, "traffic_quota_mode": true,
-		"ipv4_pin": true, "ipv6_pin": true, "rented": true,
+		"ipv4_pin": true, "ipv6_pin": true, "rented": true, "traffic_reset_minute": true, "billing_timezone": true,
 	},
 	"node_facts": {
 		"node_id": true, "facts_hash": false, "hostname": true, "os": true, "kernel": true, "arch": true,
@@ -153,12 +153,12 @@ func TestNodeListRevisionBumpsWhenTokenScopeWidens(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithPrincipal(t.Context(), tok)
-	first, err := s.ReadNodeList(ctx, NodeFilter{}, func(uint64) bool { return false })
+	first, err := s.ReadNodeList(ctx, NodeFilter{}, func(uint64, []string) bool { return false })
 	if err != nil || len(first.Nodes) != 0 {
 		t.Fatalf("empty explicit scope listed nodes: %+v %v", first, err)
 	}
 	mustExec(t, s, "UPDATE api_token SET all_nodes = 1 WHERE id = ?", tok.ID)
-	second, err := s.ReadNodeList(ctx, NodeFilter{}, func(r uint64) bool { return r == first.Revision })
+	second, err := s.ReadNodeList(ctx, NodeFilter{}, func(r uint64, _ []string) bool { return r == first.Revision })
 	if err != nil || second.Unchanged || len(second.Nodes) != 1 {
 		t.Fatalf("widened scope still reported unchanged: %+v %v", second, err)
 	}
@@ -267,7 +267,7 @@ func TestReadNodeListSkipsRowsWhenUnchanged(t *testing.T) {
 		t.Fatalf("无条件读取 = %+v", full)
 	}
 	var asked uint64
-	same, err := s.ReadNodeList(ctx, NodeFilter{}, func(rev uint64) bool { asked = rev; return rev == full.Revision })
+	same, err := s.ReadNodeList(ctx, NodeFilter{}, func(rev uint64, _ []string) bool { asked = rev; return rev == full.Revision })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestReadNodeListSkipsRowsWhenUnchanged(t *testing.T) {
 	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "m", TrafficResetDay: 1}); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := s.ReadNodeList(ctx, NodeFilter{}, func(rev uint64) bool { return rev == full.Revision })
+	changed, err := s.ReadNodeList(ctx, NodeFilter{}, func(rev uint64, _ []string) bool { return rev == full.Revision })
 	if err != nil {
 		t.Fatal(err)
 	}

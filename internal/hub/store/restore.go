@@ -584,9 +584,14 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 				statements = migrationV56Snapshot
 			}
 		case 57:
-			// 与迁移 57 同源：告警事件的单位一列与回填读的 alert_rule 都在配置层。
+			// 与迁移 57 同源：重置时刻与计费时区两列只在配置层的 node 上；触发器不随快照（见 case 47）。
 			if layer == "config" {
 				statements = migrationV57Config
+			}
+		case 58:
+			// 与迁移 58 同源：告警事件的单位一列与回填读的 alert_rule 都在配置层。
+			if layer == "config" {
+				statements = migrationV58Config
 			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
@@ -884,21 +889,22 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 }
 
 // validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkShortName，与 insertNode、UpdateNodeTasks 共用）、
-// 重置日范围（checkTrafficResetDay，与 UpdateNodeTasks 共用）、价格与币种格式（CheckPriceCurrency，与两个写入口共用）
+// 周期规则（重置日 checkTrafficResetDay、重置时刻 checkTrafficResetMinute，与 UpdateNodeTasks 共用；计费时区
+// checkBillingTimezone，与两个写入口共用）、价格与币种格式（CheckPriceCurrency，与两个写入口共用）
 // 和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
 // 规范化（迁移 48 的 AgentNodeName），所以被名字拒绝的只能是当前版本快照里就没清洗的值。
 func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,traffic_reset_day,price,currency,maintenance,rented FROM config.node")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,traffic_reset_day,traffic_reset_minute,billing_timezone,price,currency,maintenance,rented FROM config.node")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var name, price, currency string
-		var day int
+		var name, timezone, price, currency string
+		var day, minute int
 		var maintenance, rented bool
-		if err := rows.Scan(&id, &name, &day, &price, &currency, &maintenance, &rented); err != nil {
+		if err := rows.Scan(&id, &name, &day, &minute, &timezone, &price, &currency, &maintenance, &rented); err != nil {
 			return err
 		}
 		if err := CheckPriceCurrency(price, currency); err != nil {
@@ -910,6 +916,12 @@ func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
 		if err := checkTrafficResetDay(day); err != nil {
 			return fmt.Errorf("config node %d (%q): %w", id, name, err)
 		}
+		if err := checkTrafficResetMinute(minute); err != nil {
+			return fmt.Errorf("config node %d (%q): %w", id, name, err)
+		}
+		if err := checkBillingTimezone(timezone); err != nil {
+			return fmt.Errorf("config node %d (%q): %w", id, name, err)
+		}
 		if err := checkNodeFlags(maintenance, rented); err != nil {
 			return fmt.Errorf("config node %d (%s) has maintenance and rented both set", id, name)
 		}
@@ -919,7 +931,7 @@ func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
 
 // validateSnapshotAlertEvents 让恢复进来的事件与库里的一样能读：value_unit 是写入口收的取值或迁移写下的 unknown
 // （checkStoredEventValueUnit，与 recordAlertEvent 同一判定），系统事件恒为 n/a。快照不经写入口，旧版快照先经
-// migrateSnapshot 的迁移 57 补上这一列。
+// migrateSnapshot 的迁移 58 补上这一列。
 func validateSnapshotAlertEvents(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, "SELECT id,transition,value,value_unit FROM config.alert_event")
 	if err != nil {

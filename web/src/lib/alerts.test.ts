@@ -158,6 +158,7 @@ describe("eventValueText", () => {
   // 每个单位一条：写法只看事件自带的单位，不看规则。
   it.each([
     ["秒不足一分钟写秒", ev(39.226, "seconds"), "39 s"],
+    ["秒舍入到整分钟切到分钟", ev(59.6, "seconds"), "1m"],
     ["秒超过一分钟写时长", ev(3725, "seconds"), "1h 2m"],
     ["百分比", ev(22.5, "percent"), "23%"],
     ["毫秒", ev(182.44, "milliseconds"), "182 ms"],

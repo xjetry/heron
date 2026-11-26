@@ -11,6 +11,7 @@ import { Picks } from "../components/Picks";
 import { NodeAssignment, assignmentValid, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, AlertKind, BaselineMode, ProbeMetric, ResourceMetric, RttMode, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { useNodeList } from "../api/useNodeList";
+import { useAlertRules } from "../api/useAlertRules";
 import { ALERT_KINDS, BASELINE_MODES, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RELATIVE_LIMITS, RESOURCE_METRICS, RTT_MODES, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 import { isHTTPSTarget } from "../lib/probes";
@@ -126,8 +127,8 @@ export function AlertRules() {
   const nodes = useNodeList({});
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
   const tasks = useQuery(AdminService.method.listProbeTasks, {});
-  // 离线巡检每 10 秒一轮；按同一周期刷新，触发中的节点不用手动刷新就能看到。
-  const rules = useQuery(AdminService.method.listAlertRules, {}, { refetchInterval: 10_000 });
+  // 与常驻布局共享 ListAlertRules 查询；在布局内不重复启轮询，独立渲染时仍按 ALERTS_MS 轮询。
+  const rules = useAlertRules({ poll: true });
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listAlertRules, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveAlertRule, { ...mutationOptions, onSuccess: refresh });
   // 行开关与抽屉共用 mutation observer，重叠的 mutate 只回调最后一次；任一保存挂起时禁用其它保存入口。
@@ -249,7 +250,7 @@ function AlertRuleDrawer({ title, submitLabel, ruleId, nodes, channels, tasks, i
           <div className="row">
             <label>提前天数<input type="number" required min={1} max={365} step={1} value={draft.daysBefore} onChange={(e) => set({ daysBefore: e.target.value })} /></label>
           </div>
-          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
+          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；"今"按节点的计费时区，没设时按 hub 时区。到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日与计费时区在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区与各节点计费时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
         </>
       ) : draft.kind === AlertKind.CERT_EXPIRY ? (
         <>

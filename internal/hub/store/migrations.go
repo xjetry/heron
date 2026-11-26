@@ -82,7 +82,33 @@ var migrations = map[int]func(*sql.Tx) error{
 	54: migrateV54Config,
 	55: migrateV55Metrics,
 	56: execAll(migrationV56Config),
-	57: execAll(migrationV57Config),
+	57: execAll(append(append([]string{}, migrationV57Config...), migrationV57Trigger...)),
+	58: execAll(migrationV58Config),
+}
+
+// v57：节点的重置时刻与计费时区两列（含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。旧行取列默认值
+// ——00:00 与空串（沿用 hub 的 --timezone），周期边界与到期日界与升级前逐一相同。
+// 回滚边界同其它迁移：写入后 schema 56 的二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV57Config = []string{
+	`ALTER TABLE node ADD COLUMN traffic_reset_minute INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE node ADD COLUMN billing_timezone TEXT NOT NULL DEFAULT ''`,
+}
+
+// 两列都出现在 Node 里，改动要推进节点资料版本（ddlNodeListRevision）：重建 node 的更新触发器，WHEN 条件在 v46 的
+// 基础上加这两列。触发器属于运行态，配置快照不带，所以与 migrationV57Config 分开。
+var migrationV57Trigger = []string{
+	`DROP TRIGGER node_list_revision_node_update`,
+	`CREATE TRIGGER node_list_revision_node_update AFTER UPDATE ON node WHEN
+  OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.sort_order IS NOT NEW.sort_order OR OLD.public IS NOT NEW.public
+  OR OLD.note IS NOT NEW.note OR OLD.offline_grace_s IS NOT NEW.offline_grace_s OR OLD.traffic_reset_day IS NOT NEW.traffic_reset_day
+  OR OLD.created_at IS NOT NEW.created_at OR OLD.price IS NOT NEW.price OR OLD.currency IS NOT NEW.currency
+  OR OLD.billing_cycle IS NOT NEW.billing_cycle OR OLD.expires_on IS NOT NEW.expires_on OR OLD.auto_renew IS NOT NEW.auto_renew
+  OR OLD.last_source IS NOT NEW.last_source OR OLD.country IS NOT NEW.country OR OLD.country_ip IS NOT NEW.country_ip
+  OR OLD.country_pin IS NOT NEW.country_pin OR OLD.maintenance IS NOT NEW.maintenance OR OLD.public_remark IS NOT NEW.public_remark
+  OR OLD.traffic_quota_bytes IS NOT NEW.traffic_quota_bytes OR OLD.traffic_quota_mode IS NOT NEW.traffic_quota_mode
+  OR OLD.ipv4_pin IS NOT NEW.ipv4_pin OR OLD.ipv6_pin IS NOT NEW.ipv6_pin OR OLD.rented IS NOT NEW.rented
+  OR OLD.traffic_reset_minute IS NOT NEW.traffic_reset_minute OR OLD.billing_timezone IS NOT NEW.billing_timezone
+BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 }
 
 // metricDDLV55 冻结引入 softirq 占比时的指标表 DDL：v53 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
@@ -361,7 +387,7 @@ var migrationV56Snapshot = []string{
 	`UPDATE operation SET principal=CASE owner_key WHEN 'session' THEN 'session' ELSE 'api_token' END,method='ExecuteChange'`,
 }
 
-// v57：告警事件的观测值自带单位（alert_event.value_unit）。新列的默认值 'unknown' 是起点，随后按能确定的依据改写：
+// v58：告警事件的观测值自带单位（alert_event.value_unit）。新列的默认值 'unknown' 是起点，随后按能确定的依据改写：
 //   - 系统事件（本版本的十种系统 transition）没有观测值，写 'n/a'。
 //   - 规则事件按仍存在的规则推出，与告警引擎生成事件时的取值相同（alert.valueUnit）：离线 seconds；探测 loss_pct 为
 //     percent、rtt_ms 为 milliseconds；资源按读取的指标列，三种使用率为 percent、按核负载无量纲为空串、两种网卡速率为
@@ -372,7 +398,7 @@ var migrationV56Snapshot = []string{
 //
 // 推断依据的是规则当前的种类与指标。规则身份改过（种类、指标变了）的，迁移前的事件按改后的身份回填：库里没有身份
 // 变更的历史，区分不出；引入这一列之后的事件在生成时记下单位，不再受此影响。事件在配置层，迁移与配置快照共用。
-var migrationV57Config = []string{
+var migrationV58Config = []string{
 	`ALTER TABLE alert_event ADD COLUMN value_unit TEXT NOT NULL DEFAULT 'unknown'`,
 	`UPDATE alert_event SET value_unit = 'n/a' WHERE transition IN ('login_success', 'login_locked', 'login_failed', 'auth_changed',
   'backup_success', 'backup_restored', 'backup_failed', 'backup_recovered', 'backup_disabled', 'traffic_report')`,

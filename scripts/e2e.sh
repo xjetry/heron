@@ -262,7 +262,7 @@ jq -e '. == {theme: "auto", adminPath: "/admin/", timezone: "UTC"}' "$work/pub-s
 [ "$(hdr site-default Cache-Control)" = "max-age=300" ] || { echo "FAIL: GetSite Cache-Control"; cat "$work/pub-site-default.headers"; exit 1; }
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
-# 面板按日历切时段用的时区与公开页、流量周期是同一个 --timezone。
+# 面板按日历切时段（晚高峰）用的时区与公开页是同一个 --timezone；没设计费时区的节点，流量周期与剩余天数也按它。
 [ "$(rpc GetSettings '{}')" = 200 ] || { echo "FAIL: GetSettings"; cat "$work/GetSettings.json"; exit 1; }
 jq -e '.timezone == "UTC"' "$work/GetSettings.json" > /dev/null || { echo "FAIL: GetSettings.timezone"; cat "$work/GetSettings.json"; exit 1; }
 # 外观整体替换并回显 hub 实际保存的值（主色转小写），公开页随即拿到；被拒的更新什么都不写。
@@ -430,7 +430,8 @@ done
 jq -e 'all(.nodes[]; .facts.icmpAvailable == true)' "$work/ListNodes.json" > /dev/null || { echo "FAIL: icmp_available not reported"; cat "$work/ListNodes.json"; exit 1; }
 # 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic"; cat "$work/GetTraffic.json"; exit 1; }
-jq -e '.timezone == "UTC" and (.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
+# 周期时区逐节点下发：两个节点都没设计费时区，取 hub 的 --timezone；重置时刻缺省 00:00（零值在 JSON 里省略）。
+jq -e '(.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.resetMinute // 0) == 0 and .traffic.timezone == "UTC" and (.traffic.previousPeriodStart | tonumber) < (.traffic.periodStart | tonumber) and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
 tx_before=$(jq -r --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic.totalTx' "$work/GetTraffic.json")
 adjust_body=$(jq -nc --arg nodeId "$node1" '{nodeId: $nodeId, periodRx: "1073741824", periodTx: "0"}')
 [ "$(rpc AdjustTraffic "$adjust_body")" = 200 ] || { echo "FAIL: AdjustTraffic"; cat "$work/AdjustTraffic.json"; exit 1; }
@@ -585,7 +586,7 @@ wait_alert "$node2" recovered "$wait_alert_recovered_s"
 jq -e --arg n "$node2" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].valueUnit == "seconds"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: offline recovered value_unit"; cat "$work/ListAlertEvents.json"; exit 1; }
 
 # 计费与到期（规则见 store.Billing）。UpdateNode 整体替换，billing 与 node1 其余可编辑字段（公开、重置日 15）一起给全。
-# hub 以 --timezone UTC 运行，jq 的 now 与 strftime 按 UTC 取日历日。
+# hub 以 --timezone UTC 运行、node1 没设计费时区，daysLeft 按 UTC 的今天算；jq 的 now 与 strftime 也按 UTC 取日历日。
 # node_body 到期日 自动续期：node1 的整份可编辑字段，12.50 USD 按月。billing 里的 daysLeft 由 hub 计算，请求里的 999
 # 不起作用：续期后的 0–31、公开快照里与 now 相符、重启后的 4–5、重启后续期的 59–60 四处断言都排除了 999。
 node_body() {

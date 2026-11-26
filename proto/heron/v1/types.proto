@@ -436,9 +436,11 @@ message Traffic {
   // 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
   uint64 total_rx = 1;
   uint64 total_tx = 2;
-  // 当前周期内的字节数。周期起点因重置日或 hub 时区改变而移动时按分钟桶重算：起点往后挪，新周期的量取
-  // [新起点, 现在) 的桶和，此前的校正不再算数；起点往前挪，原周期量加上两个起点之间的桶和。桶里没有 hub 重启后
-  // 首报与跨过离线 TTL 的增量（与 QueryMetrics 的 rx_bytes 同一来源），重算后的值可能比实际少，可经 AdjustTraffic 校正。
+  // 当前周期内的字节数。周期起点因重置日、重置时刻、计费时区或 hub 时区（节点没设计费时区时）改变而移动时按分钟桶
+  // 重算：起点往后挪，新周期的量取 [新起点, 现在) 的桶和，此前的校正不再算数；起点往前挪，原周期量加上两个起点之间的
+  // 桶和。起点不在整点上（如 +05:30 的时区或 08:30 的重置时刻）时，起点所在那一小时按仍保留的 1m 或 5m 历史逐分钟
+  // 分到两侧；那一小时的细级历史都已过保留期时，它整块算在起点之前。桶里没有 hub 重启后首报与跨过离线 TTL 的增量
+  // （与 QueryMetrics 的 rx_bytes 同一来源），重算后的值可能比实际少，可经 AdjustTraffic 校正。
   uint64 period_rx = 3;
   uint64 period_tx = 4;
   // 当前周期起点与下次重置时刻，Unix 秒。
@@ -453,6 +455,14 @@ message Traffic {
   uint64 quota_used_bytes = 10;
   // 用量占配额的百分比；未设配额时缺失。实时展示可能领先于告警使用的已提交观测。
   optional double quota_used_pct = 11;
+  // 重置时刻：timezone 里当地零点起的分钟数 0–1439（见 Node.traffic_reset_minute）。
+  uint32 reset_minute = 12;
+  // 周期按其判定的时区（IANA 名），恒非空：节点的计费时区，节点没设时是 hub 的 --timezone。reset_day 与 reset_minute
+  // 是这个时区里的日与墙钟，按日切这个节点的流量（每日用量）也按它；period_start / next_reset_at 是 Unix 秒，本身无歧义。
+  string timezone = 13;
+  // 上一周期的起点，Unix 秒：按当前的周期规则，严格早于 period_start 的最近一个周期边界。上一周期是
+  // [previous_period_start, period_start)；客户端按周期切历史用它，不自己按重置日推算（短月钳位与夏令时都在 hub 算）。
+  int64 previous_period_start = 14;
 }
 
 // 节点的计费周期。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -487,10 +497,12 @@ message Billing {
   BillingCycle billing_cycle = 3;
   // 到期日 YYYY-MM-DD；空表示没有到期日。保存时须为空或存在的日期。
   string expires_on = 4;
-  // 开着时，到期日早于今天（hub 时区）即按周期推后到不早于今天。hub 启动、每个日界（零点不存在的日子取新一天的
-  // 第一个时刻）、计费字段变化与保存启用的到期规则时检查。保存时要求 billing_cycle 与 expires_on 都非空。
+  // 开着时，到期日早于今天（节点计费时区，见 Node.billing_timezone）即按周期推后到不早于今天。hub 启动、每个在用时区的
+  // 日界（零点不存在的日子取新一天的第一个时刻）、计费字段或计费时区变化与保存启用的到期规则时检查。保存时要求
+  // billing_cycle 与 expires_on 都非空。
   bool auto_renew = 5;
-  // 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
+  // 到期日减去今天的天数，今天按节点计费时区（Node.billing_timezone，空即 hub 的 --timezone）取日历日；负数是已过期的
+  // 天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
   // 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
   optional int32 days_left = 6;
 }

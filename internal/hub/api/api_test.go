@@ -1003,8 +1003,10 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatalf("GetTraffic = %v %v", all, err)
 	}
 
-	if all.Msg.GetTimezone() != "UTC" {
-		t.Fatalf("timezone = %q, want UTC", all.Msg.GetTimezone())
+	// 节点没设计费时区：周期按 hub 时区判定，逐节点下发的就是它的名字，重置时刻是缺省的 00:00；上一周期从 12 月 1 日起。
+	dec1 := time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC).Unix()
+	if tr := all.Msg.Nodes[0].GetTraffic(); tr.GetTimezone() != "UTC" || tr.GetResetMinute() != 0 || tr.GetPreviousPeriodStart() != dec1 {
+		t.Fatalf("traffic timezone = %q, reset minute = %d, previous period start = %d, want UTC, 0 and %d", tr.GetTimezone(), tr.GetResetMinute(), tr.GetPreviousPeriodStart(), dec1)
 	}
 
 	adj, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 5 << 30, PeriodTx: 0}))
@@ -1050,7 +1052,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 20, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
-	if day := h.book.View(999).ResetDay; day != 1 {
+	if day := h.book.View(999).Schedule.Day; day != 1 {
 		t.Fatalf("failed update changed the in-memory reset day to %d", day)
 	}
 }

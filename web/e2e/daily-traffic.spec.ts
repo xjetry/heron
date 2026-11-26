@@ -3,6 +3,7 @@ import { boxOf, expect, fulfillRpc, login, mustField, requestMessage, rpcRoute, 
 
 const MiB = 1024 ** 2;
 const at = (iso: string) => Date.parse(iso) / 1000;
+const previousPeriodStart = at("2025-08-01T00:00:00Z");
 const periodStart = at("2025-09-01T00:00:00Z");
 const now = at("2025-09-10T12:00:00Z");
 // 09-03 是峰值，09-05 恰好一半（只有下行），09-07 没有点；其余日子各 64 MiB。
@@ -13,8 +14,9 @@ test("每日流量柱高与用量成比例、柱宽封顶 24px，窄屏不撑出
   const id = mustField(await hub.rpc(AdminService.method.createNode, { name: `${browserName}-daily` }), "node").id;
   hub.deleteNodeAtEnd(id);
   await page.route(rpcRoute(AdminService.method.getTraffic), (route) => fulfillRpc(route, AdminService.method.getTraffic, () => ({
-    timezone: "UTC", now: BigInt(now),
-    nodes: [{ nodeId: id, name: `${browserName}-daily`, traffic: { periodStart: BigInt(periodStart), nextResetAt: BigInt(at("2025-10-01T00:00:00Z")), resetDay: 1, periodRx: 2n * 1024n ** 3n } }],
+    now: BigInt(now),
+    nodes: [{ nodeId: id, name: `${browserName}-daily`, traffic: {
+      previousPeriodStart: BigInt(previousPeriodStart), periodStart: BigInt(periodStart), nextResetAt: BigInt(at("2025-10-01T00:00:00Z")), resetDay: 1, timezone: "UTC", periodRx: 2n * 1024n ** 3n } }],
   })));
   await page.route(rpcRoute(AdminService.method.queryMetrics), (route) => {
     if (requestMessage(route.request(), AdminService.method.queryMetrics).maxPoints !== 2000) return route.continue();

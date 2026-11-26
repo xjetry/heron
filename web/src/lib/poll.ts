@@ -5,3 +5,6 @@ export const POLL_MS = 5000;
 
 // 详情的周期量、诊断与对比页的 hub 时钟用较低频率读取，不依赖历史落盘刷出。
 export const TRAFFIC_MS = 10_000;
+
+// 告警状态与规则列表轮询周期：hub 离线巡检每 10 秒一轮，常驻布局与总览、告警规则、维护静默共用这一节奏。
+export const ALERTS_MS = 10_000;

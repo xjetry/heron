@@ -236,7 +236,11 @@ export function eventValueText(ev: AlertEvent): string | null {
   switch (ev.valueUnit) {
     case "n/a": return null;
     case "unknown": return `${plain(v)}（单位未知）`;
-    case "seconds": return v < 60 ? `${Math.round(v)} s` : duration(Math.round(v));
+    case "seconds": {
+      // 先四舍五入再选秒或分钟：59.6 秒舍入为 60 后切到 duration（1m），避免出现 "60 s"。
+      const seconds = Math.round(v);
+      return seconds < 60 ? `${seconds} s` : duration(seconds);
+    }
     case "days": return remainingText(Math.round(v));
     case "bytes/s": return `${(v / MBPS_TO_BYTES_PER_S).toFixed(1)} Mbps`;
     case "percent":

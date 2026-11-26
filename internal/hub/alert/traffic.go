@@ -100,7 +100,7 @@ func (e *Engine) evaluateTraffic(ctx context.Context, cy *cycle, nodes []store.N
 			}
 			keep[n.ID] = true
 			s, exists := committed[n.ID]
-			current := !exists || !now.Before(s.PeriodStart) && now.Before(traffic.NextResetAfter(s.PeriodStart, n.TrafficResetDay, e.cfg.Location))
+			current := !exists || !now.Before(s.PeriodStart) && now.Before(traffic.NextResetAfter(s.PeriodStart, traffic.ScheduleOf(n.TrafficSchedule(), e.cfg.Location)))
 			used, pct, _ := traffic.Quota(traffic.Entry{State: s}, n.TrafficQuotaBytes, n.TrafficQuotaMode)
 			o := TrafficObservation{Current: current, QuotaBytes: n.TrafficQuotaBytes, UsedBytes: used, Percent: pct, Threshold: r.Threshold}
 			next, tr := NextTraffic(e.current(stateKey{r.ID, n.ID}), o)

@@ -146,6 +146,7 @@ func TestProbeTaskFamilySurvivesConfigSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeV58Config(t, db)
 	removeV57Config(t, db)
 	removeV56Config(t, db)
 	removeV52Config(t, db)

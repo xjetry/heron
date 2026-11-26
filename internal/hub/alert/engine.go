@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xjetry/heron/internal/clock"
@@ -65,7 +66,8 @@ func (e *Engine) flush(cy *cycle) {
 
 type Config struct {
 	TTL time.Duration
-	// Location 是 hub 的 --timezone：到期日按它的日历日计，New 要求非 nil。
+	// Location 是 hub 的 --timezone，New 要求非 nil。节点的流量周期与到期日按节点的计费时区计，节点没设计费时区时
+	// 回落到它（traffic.BillingZone）；证书到期、维护静默与告警样例只按它。
 	Location *time.Location
 }
 type stateKey struct{ rule, node int64 }
@@ -166,6 +168,10 @@ type Engine struct {
 	// baselineDirty 是保存后要在下一轮基线重算里立即重算的规则（基线窗口或最小样本数可能变了），受 mu 保护；
 	// RecomputeBaselines 每轮整体取走。
 	baselineDirty map[int64]bool
+	// sweepZones 是最近一次到期扫描看到的时区集合（expiryZones），只在 writeMu 下由 publishExpiryZones 写；
+	// RunExpirySweep 不持 writeMu 读它定时，所以用原子指针。expiryRearm 是集合变化时叫醒 RunExpirySweep 的信号，容量 1。
+	sweepZones  atomic.Pointer[[]*time.Location]
+	expiryRearm chan struct{}
 }
 
 // New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
@@ -173,7 +179,7 @@ func New(cfg Config, st Storage, history HistoryReader, l *live.Live, clk clock.
 	if cfg.Location == nil {
 		panic("alert.Config.Location must be set")
 	}
-	return &Engine{cfg: cfg, st: st, history: history, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, baselineDirty: map[int64]bool{}, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}, rentedUntil: map[int64]time.Duration{}}
+	return &Engine{cfg: cfg, st: st, history: history, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, baselineDirty: map[int64]bool{}, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}, rentedUntil: map[int64]time.Duration{}, expiryRearm: make(chan struct{}, 1)}
 }
 func (e *Engine) SetSender(s Sender) { e.mu.Lock(); defer e.mu.Unlock(); e.sender = s }
 

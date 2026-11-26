@@ -121,7 +121,7 @@ func NextProbe(cur store.AlertState, samples []MinuteSample, forMinutes int) (st
 // ExpiryObservation 是一个节点在一次到期扫描里的观测。HasExpiry 为假时 DaysLeft 无意义。
 type ExpiryObservation struct {
 	HasExpiry  bool
-	DaysLeft   int // 到期日减今天（hub 时区的日历日），负数是已过期天数
+	DaysLeft   int // 到期日减今天（节点计费时区的日历日，NodeToday），负数是已过期天数
 	DaysBefore int // 规则的提前天数，1–365
 }
 
