@@ -85,6 +85,10 @@ type Store struct {
 	// external 由 Open 的 ExternalWriter 选项给出，打开后不变：为真时 runWriter 在每个写事务提交前推进离线变更代数
 	// （见 coordination.go）。
 	external bool
+	// retention 是生效保留期，由 Open 的 WithRetention 给出、经 Validate 校验，打开后不变（并发读无需加锁）。
+	// 它是保留期的唯一来源：Prune 与 RunMaintenance 按它删除，ChooseLevel 按它判定哪一级仍保有窗口起点，
+	// 存储健康经 Retention() 按它判定超期。管理端与公开端的历史查询共用这一个 Store，不可能用到不同的保留期。
+	retention Retention
 }
 
 type writeReq struct {
@@ -158,7 +162,8 @@ const (
 type OpenOption func(*openConfig)
 
 type openConfig struct {
-	external bool
+	external  bool
+	retention Retention
 	// backups 是迁移前备份与备份列举用的文件操作；不给 withBackupFiles 时是真实文件系统（osBackupFiles）。
 	backups backupFiles
 }
@@ -167,6 +172,11 @@ type openConfig struct {
 // 变更代数，运行中的 hub 据此发现库外写入并重载缓存。离线入口漏给这个选项，它的写入不会被运行中的 hub 看到。
 func ExternalWriter() OpenOption { return func(c *openConfig) { c.external = true } }
 
+// WithRetention 设定 Store 的生效保留期（见 Store.retention）。不给时是 DefaultRetention：缺省是退回默认值，
+// 不是放宽或不清理——serve 漏传 --retention-* 的解析结果，清理与选级会按默认保留期而不是配置运行，
+// 所以 serve 必须经它传入。离线子命令不清理、不查询历史，用默认值无影响。r 不合法时 Open 失败，不碰库文件。
+func WithRetention(r Retention) OpenOption { return func(c *openConfig) { c.retention = r } }
+
 // Open 按 policy 检查或迁移 schema。SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；
 // serve 与离线子命令都经这里打开库，打开过程的每一种失败都在这一层补上路径，报错才指得出是哪个文件、
 // 该查哪个目录的权限。
@@ -174,9 +184,13 @@ func Open(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy, o
 	if policy != MigrateSchema && policy != RequireCurrentSchema {
 		panic("store.Open requires a valid SchemaPolicy")
 	}
-	cfg := openConfig{backups: osBackupFiles{}}
+	cfg := openConfig{backups: osBackupFiles{}, retention: DefaultRetention}
 	for _, o := range opts {
 		o(&cfg)
+	}
+	// 在迁移之前拒绝：非法保留期是装配错误，不能先改动库文件再报错。
+	if err := cfg.retention.Validate(); err != nil {
+		return nil, fmt.Errorf("store retention: %w", err)
 	}
 	s, err := openStore(path, clk, log, policy, cfg)
 	if err != nil {
@@ -236,7 +250,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	statsDB.SetMaxOpenConns(1)
 	statsCtx, cancelStats := context.WithCancel(context.Background())
 	s := &Store{path: path, files: osFileStatter{}, backups: cfg.backups, w: w, r: r, hr: hr, ev: ev, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1),
-		stats: storageStatsCache{db: statsDB, ctx: statsCtx, cancel: cancelStats}, external: cfg.external}
+		stats: storageStatsCache{db: statsDB, ctx: statsCtx, cancel: cancelStats}, external: cfg.external, retention: cfg.retention}
 	s.publicEnabled.Store(settings.Site.PublicEnabled)
 	go s.runWriter()
 	return s, nil

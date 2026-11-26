@@ -298,7 +298,7 @@ func TestCoverageEmptyAndPrunedShortWindowsRemainUnknown(t *testing.T) {
 	if err := s.Rollup(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Prune(t.Context(), DefaultRetention); err != nil {
+	if _, err := s.Prune(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for _, window := range [][2]int64{{600, 720}, {1200, 1320}} {

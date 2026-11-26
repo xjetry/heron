@@ -234,8 +234,10 @@ func TestProbeAndMetricQueriesShareWindowValidation(t *testing.T) {
 			}
 		})
 	}
+	// 截止到现在的七天窗口：级别只由跨度决定（起点在 5m 保留期内），步长随点数预算变。
+	now := h.clk.Now().Unix()
 	for _, points := range []uint32{0, 720, 2000} {
-		resp, err := h.admin.QueryProbes(t.Context(), connect.NewRequest(&heronv1.QueryProbesRequest{NodeId: id, From: 0, To: 7 * 86400, MaxPoints: points}))
+		resp, err := h.admin.QueryProbes(t.Context(), connect.NewRequest(&heronv1.QueryProbesRequest{NodeId: id, From: now - 7*86400, To: now, MaxPoints: points}))
 		if err != nil {
 			t.Fatal(err)
 		}

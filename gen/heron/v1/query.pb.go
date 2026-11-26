@@ -94,6 +94,10 @@ func (x *QueryMetricsRequest) GetMaxPoints() uint32 {
 type QueryMetricsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
+	// 取两条下限中较粗的一级：按跨度（不超过 6 小时 1m，不超过 7 天 5m，否则 1h），以及 hub 的保留期此刻仍保有
+	// from 处数据的最细级（各级保留期见 GetStorageStats 的 retention_s）。截止到现在的窗口只由跨度决定；过去的
+	// 窗口起点超出细级保留期时选更粗的级，细级已清理的那段由粗级给出，不会整段为空。from 早于所有级的保留期时
+	// 取 1h，保留期之外的那段没有点，coverage_summary 里计为未知分钟。
 	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
 	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
 	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
@@ -539,6 +543,8 @@ func (x *QueryProbesRequest) GetMaxPoints() uint32 {
 type QueryProbesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
+	// 选级规则同 QueryMetricsResponse.level（跨度与保留期两条下限取较粗者）；from 早于所有级的保留期时取 1h，
+	// 保留期之外的那段没有点。
 	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
 	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
 	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`

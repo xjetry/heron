@@ -144,7 +144,7 @@ describe("dailyWindow", () => {
     expect(w.to).toBe(1_000_000_140);
   });
 
-  // hub 的 store.ChooseLevel：跨度超过 7 天选 1h 级，步长取 max(3600, ceil(跨度 / max_points) 向上取整到 3600)。
+  // hub 的 Store.ChooseLevel：跨度超过 7 天选 1h 级，步长取 max(3600, ceil(跨度 / max_points) 向上取整到 3600)。
   // 按小时归日依赖步长恰好是 3600：最长的周期（31 天）走到最后一秒时，窗口仍须落在这两条边界之内。
   it("最长周期末尾的窗口仍让 hub 选 1h 级、步长 3600", () => {
     const start = 1_800_000_000n;

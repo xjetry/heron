@@ -210,7 +210,7 @@ func TestGeneratedDatabaseReadsBackThroughStore(t *testing.T) {
 	node := int64(1)
 	for _, w := range queryWindows {
 		from := e.queryTo - w.Span
-		lv, step := store.ChooseLevel(from, e.queryTo, panelMaxPoints)
+		lv, step := st.ChooseLevel(from, e.queryTo, panelMaxPoints)
 		got, summary, err := st.QueryMetricsCoverage(ctx, node, from, e.queryTo, lv, step)
 		if err != nil {
 			t.Fatalf("%s: %v", w.Name, err)
