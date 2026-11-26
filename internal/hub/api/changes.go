@@ -341,12 +341,9 @@ func (s *Service) ListOperations(ctx context.Context, req *connect.Request[heron
 		}
 		owner = p.ID
 	}
-	limit := int(req.Msg.Limit)
-	if limit == 0 {
-		limit = 100
-	}
-	if limit > 500 {
-		limit = 500
+	limit, err := listLimit(req.Msg.Limit, 100, 500)
+	if err != nil {
+		return nil, err
 	}
 	list, err := s.store.ListOperations(ctx, owner, req.Msg.RequestId, limit)
 	if err != nil {
