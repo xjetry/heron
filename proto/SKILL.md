@@ -165,7 +165,7 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
   --data '{}' "$HERON_HUB/heron.v1.AdminService/ListNodes" | jq '[(.nodes // [])[] | select(.billing.daysLeft != null) | {name, price: .billing.price, currency: .billing.currency, expiresOn: .billing.expiresOn, daysLeft: .billing.daysLeft}]'
 ```
 
-最近 20 条告警事件（含 `rule_id`、`node_id` 为 0 的系统事件：`transition` 为 `login_success`、`login_locked` 的登录通知与 `backup_failed`、`backup_recovered`、`backup_disabled` 的配置层备份；规则事件为 `firing`、`recovered`）：
+最近 20 条告警事件（含 `rule_id`、`node_id` 为 0 的系统事件：`transition` 为 `login_success`、`login_locked`、`login_failed`、`auth_changed` 的登录与认证事件、`backup_success`、`backup_restored`、`backup_failed`、`backup_recovered`、`backup_disabled` 的备份事件与 `traffic_report` 的流量报告；规则事件为 `firing`、`recovered`）。每条事件的 `value` 必须配着 `valueUnit` 读，单位与 `MetricSeries.unit` 同一词表（`percent`、`bytes`、`bytes/s`、`count`、`count/s`、`seconds`、`milliseconds`、`days`，省略即空串表示无量纲的按核负载）；`n/a` 表示没有观测值（系统事件、因清除到期日或流量配额而恢复的事件，`value` 为 0）；`unknown` 表示旧事件升级时规则已删、单位不明，不能按任何单位解读：
 
 ```sh example
 curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \

@@ -201,7 +201,7 @@ export type MetricSeries = Message<"heron.v1.MetricSeries"> & {
   name: string;
 
   /**
-   * percent、bytes、bytes/s、count、count/s；load 无单位为空串。
+   * percent、bytes、bytes/s、count、count/s；load 无单位为空串。与 AlertEvent.value_unit 同一单位词表。
    *
    * @generated from field: string unit = 2;
    */
