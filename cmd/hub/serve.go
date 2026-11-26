@@ -418,13 +418,13 @@ func warnExposed(log *slog.Logger, key, addr string) {
 func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer func() { result = errors.Join(result, h.st.Close()) }()
 	// 两个监听都绑上才过更新门：门报告就绪即确认这个版本可用，任一端口绑不上的 hub 不能被确认。
-	listener, err := net.Listen("tcp", h.opts.listen)
+	listener, err := listenTCP(context.Background(), h.opts.listen)
 	if err != nil {
 		return err
 	}
 	var publicListener net.Listener
 	if h.publicHandler != nil {
-		if publicListener, err = net.Listen("tcp", h.opts.publicListen); err != nil {
+		if publicListener, err = listenTCP(context.Background(), h.opts.publicListen); err != nil {
 			_ = listener.Close()
 			return fmt.Errorf("%s: %w", flagSource(publicListenFlag), err)
 		}
@@ -464,7 +464,7 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer startLoop(h.hb.Run)()
 	defer startLoop(h.reload.Run)()
 
-	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
+	// 监听在 listenTCP 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。
 	// 离线告警在 ttl 与节点宽限期中较大者之后至多再等一个 offline_sweep 才触发（NextOffline 两者都要满足），
 	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；delivery_retry_wait 只给出固定重试间隔的总和，不是投递
