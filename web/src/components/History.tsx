@@ -102,10 +102,12 @@ const PANELS: { title: string; selections: SeriesSelection[]; unit?: string }[] 
     { name: "disk_read_bps", value: "mean", label: "读均值" },
     { name: "disk_write_bps", value: "mean", label: "写均值" },
   ] },
-  // steal 与 iowait 是 cpu_pct 之外的独立占比，各自一条线；固定 0–100 的百分比轴。
-  { title: "CPU steal / iowait", unit: "percent", selections: [
+  // steal、iowait、softirq 是同一次差分里各自独立的占比（iowait 不计入 cpu_pct，steal 与 softirq 是 cpu_pct 里可单独看的部分），
+  // 各自一条线；三者量级相近，共用固定 0–100 的百分比轴。
+  { title: "CPU steal / iowait / softirq", unit: "percent", selections: [
     { name: "cpu_steal_pct", value: "mean", label: "steal 均值" },
     { name: "cpu_iowait_pct", value: "mean", label: "iowait 均值" },
+    { name: "cpu_softirq_pct", value: "mean", label: "softirq 均值" },
   ] },
   // hub 对建连速率保留桶内均值与最大采样值，toAligned 按所选统计量取值、不互相补齐；因此主动、被动各画均值与峰值，避免短时风暴被均值抹平。
   { title: "TCP 建连", unit: "count/s", selections: [

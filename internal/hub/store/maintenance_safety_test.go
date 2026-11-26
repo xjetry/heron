@@ -49,7 +49,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 		return len(b), nil
 	}), nil))
 	done := make(chan struct{})
-	go func() { s.RunMaintenance(ctx, DefaultRetention); close(done) }()
+	go func() { s.RunMaintenance(ctx); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(testwait.Bound):
@@ -75,13 +75,13 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, ts, ts+60)}); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.Prune(ctx, DefaultRetention); err != nil || n != 0 || len(readLevel(t, s, levels[0], id)) != 1 {
+	if n, err := s.Prune(ctx); err != nil || n != 0 || len(readLevel(t, s, levels[0], id)) != 1 {
 		t.Fatalf("unconsumed 1m row deleted: n=%d err=%v", n, err)
 	}
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.Prune(ctx, DefaultRetention); err != nil || n != 1 || len(readLevel(t, s, levels[0], id)) != 0 {
+	if n, err := s.Prune(ctx); err != nil || n != 1 || len(readLevel(t, s, levels[0], id)) != 0 {
 		t.Fatalf("consumed 1m row retained: n=%d err=%v", n, err)
 	}
 	// 5m 也必须等待自己的消费者；不把 5m 水位误用作 1h 消费凭据。
@@ -92,13 +92,13 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := Retention{M1: 6 * time.Hour, M5: 7 * 24 * time.Hour, H1: 365 * 24 * time.Hour}
-	if n, err := s.Prune(ctx, r); err != nil || n != 0 || len(readLevel(t, s, levels[1], id)) != 1 {
+	if n, err := s.prune(ctx, r); err != nil || n != 0 || len(readLevel(t, s, levels[1], id)) != 1 {
 		t.Fatalf("unconsumed 5m row deleted: n=%d err=%v", n, err)
 	}
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.Prune(ctx, r); err != nil || n != 1 || len(readLevel(t, s, levels[1], id)) != 0 {
+	if n, err := s.prune(ctx, r); err != nil || n != 1 || len(readLevel(t, s, levels[1], id)) != 0 {
 		t.Fatalf("consumed 5m row retained: n=%d err=%v", n, err)
 	}
 }

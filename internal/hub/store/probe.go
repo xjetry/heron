@@ -428,7 +428,7 @@ func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
 		}
 		signed[i] = int64(id)
 	}
-	return s.reorder(ctx, "probe_task", signed)
+	return s.reorder(ctx, ActionReorderProbeTasks, "probe_task", signed)
 }
 
 // DeleteProbeTask 删任务、分配、标签关联与该任务的证书观测并加版本，并在同一事务里登记 kind=task 的清理作业；

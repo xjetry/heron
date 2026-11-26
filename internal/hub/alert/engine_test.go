@@ -269,7 +269,8 @@ func TestEvaluateProbesReadsClosedMinutes(t *testing.T) {
 			f := newFixture(t)
 			task := f.task(t, f.ids)
 			other := f.task(t, f.ids)
-			ts := f.clk.Now().Unix() - 240
+			// 用例写到 ts+420 那一分钟；整段放在夹具时钟之前，因为写入口拒绝起点晚于 metric.LatestMinute 的行。
+			ts := f.clk.Now().Unix() - 600
 			r := store.AlertRule{Name: "探测", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task, Metric: metricName, Threshold: 20, ForMinutes: 3}
 			if metricName == store.MetricRttMs {
 				r.RttMode = store.RttThreshold

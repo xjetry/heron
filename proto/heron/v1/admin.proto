@@ -20,8 +20,12 @@ service AdminService {
   // 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
   rpc ExecuteChange(ExecuteChangeRequest) returns (ExecuteChangeResponse) {
     option (heron.v1.access) = ACCESS_CHANGE;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
-  // API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+  // 操作记录：会话直调的写、API token 经 ExecuteChange 执行的变更，以及 hub 自身对用户可见配置的修改（自动续期），
+  // 同一条记录链、同一个查询面。会话看得到全部记录，可按 owner_id、principal、action、request_id 过滤；API token 只看
+  // 得到自己的（指定别人的 owner_id 返回 PermissionDenied）。按提交时刻倒序、同刻按 request_id 升序。快照只含白名单列，
+  // 不含任何凭据。保留期见 Operation。
   rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
@@ -38,10 +42,12 @@ service AdminService {
   // 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
   rpc StartUpdate(StartUpdateRequest) returns (StartUpdateResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
   rpc CancelUpdate(CancelUpdateRequest) returns (CancelUpdateResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
   rpc Login(LoginRequest) returns (LoginResponse) {
@@ -57,19 +63,23 @@ service AdminService {
   // 安全凭据仅允许会话访问，不返回 TOTP 密钥或恢复码。
   rpc GetSecurity(GetSecurityRequest) returns (GetSecurityResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 修改凭据需要重新认证；挑战绑定当前会话与凭据版本。修改成功撤销现有会话。
   rpc SecurityAction(SecurityActionRequest) returns (SecurityActionResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 作废当前会话并清除 cookie。
   rpc Logout(LogoutRequest) returns (LogoutResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
   // API token 不能管理其它凭据，因此不能列出或撤销会话。
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
   // 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
@@ -77,6 +87,7 @@ service AdminService {
   // 会话已不存在，结果仍安全。
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
 
   // 列出节点；可按标签过滤（ListNodesRequest.tags），或只列无标签节点（ListNodesRequest.untagged）。
@@ -88,11 +99,13 @@ service AdminService {
   // 返回 ResourceExhausted 并说明，节点不建。
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态、已出租状态）。计费字段有变化时，
   // 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（见 store.Billing）——先推后一个周期，仍早于 hub 时区
   // （--timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
@@ -101,24 +114,29 @@ service AdminService {
   // 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
   rpc RenewNodeBilling(RenewNodeBillingRequest) returns (RenewNodeBillingResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
   // 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
   rpc BatchUpdateNodeTags(BatchUpdateNodeTagsRequest) returns (BatchUpdateNodeTagsResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 删除节点及其全部历史；进程内的实时状态同步清理。
   rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
   // 已安装主机用安装脚本的 --re-register 显式替换注册，普通升级不消费此凭据。
   rpc RotateNodeToken(RotateNodeTokenRequest) returns (RotateNodeTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
   rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 把一组节点按它们现有的先后整体移到全序第 position 位起的连续位置，其余节点相对顺序不变。全序按
   // (sort_order, id) 升序，与列表、总览、公开页同一顺序；Node.position 是节点在这条全序里的名次（从 1 起，
@@ -129,6 +147,7 @@ service AdminService {
   // 1..N-k+1（N 为节点总数），越界返回 InvalidArgument 并写明区间，不截断——截断会让写错的位置静默落到首尾。
   rpc MoveNodes(MoveNodesRequest) returns (MoveNodesResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
   rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
@@ -137,14 +156,17 @@ service AdminService {
   // 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
   rpc DeleteTag(DeleteTagRequest) returns (DeleteTagResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
 
   // 开启（或替换）注册窗口，返回一次性 key。
   rpc OpenRegisterWindow(OpenRegisterWindowRequest) returns (OpenRegisterWindowResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   rpc CloseRegisterWindow(CloseRegisterWindowRequest) returns (CloseRegisterWindowResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   rpc GetRegisterWindow(GetRegisterWindowRequest) returns (GetRegisterWindowResponse) {
     option (heron.v1.access) = ACCESS_READ;
@@ -165,6 +187,7 @@ service AdminService {
   // 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
   rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
 
   // 按展示顺序列出全部探测任务及其分配。
@@ -174,14 +197,17 @@ service AdminService {
   // 保存探测任务：id 为 0 即创建，提交整份分配列表。
   rpc SaveProbeTask(SaveProbeTaskRequest) returns (SaveProbeTaskResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 删除探测任务：不删历史，到期由清理删除。
   rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 整体重排探测任务的展示顺序，不改变 agent 执行清单或任务版本。
   rpc ReorderProbeTasks(ReorderProbeTasksRequest) returns (ReorderProbeTasksResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
   rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse) {
@@ -208,10 +234,12 @@ service AdminService {
   // id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
   rpc SaveAlertRule(SaveAlertRuleRequest) returns (SaveAlertRuleResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
   rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 列出全部静默（含保留期内已过期的一次性静默），每条带此刻是否在窗口内与展开后的节点覆盖。
   rpc ListSilences(ListSilencesRequest) returns (ListSilencesResponse) {
@@ -220,9 +248,11 @@ service AdminService {
   // id 为 0 时创建，否则整体替换静默与作用域。
   rpc SaveSilence(SaveSilenceRequest) returns (SaveSilenceResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   rpc DeleteSilence(DeleteSilenceRequest) returns (DeleteSilenceResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
   rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse) {
@@ -235,35 +265,42 @@ service AdminService {
   // 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
   rpc GetAlertDeliveryError(GetAlertDeliveryErrorRequest) returns (GetAlertDeliveryErrorResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
   // agent 不需要渠道配置，所以只对会话开放。
   rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
   rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 被告警规则引用的渠道不可删除，错误列出引用规则。
   rpc DeleteNotifyChannel(DeleteNotifyChannelRequest) returns (DeleteNotifyChannelResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 按编辑中的规则（可未保存）与一个样例节点渲染各关联渠道在某一阶段会发出的请求，不出网。请求体由投递同一条渲染
   // 路径给出，与真实告警逐字节相同；模板执行出错的渠道在结果里给出错误原文，其余渠道照常渲染。
   // 渲染结果含按请求体模板展开的内容，模板里可能放着下游密钥，所以只对会话开放。
   rpc PreviewAlertNotification(PreviewAlertNotificationRequest) returns (PreviewAlertNotificationResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 与 PreviewAlertNotification 同一个样例，摘要前冠以 "[测试] "，同步发往各关联渠道（并发，每个渠道至多 10 秒），
   // 逐渠道给出结果。不写告警状态与事件、不建投递记录、不占渠道的每分钟节奏。接收方的错误原文可能回显请求体，
   // 所以只对会话开放。
   rpc TestAlertNotification(TestAlertNotificationRequest) returns (TestAlertNotificationResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
@@ -288,6 +325,7 @@ service AdminService {
   // 期望取值，什么都不写入。
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 主题在同域的受限沙箱运行，安装与启用分离。
   // 上传一个主题包（zip，至多 8 MiB）并安装不可变版本，不改变当前公开页。
@@ -295,43 +333,53 @@ service AdminService {
   // 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
   rpc UploadTheme(UploadThemeRequest) returns (UploadThemeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 已安装的主题，按 id 升序。
   rpc ListThemes(ListThemesRequest) returns (ListThemesResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 启用指定摘要的主题版本；id 为空即切回内置公开页。
   // 没有这个主题时 NotFound，启用状态不变。
   rpc EnableTheme(EnableThemeRequest) returns (EnableThemeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 删除主题及其全部文件；删的是启用中的主题时回落到内置公开页。没有这个主题时 NotFound。
   rpc DeleteTheme(DeleteThemeRequest) returns (DeleteThemeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
   rpc GetThemePreview(GetThemePreviewRequest) returns (GetThemePreviewResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 删除未使用版本，不允许删除当前或上一回滚版本。
   rpc DeleteThemeVersion(DeleteThemeVersionRequest) returns (DeleteThemeVersionResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 读取公开 GitHub 仓库的 Release 列表，不安装任何内容。
   rpc ListThemeReleases(ListThemeReleasesRequest) returns (ListThemeReleasesResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 安装明确选定的 Release ZIP 资产；不执行源码构建，不自动启用。
   rpc InstallThemeRelease(InstallThemeReleaseRequest) returns (InstallThemeReleaseResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 为当前会话创建短期交互预览；不会公开或启用该版本。
   rpc PreviewTheme(PreviewThemeRequest) returns (PreviewThemeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 下载保留的原始 ZIP；旧 SDK 归档也可下载，但不因此取得执行权限。
   rpc GetThemePackage(GetThemePackageRequest) returns (GetThemePackageResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 库的逻辑大小、每张表的行数与存储健康读数，与 heron-hub stats 同一来源。
   rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse) {
@@ -340,20 +388,24 @@ service AdminService {
   // API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
   rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_NONE;
   }
   // 建一个 API token，以 Authorization: Bearer <token> 调用：缺省全站只读，grant 预授权 ExecuteChange 的写操作与节点范围，
   // expires_at 设有效期。
   rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 整体替换 token 的名称、授权与有效期，明文不变：持有者不用换配置，下一个请求即按新授权鉴权，回执历史随明文延续。
   // 已过期的 token 改到未来即恢复。只限会话：token 不能改自己。
   rpc UpdateApiToken(UpdateApiTokenRequest) returns (UpdateApiTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
   rpc DeleteApiToken(DeleteApiTokenRequest) returns (DeleteApiTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
+    option (heron.v1.audit) = AUDIT_WRITE;
   }
   // 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
   rpc GetApiReference(GetApiReferenceRequest) returns (GetApiReferenceResponse) {
@@ -1708,7 +1760,8 @@ message ListAlertEventsRequest {
   int64 node_id = 1;
   // 0 表示从最新事件开始，否则只返回小于此 id 的事件。
   int64 before_id = 2;
-  // 0 取 100，超过 500 按 500 返回。
+  // 0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断。翻页用上一页最后一条的 id 作 before_id，
+  // 返回条数少于 limit 即已到底——截断会让这条判断失真。
   uint32 limit = 3;
 }
 message ListAlertEventsResponse { repeated AlertEvent events = 1; }
@@ -1912,18 +1965,51 @@ message ExecuteChangeRequest {
     RenewNodeBillingRequest renew_node_billing = 23;
   }
 }
+// 一条操作记录：一次有副作用的调用在业务写的同一事务里留下的事实。详细差异（before_json、after_json）在之后的写入
+// 时清空超过 90 天的，其余字段永久保留：ExecuteChange 的幂等依赖它们，旧 request_id 不能因清理再次执行。配置备份带着
+// 全部记录，恢复时与目标库已有的取并集。
 message Operation {
+  // API token 主体的 token id；会话与系统主体为 0。
   int64 owner_id = 1;
+  // ExecuteChange 的记录是调用方给的 request_id；其余由 hub 生成，形如 op: 加 32 位十六进制，含冒号，
+  // 不会与 ExecuteChange 接受的 request_id 相撞。
   string request_id = 2;
+  // 动作名，snake_case，如 update_node、update_settings、auto_renew_node；同一操作经会话直调与经 ExecuteChange
+  // 是同一个名字。
   string action = 3;
+  // 对象的整数 id（节点、探测任务、告警规则、渠道、静默、API token、标签）；对象以文本标识时为 0，见 resource_key。
   int64 resource_id = 4;
-  // 白名单配置快照，不含节点 token、注册 key、通知密钥。
+  // 白名单快照（JSON），不含任何凭据：密码及其哈希、token 明文与哈希、注册 key、webhook 地址与请求体模板、
+  // Telegram token、S3 密钥、心跳地址、Passkey 与 TOTP 材料都不在其中，只写不读的设置记为是否已设置。
   string before_json = 5;
   string after_json = 6;
-  // 预览为 0；非 0 表示业务事务和回执一并提交，不表示异步节点更新已安装成功。
+  // 提交时刻，Unix 秒；ExecuteChange 预览为 0。非 0 不表示异步节点更新已安装成功。
   int64 committed_at = 7;
-  // 已提交回执的稳定标识，恢复后数字 owner_id 和 request_id 相同的不同凭据历史仍可区分；预览为空。
+  // 已提交记录的稳定标识，恢复后数字 owner_id 和 request_id 相同的不同凭据历史仍可区分；预览为空。
   string id = 8;
+  OperationPrincipal principal = 9;
+  // 会话主体的会话 id，与 ListSessions 的 Session.id 同值；会话被撤销后仍保留。其余主体，以及记录来源列之前的
+  // 会话记录为空串。
+  string session_id = 10;
+  // 发起请求的来源地址（auth.SourceText 规范文本，与 ListSessions.request_source、登录锁定同一取法）；系统主体
+  // 与记录来源列之前的记录为空串。
+  string source = 11;
+  // 发起的 AdminService 方法名，如 UpdateNode、ExecuteChange；系统主体为空串。记录方法列之前的回执都来自
+  // ExecuteChange。
+  string method = 12;
+  // 以文本标识的对象：主题 id、会话 id；一次涉及多个对象的操作在这里给出成员的 JSON 整数数组（如批量改标签与
+  // 移动节点的节点 id）。其余为空串。
+  string resource_key = 13;
+}
+
+enum OperationPrincipal {
+  OPERATION_PRINCIPAL_UNSPECIFIED = 0;
+  // 面板会话。
+  OPERATION_PRINCIPAL_SESSION = 1;
+  // API token，owner_id 是它的 id。
+  OPERATION_PRINCIPAL_API_TOKEN = 2;
+  // hub 自身对用户可见配置的修改（自动续期推后到期日）。上报入账、上卷、清理、告警状态推进等内部写不记。
+  OPERATION_PRINCIPAL_SYSTEM = 3;
 }
 message ExecuteChangeResponse {
   Operation operation = 1;
@@ -1933,9 +2019,17 @@ message ExecuteChangeResponse {
   google.protobuf.Any result = 4;
 }
 message ListOperationsRequest {
+  // 非 0 时只列这枚 API token 的记录；0 不按 token 过滤。API token 调用方只能给 0 或自己的 id。
   int64 owner_id = 1;
+  // 非空时只列这个 request_id 的记录。
   string request_id = 2;
+  // 返回按提交时刻从新到旧的最新条数。0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断：
+  // 这里没有翻页游标，截断会让调用方误以为已经拿全。
   uint32 limit = 3;
+  // 非 UNSPECIFIED 时只列这种主体的记录。
+  OperationPrincipal principal = 4;
+  // 非空时只列这个动作的记录（Operation.action 的取值）。
+  string action = 5;
 }
 message ListOperationsResponse { repeated Operation operations = 1; }
 message ListNotifyChannelRefsRequest {}

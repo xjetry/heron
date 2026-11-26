@@ -8,7 +8,8 @@ import { addDays, dayInMonth } from "./ymd";
 // 手动校正只改周期用量、不改历史；分钟桶每分钟才刷出已闭合的那些（ingest.Flush），历史比账本晚几分钟。所以按日合计
 // 与本周期的下行 + 上行可以不等，差额由 unattributedBytes 给出。
 
-// 按小时归日要求 hub 返回的步长恰好是 3600。store.ChooseLevel 对超过 7 天的窗口选 1h 级，步长从 3600 起加大，
+// 按小时归日要求 hub 返回的步长恰好是 3600。hub 的 Store.ChooseLevel 对超过 7 天的窗口选 1h 级（最粗的一级，按保留期
+// 加的下限只会把级别推粗，推不过 1h），步长从 3600 起加大，
 // 直到按步长对齐后的桶数 ceil(to / step) − floor(from / step) 不超过 max_points；这个桶数小于 跨度 / step + 2，
 // 所以跨度不超过 max_points − 1 小时，步长就停在 3600。窗口最长是 31 天的周期加 DAILY_LOOKBACK_S，约 1513 小时。
 export const DAILY_MAX_POINTS = 2000;

@@ -15,7 +15,7 @@ import { ADMIN_SCHEME_KEY, readSchemeChoice, writeSchemeChoice } from "../lib/sc
 const navigation: { label: string; items: { to: string; label: string; icon: IconName }[] }[] = [
   { label: "监控", items: [{ to: "/", label: "总览", icon: "overview" }, { to: "/nodes", label: "节点", icon: "server" }, { to: "/renewals", label: "续费日历", icon: "calendar" }, { to: "/register", label: "批量添加节点", icon: "plus" }, { to: "/probes", label: "探测任务", icon: "activity" }] },
   { label: "告警", items: [{ to: "/alerts", label: "告警规则", icon: "bell" }, { to: "/events", label: "告警事件", icon: "history" }, { to: "/silences", label: "维护静默", icon: "moon" }, { to: "/channels", label: "通知渠道", icon: "send" }] },
-  { label: "系统", items: [{ to: "/appearance", label: "外观", icon: "palette" }, { to: "/themes", label: "主题", icon: "layers" }, { to: "/storage", label: "存储", icon: "database" }, { to: "/updates", label: "在线更新", icon: "activity" }, { to: "/security", label: "安全", icon: "shield" }, { to: "/tokens", label: "API token", icon: "key" }] },
+  { label: "系统", items: [{ to: "/appearance", label: "外观", icon: "palette" }, { to: "/themes", label: "主题", icon: "layers" }, { to: "/storage", label: "存储", icon: "database" }, { to: "/updates", label: "在线更新", icon: "activity" }, { to: "/security", label: "安全", icon: "shield" }, { to: "/tokens", label: "API token", icon: "key" }, { to: "/operations", label: "操作记录", icon: "history" }] },
 ];
 
 function Navigation({ onNavigate }: { onNavigate?: () => void }) {

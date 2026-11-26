@@ -30,6 +30,19 @@ var schemaV25 = append(slices.Clone(schemaV24),
 	"ALTER TABLE node_update ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0",
 )
 
+// sessionContext 是会话请求的 ctx：api 的鉴权拦截器给会话放的 Caller。写记录必须有 Caller（recordOwner）。
+func sessionContext(ctx context.Context) context.Context {
+	return WithCaller(ctx, Caller{Kind: PrincipalSession, Session: testSessionID, Source: "192.0.2.1", Method: "Test"})
+}
+
+// testSessionID 是 sessionContext 的会话 id，形如 ListSessions 的 id。
+const testSessionID = "00000000000000000000000000000000000000000000000000000000000000aa"
+
+// tokenContext 是 API token 请求的 ctx：与拦截器一致，主体与 Caller 同时放入。
+func tokenContext(ctx context.Context, p APIToken) context.Context {
+	return WithCaller(WithPrincipal(ctx, p), Caller{Kind: PrincipalAPIToken, Source: "192.0.2.2", Method: "ExecuteChange"})
+}
+
 // permitPolicy 放行一切：本文件的用例验证写边界自身的状态机，授权裁决由 authz 包的用例钉住（store 不能 import
 // 实现了策略的 authz）。
 type permitPolicy struct{}
@@ -107,7 +120,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 		return c
 	}
 	c := newChange()
-	if _, _, err := s.CreateNode(WithChange(t.Context(), c), NewNode{Name: "pending"}, hash(1)); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
+	if _, _, err := s.CreateNode(WithChange(sessionContext(t.Context()), c), NewNode{Name: "pending"}, hash(1)); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Fatalf("deferred commit constraint did not fail: %v", err)
 	}
 	if c.ID == "" || c.CommittedAt != 0 || !c.claimed {
@@ -123,11 +136,11 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	c = newChange()
-	if _, _, err := s.CreateNode(WithChange(t.Context(), c), NewNode{Name: "pending"}, hash(1)); err != nil || c.CommittedAt == 0 {
+	if _, _, err := s.CreateNode(WithChange(sessionContext(t.Context()), c), NewNode{Name: "pending"}, hash(1)); err != nil || c.CommittedAt == 0 {
 		t.Fatalf("retry after commit failure did not recover: %+v %v", c, err)
 	}
 	retry := newChange()
-	if _, _, err := s.CreateNode(WithChange(t.Context(), retry), NewNode{Name: "pending"}, hash(1)); !errors.Is(err, ErrReplay) || retry.ID != c.ID {
+	if _, _, err := s.CreateNode(WithChange(sessionContext(t.Context()), retry), NewNode{Name: "pending"}, hash(1)); !errors.Is(err, ErrReplay) || retry.ID != c.ID {
 		t.Fatalf("recovered commit did not replay: %+v %v", retry, err)
 	}
 }
@@ -139,7 +152,7 @@ func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := WithPrincipal(t.Context(), p)
+	ctx := tokenContext(t.Context(), p)
 	if err := s.SetRegisterWindow(ctx, hash(2), clk.Now().Add(60000000000), 2); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +191,7 @@ func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
-	ctx := t.Context()
+	ctx := sessionContext(t.Context())
 	create := func(id string, b byte) *Change {
 		t.Helper()
 		c := &Change{Operation: Operation{RequestID: id, RequestHash: id}, Action: ActionCreateNode, Policy: permitPolicy{}}
@@ -214,7 +227,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	operations, err := reopened.ListOperations(ctx, 0, "", 100)
+	operations, err := reopened.ListOperations(ctx, OperationFilter{Limit: 100})
 	if err != nil || len(operations) != 2 {
 		t.Fatalf("restore erased existing receipts: %+v %v", operations, err)
 	}
@@ -283,7 +296,7 @@ func TestChangeTargetRejectsSiblingFirstWrite(t *testing.T) {
 		t.Run(fmt.Sprintf("preview=%t", preview), func(t *testing.T) {
 			f := newTargetFixture(t)
 			c := f.change(t, ActionRotateNodeToken, preview)
-			ctx := WithChange(t.Context(), c)
+			ctx := WithChange(sessionContext(t.Context()), c)
 			if _, err := f.s.UpdateNode(ctx, f.node, rename("renamed")); !errors.Is(err, ErrChangeTarget) {
 				t.Fatalf("sibling write under rotate: %v, want ErrChangeTarget", err)
 			}
@@ -308,12 +321,12 @@ func TestChangeTargetMatchesActionAndResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := f.change(t, ActionUpdateNode, false)
-	if _, err := f.s.UpdateNode(WithChange(t.Context(), c), other, rename("wrong")); !errors.Is(err, ErrChangeTarget) {
+	if _, err := f.s.UpdateNode(WithChange(sessionContext(t.Context()), c), other, rename("wrong")); !errors.Is(err, ErrChangeTarget) {
 		t.Fatalf("write on another resource: %v", err)
 	}
 	create := f.change(t, ActionCreateNode, false)
 	create.ResourceID = f.node
-	if _, _, err := f.s.CreateNode(WithChange(t.Context(), create), NewNode{Name: "x"}, hash(4)); !errors.Is(err, ErrChangeTarget) {
+	if _, _, err := f.s.CreateNode(WithChange(sessionContext(t.Context()), create), NewNode{Name: "x"}, hash(4)); !errors.Is(err, ErrChangeTarget) {
 		t.Fatalf("create carrying a resource id: %v", err)
 	}
 	if _, err := f.s.GetNode(t.Context(), other); err != nil {
@@ -336,8 +349,10 @@ func TestPlainWritesNeverConsumeTheChange(t *testing.T) {
 	t.Parallel()
 	f := newTargetFixture(t)
 	c := f.change(t, ActionUpdateNode, false)
-	ctx := WithChange(t.Context(), c)
-	if err := f.s.ReorderNodes(ctx, []int64{f.node}); err != nil {
+	ctx := WithChange(sessionContext(t.Context()), c)
+	// 账本刷出是不属于记录链的普通写（WriteTraffic 经 write）。
+	plain := []TrafficRecord{{NodeID: f.node, PeriodStart: time.Unix(1, 0)}}
+	if _, err := f.s.WriteTraffic(ctx, plain); err != nil {
 		t.Fatal(err)
 	}
 	if c.claimed {
@@ -346,7 +361,7 @@ func TestPlainWritesNeverConsumeTheChange(t *testing.T) {
 	if _, err := f.s.UpdateNode(ctx, f.node, rename("audited")); err != nil || c.CommittedAt == 0 || !strings.Contains(c.AfterJSON, "audited") {
 		t.Fatalf("primary write after a plain one: receipt=%+v err=%v", c.Operation, err)
 	}
-	if err := f.s.ReorderNodes(ctx, []int64{f.node}); err != nil {
+	if _, err := f.s.WriteTraffic(ctx, plain); err != nil {
 		t.Fatalf("derived plain write after commit: %v", err)
 	}
 	if name, _, receipts := f.state(t); name != "audited" || receipts != 1 {
@@ -358,7 +373,7 @@ func TestChangeTargetPreviewRollsBack(t *testing.T) {
 	t.Parallel()
 	f := newTargetFixture(t)
 	c := f.change(t, ActionUpdateNode, true)
-	if _, err := f.s.UpdateNode(WithChange(t.Context(), c), f.node, rename("previewed")); !errors.Is(err, ErrPreview) {
+	if _, err := f.s.UpdateNode(WithChange(sessionContext(t.Context()), c), f.node, rename("previewed")); !errors.Is(err, ErrPreview) {
 		t.Fatalf("preview: %v", err)
 	}
 	if c.Version == "" || c.Version != c.ExpectedVersion || c.BeforeJSON == c.AfterJSON || !strings.Contains(c.AfterJSON, "previewed") || c.Operation.Action != "update_node" || c.CommittedAt != 0 {
@@ -374,7 +389,7 @@ func TestChangeTargetRejectsSecondPrimaryWrite(t *testing.T) {
 	t.Parallel()
 	f := newTargetFixture(t)
 	c := f.change(t, ActionUpdateNode, false)
-	ctx := WithChange(t.Context(), c)
+	ctx := WithChange(sessionContext(t.Context()), c)
 	if _, err := f.s.UpdateNode(ctx, f.node, rename("first")); err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +418,7 @@ func TestBusinessRejectionLeavesChangeUnclaimed(t *testing.T) {
 	if c.ExpectedVersion, err = f.s.ChangeVersion(t.Context(), c); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.s.SaveProbeTask(WithChange(t.Context(), c), &heronv1.ProbeTask{}, NodeSelector{AllNodes: true, NodeIDs: []int64{f.node}}); err == nil {
+	if _, _, err := f.s.SaveProbeTask(WithChange(sessionContext(t.Context()), c), &heronv1.ProbeTask{}, NodeSelector{AllNodes: true, NodeIDs: []int64{f.node}}); err == nil {
 		t.Fatal("contradictory selector accepted")
 	}
 	if c.claimed || c.Err != nil || c.CommittedAt != 0 {
@@ -426,7 +441,7 @@ func TestWithChangeRejectsMisassembly(t *testing.T) {
 					t.Fatal("misassembled change accepted")
 				}
 			}()
-			WithChange(t.Context(), c)
+			WithChange(sessionContext(t.Context()), c)
 		})
 	}
 }
@@ -441,7 +456,7 @@ func TestNodeUpdateSiblingsDeclareDistinctTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := f.change(t, ActionCancelUpdate, false)
-	ctx := WithChange(t.Context(), c)
+	ctx := WithChange(sessionContext(t.Context()), c)
 	if err := f.s.SaveNodeUpdate(ctx, f.node, initial); err != nil || c.claimed {
 		t.Fatalf("reconcile write under a change: claimed=%t err=%v", c.claimed, err)
 	}
@@ -458,7 +473,7 @@ func TestNodeUpdateSiblingsDeclareDistinctTargets(t *testing.T) {
 	}
 	cancel := f.change(t, ActionCancelUpdate, false)
 	cancelled := &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0", Task: &heronv1.UpdateTask{Id: "queued", State: "cancelled"}}
-	if err := f.s.CancelNodeUpdate(WithChange(t.Context(), cancel), f.node, cancelled); err != nil || cancel.CommittedAt == 0 {
+	if err := f.s.CancelNodeUpdate(WithChange(sessionContext(t.Context()), cancel), f.node, cancelled); err != nil || cancel.CommittedAt == 0 {
 		t.Fatalf("matching cancel: receipt=%+v err=%v", cancel.Operation, err)
 	}
 }

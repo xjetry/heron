@@ -92,33 +92,13 @@ func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) ([]int64
 		written = nil
 		now := s.clk.Now().Unix()
 		for _, r := range recs {
-			if err := CheckTrafficBaseline(r.NetCounterEpoch, r.Baseline); err != nil {
-				return fmt.Errorf("node %d: %w", r.NodeID, err)
-			}
-			exists, err := nodeExistsTx(tx, r.NodeID)
+			ok, err := writeTrafficTx(tx, r, now)
 			if err != nil {
 				return err
 			}
-			if !exists {
-				continue
+			if ok {
+				written = append(written, r.NodeID)
 			}
-			var observed int64
-			if !r.ObservedAt.IsZero() {
-				observed = r.ObservedAt.Unix()
-			}
-			if _, err := tx.Exec(upsertTraffic, r.NodeID, r.BootID, r.TotalRx, r.TotalTx,
-				r.PeriodRx, r.PeriodTx, r.PeriodStart.Unix(), now, r.NetCounterEpoch, observed); err != nil {
-				return err
-			}
-			if _, err := tx.Exec("DELETE FROM traffic_baseline WHERE node_id = ?", r.NodeID); err != nil {
-				return err
-			}
-			for _, c := range r.Baseline {
-				if _, err := tx.Exec("INSERT INTO traffic_baseline (node_id, iface, rx, tx) VALUES (?, ?, ?, ?)", r.NodeID, c.Name, c.Rx, c.Tx); err != nil {
-					return err
-				}
-			}
-			written = append(written, r.NodeID)
 		}
 		return nil
 	})
@@ -126,6 +106,46 @@ func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) ([]int64
 		return nil, err
 	}
 	return written, nil
+}
+
+// AdjustTraffic 写入一次面板校正后的记录，是 AdjustTraffic 方法的写目标，留 adjust_traffic 记录。与账本刷出共用
+// writeTrafficTx；节点不存在时返回 ErrNotFound 并整个事务回滚，不为不存在的节点留记录。
+func (s *Store) AdjustTraffic(ctx context.Context, r TrafficRecord) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionAdjustTraffic, ResourceID: r.NodeID}, func(tx *sql.Tx) error {
+		ok, err := writeTrafficTx(tx, r, s.clk.Now().Unix())
+		if err == nil && !ok {
+			err = ErrNotFound
+		}
+		return err
+	})
+}
+
+// writeTrafficTx 整体替换一个节点的 traffic 行与基线行；节点已删除时什么都不写并返回 false。
+func writeTrafficTx(tx *sql.Tx, r TrafficRecord, now int64) (bool, error) {
+	if err := CheckTrafficBaseline(r.NetCounterEpoch, r.Baseline); err != nil {
+		return false, fmt.Errorf("node %d: %w", r.NodeID, err)
+	}
+	exists, err := nodeExistsTx(tx, r.NodeID)
+	if err != nil || !exists {
+		return false, err
+	}
+	var observed int64
+	if !r.ObservedAt.IsZero() {
+		observed = r.ObservedAt.Unix()
+	}
+	if _, err := tx.Exec(upsertTraffic, r.NodeID, r.BootID, r.TotalRx, r.TotalTx,
+		r.PeriodRx, r.PeriodTx, r.PeriodStart.Unix(), now, r.NetCounterEpoch, observed); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec("DELETE FROM traffic_baseline WHERE node_id = ?", r.NodeID); err != nil {
+		return false, err
+	}
+	for _, c := range r.Baseline {
+		if _, err := tx.Exec("INSERT INTO traffic_baseline (node_id, iface, rx, tx) VALUES (?, ?, ?, ?)", r.NodeID, c.Name, c.Rx, c.Tx); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // LoadTraffic 读出全部记录。两次查询在同一个读事务里，基线行与 traffic 行来自同一次提交。基线形态不合法、或基线行

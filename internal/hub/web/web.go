@@ -6,12 +6,16 @@
 package web
 
 import (
+	"crypto/sha256"
 	"embed"
+	"fmt"
 	"html"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -101,6 +105,10 @@ func builtinHeaders(h http.Header) {
 
 // embedded 服务一份嵌入产物：assets/ 下的文件名带内容哈希，可以永久缓存，其余 no-cache。
 // 没构建过（没有 index.html）时每个路径都回答一页说明。
+//
+// 嵌入文件系统在进程生命周期内不可变，这里在构造时扫描一次，为每个常规文件及其构建期预压缩副本
+// （.br / .gz）预计算按字节派生的强 ETag，同时隐藏 .br / .gz 伴生文件使它们只能经内容协商下发，
+// 不会被直接当作独立 URL 暴露。
 func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 	sub, err := fs.Sub(root, dir)
 	if err != nil {
@@ -116,14 +124,174 @@ func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 			io.WriteString(w, notBuilt)
 		})
 	}
+	index := indexEmbeddedFS(sub)
 	cacheFor := func(rel string) string {
 		if underAssets(rel) {
 			return "public, max-age=31536000, immutable"
 		}
 		return "no-cache"
 	}
-	return serveFiles(prefix, builtinHeaders, cacheFor, sub.Open)
+	return serveFiles(prefix, builtinHeaders, cacheFor, index.open)
 }
+
+type embeddedVariant struct {
+	path string
+	etag string
+}
+
+type embeddedEntry struct {
+	path     string
+	etag     string
+	variants map[string]embeddedVariant
+}
+
+type embeddedIndex struct {
+	sub     fs.FS
+	entries map[string]*embeddedEntry
+}
+
+// indexEmbeddedFS 遍历不可变的嵌入产物树，把原文与其预压缩副本（.br / .gz）配对并算出各自独立的强 ETag。
+// 原文 ETag 为 "<sha256>"，压缩副本 ETag 带编码后缀 "<sha256>-<encoding>"，保证同一路径在不同内容编码下
+// 绝不复用同一个 ETag（RFC 9110 §8.8.3.3）。
+func indexEmbeddedFS(sub fs.FS) *embeddedIndex {
+	entries := make(map[string]*embeddedEntry)
+	type pendingSidecar struct {
+		base string
+		enc  string
+		path string
+	}
+	var sidecars []pendingSidecar
+
+	if err := fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == "." {
+			return nil
+		}
+		if hidden(p) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || !d.Type().IsRegular() {
+			return nil
+		}
+		for _, enc := range precompressedEncodings {
+			if base, ok := strings.CutSuffix(p, enc.ext); ok {
+				sidecars = append(sidecars, pendingSidecar{base: base, enc: enc.name, path: p})
+				return nil
+			}
+		}
+		sum, err := hashFSFile(sub, p)
+		if err != nil {
+			return err
+		}
+		entries[p] = &embeddedEntry{
+			path: p,
+			etag: fmt.Sprintf(`"%x"`, sum),
+		}
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+
+	for _, sc := range sidecars {
+		entry, ok := entries[sc.base]
+		if !ok {
+			continue
+		}
+		sum, err := hashFSFile(sub, sc.path)
+		if err != nil {
+			panic(err)
+		}
+		if entry.variants == nil {
+			entry.variants = make(map[string]embeddedVariant, len(precompressedEncodings))
+		}
+		entry.variants[sc.enc] = embeddedVariant{
+			path: sc.path,
+			etag: fmt.Sprintf(`"%x-%s"`, sum, sc.enc),
+		}
+	}
+	return &embeddedIndex{sub: sub, entries: entries}
+}
+
+func hashFSFile(sub fs.FS, name string) ([sha256.Size]byte, error) {
+	f, err := sub.Open(name)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	var sum [sha256.Size]byte
+	h.Sum(sum[:0])
+	return sum, nil
+}
+
+func (idx *embeddedIndex) open(rel string) (fs.File, error) {
+	entry, ok := idx.entries[rel]
+	if !ok {
+		return nil, fs.ErrNotExist
+	}
+	f, err := idx.sub.Open(entry.path)
+	if err != nil {
+		return nil, err
+	}
+	s, ok := f.(io.Seeker)
+	if !ok {
+		f.Close()
+		return nil, fs.ErrInvalid
+	}
+	return &embeddedFile{
+		File:   f,
+		Seeker: s,
+		sub:    idx.sub,
+		entry:  entry,
+	}, nil
+}
+
+type embeddedFile struct {
+	fs.File
+	io.Seeker
+	sub   fs.FS
+	entry *embeddedEntry
+}
+
+func (f *embeddedFile) EntityTag() string { return f.entry.etag }
+
+func (f *embeddedFile) HasEncoding(enc string) bool {
+	_, ok := f.entry.variants[enc]
+	return ok
+}
+
+func (f *embeddedFile) OpenEncoding(enc string) (fs.File, error) {
+	v, ok := f.entry.variants[enc]
+	if !ok {
+		return nil, fs.ErrNotExist
+	}
+	vf, err := f.sub.Open(v.path)
+	if err != nil {
+		return nil, err
+	}
+	s, ok := vf.(io.Seeker)
+	if !ok {
+		vf.Close()
+		return nil, fs.ErrInvalid
+	}
+	return &taggedFile{File: vf, Seeker: s, etag: v.etag}, nil
+}
+
+type taggedFile struct {
+	fs.File
+	io.Seeker
+	etag string
+}
+
+func (f *taggedFile) EntityTag() string { return f.etag }
 
 // opener 打开 rel：rel 已按 URL 路径语义清理，相对挂载根，不以 / 开头，不含 ..。
 // 打开不得阻塞：FIFO 在没有写端时挂住的是 open 本身，serveFiles 在打开之后才看文件类型，兜不住这一步。
@@ -190,7 +358,8 @@ func relPath(urlPath, prefix string) string {
 	return ""
 }
 
-// serveRegular 在 rel 是普通文件时写出它并返回 true；打不开或不是普通文件时返回 false，什么都不写。
+// serveRegular 在 rel 是普通文件时按 Accept-Encoding 协商并写出对应表示（或 406）后返回 true；
+// 打不开或不是普通文件时返回 false，什么都不写。
 func serveRegular(w http.ResponseWriter, r *http.Request, open opener, rel, cacheControl string) bool {
 	f, err := open(rel)
 	if err != nil {
@@ -205,6 +374,43 @@ func serveRegular(w http.ResponseWriter, r *http.Request, open opener, rel, cach
 	if !ok {
 		return false
 	}
+	pf, hasPF := f.(precompressedFile)
+	hasBr := hasPF && pf.HasEncoding(encodingBr)
+	hasGzip := hasPF && pf.HasEncoding(encodingGzip)
+	if hasBr || hasGzip {
+		appendVary(w.Header(), "Accept-Encoding")
+	}
+	enc, acceptable := selectEncoding(r.Header.Values("Accept-Encoding"), hasBr, hasGzip)
+	if !acceptable {
+		appendVary(w.Header(), "Accept-Encoding")
+		http.Error(w, "not acceptable", http.StatusNotAcceptable)
+		return true
+	}
+	if enc != encodingIdentity {
+		vf, err := pf.OpenEncoding(enc)
+		if err == nil {
+			defer vf.Close()
+			if vInfo, err := vf.Stat(); err == nil && vInfo.Mode().IsRegular() {
+				if vContent, ok := vf.(io.ReadSeeker); ok {
+					// Content-Type 必须取自原文的文件名或原文内容：交给 ServeContent 按压缩字节嗅探会得到 application/x-gzip。
+					ctype := mime.TypeByExtension(path.Ext(info.Name()))
+					if ctype == "" {
+						var sniff [512]byte
+						n, _ := io.ReadFull(content, sniff[:])
+						ctype = http.DetectContentType(sniff[:n])
+					}
+					w.Header().Set("Content-Type", ctype)
+					w.Header().Set("Content-Encoding", enc)
+					w.Header().Set("Cache-Control", cacheControl)
+					if e, ok := vf.(entityTagger); ok {
+						w.Header().Set("ETag", e.EntityTag())
+					}
+					http.ServeContent(&encodedLengthWriter{ResponseWriter: w, size: vInfo.Size()}, r, info.Name(), vInfo.ModTime(), vContent)
+					return true
+				}
+			}
+		}
+	}
 	w.Header().Set("Cache-Control", cacheControl)
 	if e, ok := f.(entityTagger); ok {
 		w.Header().Set("ETag", e.EntityTag())
@@ -212,3 +418,31 @@ func serveRegular(w http.ResponseWriter, r *http.Request, open opener, rel, cach
 	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 	return true
 }
+
+// encodedLengthWriter 在响应状态为 200 时补写预压缩副本的确定长度：
+// net/http.ServeContent 出于兼容流式压缩包装器的考虑，在 Content-Encoding 非空且非 Range 时省略 Content-Length，
+// 会导致 HEAD 缺失长度、GET 退回分块传输；仅在 200 时补写不干扰 206（分片长度由 ServeContent 给出）与 304/412/416。
+type encodedLengthWriter struct {
+	http.ResponseWriter
+	size        int64
+	wroteHeader bool
+}
+
+func (w *encodedLengthWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		if code == http.StatusOK && w.Header().Get("Content-Length") == "" {
+			w.Header().Set("Content-Length", strconv.FormatInt(w.size, 10))
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *encodedLengthWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *encodedLengthWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

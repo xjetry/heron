@@ -9,6 +9,10 @@ import (
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
+// resourceLead 把这些用例的分钟窗口整个放在夹具时钟之前：分钟行只能在它那一分钟到来之后写入（写入口拒绝起点晚于
+// metric.LatestMinute 的行），评估读的也本来就是已闭合的分钟。各用例的偏移都小于 10 分钟。
+const resourceLead = 10 * 60
+
 // 磁盘规则读的是最满盘那一列，不是根盘的 disk_used_pct：写进别的列的读数不会让它触发。
 func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
 	for _, tc := range []struct {
@@ -22,7 +26,7 @@ func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
 		t.Run(string(resource), func(t *testing.T) {
 			f := newFixture(t)
 			r := f.rule(t, store.AlertRule{Name: "容量", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: resource, Threshold: 90, RecoveryThreshold: 80, ForMinutes: 2})
-			base := f.clk.Now().Unix()
+			base := f.clk.Now().Unix() - resourceLead
 			write := func(offset int64, value float64) {
 				b := metric.NewBucket()
 				i := metric.Index(tc.column)
@@ -82,7 +86,7 @@ func TestResourceNewMetricWindows(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			r := f.rule(t, store.AlertRule{Name: "资源", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: tc.metric, Threshold: tc.threshold, RecoveryThreshold: tc.recovery, ForMinutes: 2})
-			base := f.clk.Now().Unix()
+			base := f.clk.Now().Unix() - resourceLead
 			write := func(offset int64, value float64) {
 				b := metric.NewBucket()
 				i := metric.Index(tc.column)
@@ -131,7 +135,7 @@ func TestResourceLoad1PerCoreReadsTheColumn(t *testing.T) {
 	// 核数故意与列里的商不一致：3 是按 2 核算的，Facts 里是 4。读回 Facts 再除、或对列再除，都到不了阈值 2。
 	must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 1, &heronv1.Facts{CpuCores: 4}))
 	r := f.rule(t, store.AlertRule{Name: "按核负载", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: store.MetricLoad1PerCore, Threshold: 2, RecoveryThreshold: 1, ForMinutes: 2})
-	base := f.clk.Now().Unix()
+	base := f.clk.Now().Unix() - resourceLead
 	write := func(offset int64, perCore float64, withColumn bool) {
 		b := metric.NewBucket()
 		load := metric.Index("load1")
@@ -188,7 +192,7 @@ func TestResourceDiskFiresOnFullestMountAndNamesIt(t *testing.T) {
 				f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 				f.l.ObserveDisks(f.ids[0], tc.mounts, uint32(len(tc.mounts)))
 			}
-			base := f.clk.Now().Unix()
+			base := f.clk.Now().Unix() - resourceLead
 			write := func(offset int64, root, fullest float64) {
 				b := metric.NewBucket()
 				ri, fi := metric.Index("disk_used_pct"), metric.Index("disk_max_used_pct")

@@ -821,7 +821,7 @@ func (s *Store) ListNotifyChannels(ctx context.Context) ([]NotifyChannel, error)
 }
 
 func (s *Store) SaveNotifyChannel(ctx context.Context, c NotifyChannel) (NotifyChannel, error) {
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionSaveNotifyChannel, ResourceID: c.ID}, func(tx *sql.Tx) error {
 		var created int64
 		if c.ID == 0 {
 			created = s.clk.Now().Unix()
@@ -882,7 +882,7 @@ func checkAlertReferences(ctx context.Context, tx *sql.Tx, query string, kind Ob
 }
 
 func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionDeleteNotifyChannel, ResourceID: id}, func(tx *sql.Tx) error {
 		if err := checkAlertReferences(ctx, tx, `SELECT r.id, r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, ObjectNotifyChannel, id); err != nil {
 			return err
 		}

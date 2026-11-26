@@ -15,20 +15,20 @@ import (
 	"github.com/xjetry/heron/internal/hub/metric"
 )
 
-// schemaV55 冻结 v55 的完整 DDL：v54 加上告警事件的单位一列。
-var schemaV55 = append(slices.Clone(schemaV54),
+// schemaV57 冻结 v57 的完整 DDL：v56 加上告警事件的单位一列。
+var schemaV57 = append(slices.Clone(schemaV56),
 	`ALTER TABLE alert_event ADD COLUMN value_unit TEXT NOT NULL DEFAULT 'unknown'`,
 )
 
-// removeV55Config 把当前配置库或快照退回 v54 的 alert_event 结构，供从旧版本起步的迁移与恢复测试使用。
-func removeV55Config(t *testing.T, db *sql.DB) {
+// removeV57Config 把当前配置库或快照退回 v56 的 alert_event 结构，供从旧版本起步的迁移与恢复测试使用。
+func removeV57Config(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec("ALTER TABLE alert_event DROP COLUMN value_unit"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// 系统事件的 transition 全集：与 SystemEventKind 的分支逐个对应，迁移 55 按这张表写 n/a。
+// 系统事件的 transition 全集：与 SystemEventKind 的分支逐个对应，迁移 57 按这张表写 n/a。
 var systemTransitions = []Transition{TransitionLoginSuccess, TransitionLoginLocked, TransitionLoginFailed, TransitionAuthChanged,
 	TransitionBackupSuccess, TransitionBackupRestored, TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled,
 	TransitionTrafficReport}
@@ -111,9 +111,9 @@ func mustEvents(t *testing.T, s *Store) []AlertEvent {
 	return events
 }
 
-// v55 回填：系统事件写 n/a；规则仍在的按规则身份推出单位（与 alert.valueUnit 同一张表），到期规则值为 0 的恢复是清除
+// v57 回填：系统事件写 n/a；规则仍在的按规则身份推出单位（与 alert.valueUnit 同一张表），到期规则值为 0 的恢复是清除
 // 到期日、写 n/a；规则已删除的保持 unknown。回填后的每一行都满足恢复预检的判定。
-func TestMigrationFromV54BackfillsEventValueUnit(t *testing.T) {
+func TestMigrationFromV56BackfillsEventValueUnit(t *testing.T) {
 	t.Parallel()
 	type rule struct {
 		id                     int64
@@ -165,7 +165,7 @@ func TestMigrationFromV54BackfillsEventValueUnit(t *testing.T) {
 	for _, tr := range systemTransitions {
 		events = append(events, event{0, string(tr), "", 0, "n/a"})
 	}
-	migrated := migrateFrom(t, 54, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 56, func(t *testing.T, db *sql.DB) {
 		for _, r := range rules {
 			if _, err := db.Exec("INSERT INTO alert_rule (id, name, kind, created_at, metric, resource_metric) VALUES (?, ?, ?, 1, NULLIF(?, ''), NULLIF(?, ''))", r.id, r.kind, r.kind, r.metric, r.resource); err != nil {
 				t.Fatal(err)
@@ -199,7 +199,7 @@ func TestMigrationFromV54BackfillsEventValueUnit(t *testing.T) {
 	}
 }
 
-// 恢复：当前版本快照里事件的单位原样搬回；v54 快照经迁移 55 回填；单位非法的快照在任何写入之前被拒、目标库不变。
+// 恢复：当前版本快照里事件的单位原样搬回；v56 快照经迁移 57 回填；单位非法的快照在任何写入之前被拒、目标库不变。
 func TestEventValueUnitSurvivesConfigSnapshot(t *testing.T) {
 	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
@@ -251,13 +251,13 @@ func TestEventValueUnitSurvivesConfigSnapshot(t *testing.T) {
 		t.Fatalf("restored units %v, want %v", got, want)
 	}
 	old := snapshot(t, func(db *sql.DB) {
-		removeV55Config(t, db)
-		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 54"); err != nil {
+		removeV57Config(t, db)
+		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 56"); err != nil {
 			t.Fatal(err)
 		}
 	})
 	if got := restoredUnits(t, old); !maps.Equal(got, want) {
-		t.Fatalf("restored v54 units %v, want %v", got, want)
+		t.Fatalf("restored v56 units %v, want %v", got, want)
 	}
 
 	for _, tc := range []struct{ name, query, want string }{
