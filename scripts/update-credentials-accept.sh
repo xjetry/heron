@@ -18,7 +18,7 @@ for role in hub agent; do
   # 名称排在 OrbStack 的全局加固覆盖之后，否则其 NoNewPrivileges=no 会掩盖权限缺陷。
   {
     printf '[Service]\n'
-    sed -n '/^NoNewPrivileges=/p; /^ProtectSystem=/p; /^ProtectHome=/p; /^PrivateTmp=/p; /^ReadWritePaths=/p' "$repo/deploy/systemd/heron-updater-$role.service"
+    sed -n '/^NoNewPrivileges=/p; /^ProtectSystem=/p; /^ProtectHome=/p; /^PrivateTmp=/p; /^PrivateDevices=/p; /^ProtectKernelTunables=/p; /^ProtectKernelModules=/p; /^ProtectKernelLogs=/p; /^ProtectControlGroups=/p; /^ReadWritePaths=/p' "$repo/deploy/systemd/heron-updater-$role.service"
     printf 'Type=oneshot\nRestart=no\nExecStart=\nExecStart=/usr/local/bin/heron-credential-tests -test.run=^TestSystemCredentialDrop$ -test.count=1 -test.v\n'
     printf 'Environment=HERON_UPDATE_ACCEPT=isolated-systemd HERON_UPDATE_ROLE=%s\n' "$role"
     printf 'StandardOutput=file:%s/%s.log\nStandardError=inherit\n' "$work" "$role"

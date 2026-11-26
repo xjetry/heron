@@ -33,7 +33,35 @@ AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+# hub 不访问物理设备，仅保留 null/zero/random/urandom 等伪设备。
+PrivateDevices=yes
+# hub 不修改内核参数、不加载内核模块、不读取内核日志，也不写入 cgroup。
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+# hub 仅读取系统时间与主机名，不修改时钟或主机名。
+ProtectClock=yes
+ProtectHostname=yes
+# hub 只需访问自身 /proc/self；部署环境检测（deployenv.ImageDeployment）只看 /.dockerenv 与 /run/.containerenv，
+# 不依赖其他进程或 /proc 全局统计文件，因此对非 root 服务用户隐藏其余进程与非 pid 项。
+ProtectProc=invisible
+ProcSubset=pid
+# hub 不创建命名空间、不使用实时调度、不切换执行域、不共享内核密钥环。
+RestrictNamespaces=yes
+RestrictRealtime=yes
 RestrictSUIDSGID=yes
+LockPersonality=yes
+KeyringMode=private
+# 纯静态编译 Go 程序（含纯 Go SQLite）不使用可写可执行内存页，也不调用跨架构系统调用。
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# 监听、出站（S3 备份、通知渠道、国家查询、心跳与官方更新）使用 AF_INET/AF_INET6，
+# 启动门与本机更新器通信（/run/heron-update-hub/updater.sock）使用 AF_UNIX；hub 不枚举本机网卡，不开放 AF_NETLINK。
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# 限制在常规系统服务系统调用白名单内并排除特权类调用；前提是本服务以空能力集、非 root 身份运行。
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
 ReadWritePaths=/var/lib/heron
 
 [Install]
