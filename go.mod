@@ -1,6 +1,6 @@
 module github.com/xjetry/heron
 
-go 1.27.3
+go 1.27.4
 
 tool (
 	connectrpc.com/connect/cmd/protoc-gen-connect-go
