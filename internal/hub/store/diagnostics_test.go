@@ -197,6 +197,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 				}
 			}
 		} else {
+			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 			for _, q := range []string{

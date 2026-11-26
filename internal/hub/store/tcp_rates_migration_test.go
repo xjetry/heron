@@ -157,6 +157,7 @@ func TestRestoreV42MetricsSnapshotAddsTCPRateColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		if layer == "metrics" {
+			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
 			dropTCPRateColumns(t, db)
 		}

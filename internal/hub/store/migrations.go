@@ -80,6 +80,50 @@ var migrations = map[int]func(*sql.Tx) error{
 	52: execAll(migrationV52Config),
 	53: migrateV53Metrics,
 	54: migrateV54Config,
+	55: migrateV55Metrics,
+}
+
+// metricDDLV55 冻结引入 softirq 占比时的指标表 DDL：v53 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
+func metricDDLV55(table string) string {
+	type col struct {
+		name, sqlType string
+		max           bool
+	}
+	cols := []col{
+		{"cpu", "REAL", true}, {"mem_used", "INTEGER", true}, {"swap_used", "INTEGER", false}, {"disk_used", "INTEGER", false},
+		{"load1", "REAL", false}, {"tcp", "INTEGER", false}, {"udp", "INTEGER", false}, {"procs", "INTEGER", false},
+		{"rx_bytes", "INTEGER", false}, {"tx_bytes", "INTEGER", false}, {"memory_used_pct", "REAL", false}, {"disk_used_pct", "REAL", false},
+		{"net_rx_bps", "INTEGER", true}, {"net_tx_bps", "INTEGER", true}, {"disk_read_bps", "INTEGER", true}, {"disk_write_bps", "INTEGER", true},
+		{"cpu_steal_pct", "REAL", true}, {"cpu_iowait_pct", "REAL", true}, {"load1_per_core", "REAL", false},
+		{"tcp_active_opens_ps", "REAL", true}, {"tcp_passive_opens_ps", "REAL", true}, {"tcp_out_segs_ps", "REAL", false}, {"tcp_retrans_segs_ps", "REAL", false},
+		{"disk_max_used_pct", "REAL", false}, {"cpu_softirq_pct", "REAL", true},
+	}
+	parts := []string{"node_id INTEGER NOT NULL", "ts INTEGER NOT NULL"}
+	for _, c := range cols {
+		parts = append(parts, c.name+"_sum "+c.sqlType+" NOT NULL DEFAULT 0", c.name+"_n INTEGER NOT NULL DEFAULT 0")
+		if c.max {
+			parts = append(parts, c.name+"_max "+c.sqlType+" NOT NULL DEFAULT 0")
+		}
+	}
+	if strings.TrimSuffix(table, "_new") == "metric_1m" {
+		parts = append(parts, "reported INTEGER NOT NULL DEFAULT 1", "observed INTEGER")
+	} else {
+		parts = append(parts, "minutes INTEGER", "observed INTEGER", "both INTEGER")
+	}
+	return "CREATE TABLE " + table + " (" + strings.Join(parts, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"
+}
+
+// v55：softirq 占比一列（cpu_softirq_pct 的 sum/n/max），只在指标层，迁移与指标快照恢复共用。与 v43 同理：覆盖列已在
+// 指标列之后，ADD COLUMN 只能加在表尾、列序会与新建库不同，所以按冻结 DDL 重建三张表。
+// 不回填：升级前的 agent 不采集 softirq，旧行新列取默认值，n=0 表示这一分钟没有读数，不是测得的 0%。
+// 回滚边界同 v43：写入后 schema 54 的二进制不能直接启动，回退须恢复升级前的数据库备份。
+func migrateV55Metrics(tx *sql.Tx) error {
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		if err := rebuildTable(tx, table, metricDDLV55); err != nil {
+			return fmt.Errorf("rebuilding %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // metricDDLV53 冻结引入最满盘使用率时的指标表 DDL：v43 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
