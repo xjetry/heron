@@ -70,6 +70,7 @@ func TestSoftirqSurvivesWriteReadAndRollup(t *testing.T) {
 		{NodeID: id, TS: base + 60, CoverageStart: base, Bucket: busy},
 		{NodeID: id, TS: base + 120, CoverageStart: base, Bucket: later},
 	}
+	clk.SetWall(time.Unix(base+3*3600, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,6 @@ func TestSoftirqSurvivesWriteReadAndRollup(t *testing.T) {
 		}
 		t.Fatalf("1m softirq = %v, want the second minute to hold 42 over 2 samples peaking at 30 and the first none", got)
 	}
-	clk.SetWall(time.Unix(base+3*3600, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
