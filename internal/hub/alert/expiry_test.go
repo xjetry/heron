@@ -128,7 +128,7 @@ func TestCycleMonthsCoversEveryStoredCycle(t *testing.T) {
 	}
 }
 
-// 推后到不早于今天为止；每一步从上一步的结果推后，钳到月末之后不回弹。
+// 推后到不早于今天为止；每步按锚定日号对齐目标月，短月钳到月末、后续月份回到锚定日号，不再逐月漂移。
 func TestRenewedExpiry(t *testing.T) {
 	monthly := store.Billing{Cycle: store.CycleMonthly, AutoRenew: true}
 	with := func(b store.Billing, expiresOn string) store.Billing { b.ExpiresOn = expiresOn; return b }
@@ -139,12 +139,17 @@ func TestRenewedExpiry(t *testing.T) {
 		want  string
 	}{
 		{"one month", with(monthly, "2026-09-10"), "2026-09-24", "2026-10-10"},
-		{"several months, clamped then drifting", with(monthly, "2026-01-31"), "2026-04-01", "2026-04-28"},
+		{"several months, anchored to 31 without drifting", with(monthly, "2026-01-31"), "2026-04-01", "2026-04-30"},
+		{"clamped February returns to anchor 31 in March", store.Billing{Cycle: store.CycleMonthly, AutoRenew: true, ExpiresOn: "2026-02-28", AnchorDay: 31}, "2026-03-01", "2026-03-31"},
 		{"leap February", with(monthly, "2028-01-31"), "2028-02-15", "2028-02-29"},
-		{"yearly from February 29", store.Billing{Cycle: store.CycleYearly, AutoRenew: true, ExpiresOn: "2024-02-29"}, "2025-03-01", "2026-02-28"},
+		{"quarterly from Nov 30 returns to May 30", store.Billing{Cycle: store.CycleQuarterly, AutoRenew: true, ExpiresOn: "2026-11-30"}, "2027-03-01", "2027-05-30"},
+		{"quarterly clamped Feb 28 with anchor 30 returns to May 30", store.Billing{Cycle: store.CycleQuarterly, AutoRenew: true, ExpiresOn: "2027-02-28", AnchorDay: 30}, "2027-03-01", "2027-05-30"},
+		{"yearly from February 29 clamped in common year", store.Billing{Cycle: store.CycleYearly, AutoRenew: true, ExpiresOn: "2024-02-29"}, "2025-03-01", "2026-02-28"},
+		{"yearly from February 29 returns in next leap year", store.Billing{Cycle: store.CycleYearly, AutoRenew: true, ExpiresOn: "2024-02-29"}, "2027-03-01", "2028-02-29"},
+		{"yearly clamped 2027-02-28 with anchor 29 returns in 2028", store.Billing{Cycle: store.CycleYearly, AutoRenew: true, ExpiresOn: "2027-02-28", AnchorDay: 29}, "2027-03-01", "2028-02-29"},
 		{"quarterly lands on today", store.Billing{Cycle: store.CycleQuarterly, AutoRenew: true, ExpiresOn: "2026-06-24"}, "2026-09-24", "2026-09-24"},
 		{"triennial", store.Billing{Cycle: store.CycleTriennial, AutoRenew: true, ExpiresOn: "2020-01-15"}, "2026-09-24", "2029-01-15"},
-		{"from year 0", with(monthly, "0000-01-31"), "0000-03-01", "0000-03-29"},
+		{"from year 0 keeps anchor 31", with(monthly, "0000-01-31"), "0000-03-01", "0000-03-31"},
 	} {
 		got, ok := renewedExpiry(c.b, date(c.today))
 		if !ok || got != c.want {
@@ -169,7 +174,7 @@ func TestRenewedExpiry(t *testing.T) {
 	}
 }
 
-// "已续费"至少推后一个周期，再按自动续期的规则步进到不早于今天；不看自动续期开关。
+// "已续费"至少推后一个周期，再按自动续期的锚定规则步进到不早于今天；不看自动续期开关。
 func TestRenewedExpiryForManualRenewal(t *testing.T) {
 	monthly := store.Billing{Cycle: store.CycleMonthly}
 	with := func(b store.Billing, expiresOn string) store.Billing { b.ExpiresOn = expiresOn; return b }
@@ -182,8 +187,11 @@ func TestRenewedExpiryForManualRenewal(t *testing.T) {
 		{"in the future: exactly one cycle", with(monthly, "2026-10-10"), "2026-09-24", "2026-11-10"},
 		{"due today: one cycle", with(monthly, "2026-09-24"), "2026-09-24", "2026-10-24"},
 		{"in the future, clamped to month end", with(monthly, "2026-01-31"), "2026-01-20", "2026-02-28"},
+		{"in the future, clamped February returns to anchor 31", store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-02-28", AnchorDay: 31}, "2026-02-15", "2026-03-31"},
+		{"in the future, yearly clamped Feb 28 with anchor 29 returns in leap year", store.Billing{Cycle: store.CycleYearly, ExpiresOn: "2027-02-28", AnchorDay: 29}, "2027-02-15", "2028-02-29"},
 		{"expired: keeps the billing day", with(monthly, "2026-09-10"), "2026-09-24", "2026-10-10"},
-		{"expired several cycles: clamped then drifting", with(monthly, "2026-01-31"), "2026-04-01", "2026-04-28"},
+		{"expired several cycles: anchored to 31 without drifting", with(monthly, "2026-01-31"), "2026-04-01", "2026-04-30"},
+		{"expired quarterly: Nov 30 returns to May 30", store.Billing{Cycle: store.CycleQuarterly, ExpiresOn: "2026-11-30"}, "2027-03-01", "2027-05-30"},
 		{"expired, a step lands on today", store.Billing{Cycle: store.CycleQuarterly, ExpiresOn: "2026-06-24"}, "2026-09-24", "2026-09-24"},
 		{"auto renew on does not matter", store.Billing{Cycle: store.CycleYearly, AutoRenew: true, ExpiresOn: "2026-12-01"}, "2026-09-24", "2027-12-01"},
 	} {
@@ -210,17 +218,85 @@ func TestRenewedExpiryForManualRenewal(t *testing.T) {
 	}
 }
 
+// 逐期续期（每期写回新到期日、保留原锚定日号）的连续推进：
+//   - 1-31 月付连续续期 13 次，每月都落在月末；
+//   - 锚定 30 日的月付在平年/闰年 2 月分别钳到 28/29、3 月回到 30；
+//   - 2024-02-29 年付平年钳 2-28、2028 闰年回到 2-29；
+//   - 2026-11-30 季付 2 月钳 2-28、5 月回到 5-30。
+//
+// 自动续期与手动续期各自跑一遍，钉住两条路径逐期一致。
+func TestAnchoredRenewalSequences(t *testing.T) {
+	cases := []struct {
+		name      string
+		cycle     store.BillingCycle
+		start     string
+		anchorDay int
+		want      []string
+	}{
+		{
+			name:  "jan 31 monthly 13 steps all land on month end",
+			cycle: store.CycleMonthly, start: "2026-01-31", anchorDay: 31,
+			want: []string{
+				"2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31", "2026-06-30",
+				"2026-07-31", "2026-08-31", "2026-09-30", "2026-10-31", "2026-11-30",
+				"2026-12-31", "2027-01-31", "2027-02-28",
+			},
+		},
+		{
+			name:  "anchor 30 monthly across common february",
+			cycle: store.CycleMonthly, start: "2026-01-30", anchorDay: 30,
+			want: []string{"2026-02-28", "2026-03-30", "2026-04-30"},
+		},
+		{
+			name:  "anchor 30 monthly across leap february",
+			cycle: store.CycleMonthly, start: "2028-01-30", anchorDay: 30,
+			want: []string{"2028-02-29", "2028-03-30", "2028-04-30"},
+		},
+		{
+			name:  "feb 29 yearly returns on next leap year",
+			cycle: store.CycleYearly, start: "2024-02-29", anchorDay: 29,
+			want: []string{"2025-02-28", "2026-02-28", "2027-02-28", "2028-02-29"},
+		},
+		{
+			name:  "nov 30 quarterly returns to may 30",
+			cycle: store.CycleQuarterly, start: "2026-11-30", anchorDay: 30,
+			want: []string{"2027-02-28", "2027-05-30", "2027-08-30", "2027-11-30"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			autoCur, manualCur := c.start, c.start
+			for i, want := range c.want {
+				// 自动续期：在当前到期日次日触发。
+				today := date(autoCur).AddDate(0, 0, 1)
+				autoNext, ok := renewedExpiry(store.Billing{Cycle: c.cycle, ExpiresOn: autoCur, AnchorDay: c.anchorDay, AutoRenew: true}, today)
+				if !ok || autoNext != want {
+					t.Fatalf("step %d auto from %s (anchor %d) = %q %v, want %q", i+1, autoCur, c.anchorDay, autoNext, ok, want)
+				}
+				// 手动续期：在到期前一天提前续费，只推一个周期。
+				manualNext, err := RenewedExpiry(store.Billing{Cycle: c.cycle, ExpiresOn: manualCur, AnchorDay: c.anchorDay}, date(manualCur).AddDate(0, 0, -1))
+				if err != nil || manualNext != want {
+					t.Fatalf("step %d manual from %s (anchor %d) = %q %v, want %q", i+1, manualCur, c.anchorDay, manualNext, err, want)
+				}
+				autoCur, manualCur = autoNext, manualNext
+			}
+		})
+	}
+}
+
 // 已过期的节点手动续期与自动续期落在同一天：两条路径共用一套步进，不是两份各自正确的规则。逐个周期、跨月末与闰年
-// 枚举到期日，凡早于今天的都比对。
+// 枚举到期日与锚定日号，凡早于今天的都比对。
 func TestManualRenewalMatchesAutoRenewalWhenExpired(t *testing.T) {
 	today := date("2028-03-01")
 	for _, cycle := range store.BillingCycles() {
 		for d := date("2023-01-28"); d.Before(today); d = d.AddDate(0, 0, 1) {
-			b := store.Billing{Cycle: cycle, ExpiresOn: d.Format(time.DateOnly), AutoRenew: true}
-			auto, ok := renewedExpiry(b, today)
-			manual, err := RenewedExpiry(b, today)
-			if !ok || err != nil || auto != manual {
-				t.Fatalf("%s from %s: auto %q %v, manual %q %v", cycle, b.ExpiresOn, auto, ok, manual, err)
+			for _, anchor := range []int{0, d.Day(), 29, 30, 31} {
+				b := store.Billing{Cycle: cycle, ExpiresOn: d.Format(time.DateOnly), AnchorDay: anchor, AutoRenew: true}
+				auto, ok := renewedExpiry(b, today)
+				manual, err := RenewedExpiry(b, today)
+				if !ok || err != nil || auto != manual {
+					t.Fatalf("%s from %s (anchor %d): auto %q %v, manual %q %v", cycle, b.ExpiresOn, anchor, auto, ok, manual, err)
+				}
 			}
 		}
 	}
@@ -383,6 +459,28 @@ func TestSweepExpiryDoesNotRenewWithoutAUsableCycle(t *testing.T) {
 	}
 }
 
+// 跨月自动续期经真实存储循环推进：1-31 月付依次落到 2-28、3-31、4-30，库里的锚定日号始终留在 31。
+func TestSweepExpiryPreservesAnchorDayAcrossMonths(t *testing.T) {
+	f := newFixture(t)
+	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-01-31", AutoRenew: true})
+	for _, step := range []struct {
+		wall time.Time
+		want string
+	}{
+		{time.Date(2026, 2, 1, 12, 0, 0, 0, f.loc), "2026-02-28"},
+		{time.Date(2026, 3, 1, 12, 0, 0, 0, f.loc), "2026-03-31"},
+		{time.Date(2026, 4, 1, 12, 0, 0, 0, f.loc), "2026-04-30"},
+	} {
+		f.clk.SetWall(step.wall)
+		f.sweepExpiry(t)
+		n, err := f.st.GetNode(t.Context(), f.ids[0])
+		must(t, err)
+		if n.Billing.ExpiresOn != step.want || n.Billing.AnchorDay != 31 {
+			t.Fatalf("at %s: billing = %+v, want expires_on=%s anchor=31", step.wall.Format(time.DateOnly), n.Billing, step.want)
+		}
+	}
+}
+
 // 库里读不懂的到期日（只有手改会产生）既不触发也不恢复：已触发的状态原样保留，开着自动续期也不推后，每次扫描对
 // 每个这样的节点记一行 Warn，不去重：扫描两次就是两行。
 func TestSweepExpirySkipsUnreadableDates(t *testing.T) {
@@ -394,8 +492,13 @@ func TestSweepExpirySkipsUnreadableDates(t *testing.T) {
 	f.billing(t, f.ids[0], store.Billing{ExpiresOn: "2026-09-25"})
 	f.sweepExpiry(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, AutoRenew: true, ExpiresOn: "2026-09-31"})
-	f.billing(t, f.ids[1], store.Billing{ExpiresOn: "2026/09/25"})
+	db, err := sql.Open("sqlite", f.path)
+	must(t, err)
+	defer db.Close()
+	_, err = db.ExecContext(t.Context(), "UPDATE node SET billing_cycle = 'monthly', auto_renew = 1, expires_on = '2026-09-31', billing_anchor_day = NULL WHERE id = ?", f.ids[0])
+	must(t, err)
+	_, err = db.ExecContext(t.Context(), "UPDATE node SET expires_on = '2026/09/25', billing_anchor_day = NULL WHERE id = ?", f.ids[1])
+	must(t, err)
 	f.sweepExpiry(t)
 	f.sweepExpiry(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)

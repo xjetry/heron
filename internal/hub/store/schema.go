@@ -69,7 +69,13 @@ const ddlNode = `CREATE TABLE node (
   -- 流量周期边界与到期日的日界都按计费时区算。取值由写入口（insertNode、UpdateNodeTasks）与快照恢复预检
   -- （validateSnapshotNodes）裁决，库里不设 CHECK。列序与迁移 57 的 ADD COLUMN 结果一致。
   traffic_reset_minute INTEGER NOT NULL DEFAULT 0,
-  billing_timezone TEXT NOT NULL DEFAULT ''
+  billing_timezone TEXT NOT NULL DEFAULT '',
+  -- 计费锚定日号（1–31）：续期（自动与手动）对齐目标月的日号，不足该日号的月份钳到月末，后续月份回到原日号。
+  -- NULL 表示没有到期日，因而没有锚定日号；无到期日时必须为 NULL，有合法到期日时必须在 1–31。写入口（insertNode、
+  -- UpdateNodeTasks）在写入新到期日时设为所写日期的日号、到期日未变时保留原值、清空到期日时写 NULL；续期只推进
+  -- expires_on、不改此列。取值由写入口与快照恢复预检（validateSnapshotNodes）裁决，库里不设 CHECK。
+  -- 列序与迁移 58 的 ADD COLUMN 结果一致。
+  billing_anchor_day INTEGER
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (

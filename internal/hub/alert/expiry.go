@@ -75,24 +75,38 @@ func cycleMonths(c store.BillingCycle) (int, bool) {
 	return 0, false
 }
 
-// addMonths 把日期推后 n 个月；日号超过目标月的天数时钳到月末（1 月 31 日 + 1 个月 = 2 月 28 或 29 日）。
-func addMonths(d time.Time, n int) time.Time {
+// addMonthsAnchored 把 d 所在月推后 n 个月，日号对齐到 anchorDay；anchorDay 超过目标月天数时钳到月末
+// （如锚定 31 日推进到 2 月得 2 月 28 或 29 日，再推进到 3 月回到 3 月 31 日）。
+func addMonthsAnchored(d time.Time, n, anchorDay int) time.Time {
 	first := time.Date(d.Year(), d.Month()+time.Month(n), 1, 0, 0, 0, 0, time.UTC)
 	last := first.AddDate(0, 1, -1).Day()
-	return time.Date(first.Year(), first.Month(), min(d.Day(), last), 0, 0, 0, 0, time.UTC)
+	return time.Date(first.Year(), first.Month(), min(anchorDay, last), 0, 0, 0, 0, time.UTC)
 }
 
-// stepExpiry 从 d 起按 months 个月一步步推后，直到不早于 today。每一步从上一步的结果推后，钳到月末之后日号停在
-// 钳后的值（1 月 31 日按月推后：2 月 28 日、3 月 28 日……），这是按月推后接受的漂移。自动续期（renewedExpiry）与
-// 手动续期（RenewedExpiry）都只经这里步进，二者的推后规则因此只有一份。
-func stepExpiry(d time.Time, months int, today time.Time) time.Time {
+// effectiveAnchorDay 是续期对齐的目标日号：库内有效锚定日号（1–31）优先；缺失或越界（只可能来自直接构造的
+// store.Billing 或手改库）退回当前到期日的日号。正常入库的行由写入口、迁移与恢复预检保证 AnchorDay 在 1–31。
+func effectiveAnchorDay(b store.Billing, d time.Time) int {
+	if b.AnchorDay >= store.MinBillingAnchorDay && b.AnchorDay <= store.MaxBillingAnchorDay {
+		return b.AnchorDay
+	}
+	return d.Day()
+}
+
+// stepExpiry 从 d 起按周期 months 与锚定日号 anchorDay 向后步进，直到不早于 today；atLeastOne 为真时（手动续期）
+// 即使 d 本身不早于 today 也至少推后一个周期。每步都按 anchorDay 对齐目标月并在短月钳到月末，后续月份回到
+// anchorDay，不再从上一步钳后的日号漂移。自动续期（renewedExpiry）与手动续期（RenewedExpiry）都只经这里步进，
+// 二者不直接调用 addMonthsAnchored，推后规则在结构上不可能分叉。
+func stepExpiry(d time.Time, months, anchorDay int, today time.Time, atLeastOne bool) time.Time {
+	if atLeastOne {
+		d = addMonthsAnchored(d, months, anchorDay)
+	}
 	for d.Before(today) {
-		d = addMonths(d, months)
+		d = addMonthsAnchored(d, months, anchorDay)
 	}
 	return d
 }
 
-// renewedExpiry 是自动续期推后的到期日：到期日早于 today 就按周期步进到不早于 today（stepExpiry）。
+// renewedExpiry 是自动续期推后的到期日：到期日早于 today 就按周期与锚定日号步进到不早于 today（stepExpiry）。
 // ok 为假表示不推后：没开自动续期、没有可用的周期、没有到期日或不是合法日期、到期日不早于 today。
 func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
 	if !b.AutoRenew {
@@ -106,7 +120,7 @@ func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
 	if err != nil || !d.Before(today) {
 		return "", false
 	}
-	return stepExpiry(d, months, today).Format(time.DateOnly), true
+	return stepExpiry(d, months, effectiveAnchorDay(b, d), today, false).Format(time.DateOnly), true
 }
 
 // 手动续期（RenewedExpiry）拒绝的两种计费：推后需要周期与到期日，缺哪一项就没有可推后的对象。
@@ -115,10 +129,10 @@ var (
 	ErrRenewNoExpiry = errors.New("node has no expiry date")
 )
 
-// RenewedExpiry 是"已续费"把到期日推后之后的日期。规则与自动续期相同：先推后一个周期，仍早于 today 就继续
-// 步进到不早于 today。自动续期从到期日 d 步进经过的是 addMonths(d)、addMonths(addMonths(d))……，先走的一步就是这
-// 个序列的第一项，所以已过期的节点得到与自动续期同一个日期；未过期的节点第一步之后已不早于 today，恰好推后一个周期。与 renewedExpiry 不同，不要求开着自动续期：手动续期的
-// 主要对象正是没开它的节点。
+// RenewedExpiry 是"已续费"把到期日推后之后的日期。规则与自动续期相同，共用 stepExpiry：先按锚定日号推后一个周期，
+// 仍早于 today 就继续步进到不早于 today。已过期的节点与自动续期经过同一个步进序列、得到同一个日期；未过期的节点
+// 第一步之后已不早于 today，恰好推后一个周期。与 renewedExpiry 不同，不要求开着自动续期：手动续期的主要对象正是
+// 没开它的节点。
 //
 // 周期不可用（store.CycleNone，或写入口会拒绝、只可能来自手改的库的表外值）返回 ErrRenewNoCycle；没有到期日返回
 // ErrRenewNoExpiry；到期日不是合法日期返回 ParseDate 的错误。
@@ -134,7 +148,7 @@ func RenewedExpiry(b store.Billing, today time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return stepExpiry(addMonths(d, months), months, today).Format(time.DateOnly), nil
+	return stepExpiry(d, months, effectiveAnchorDay(b, d), today, true).Format(time.DateOnly), nil
 }
 
 // nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻：明天本地读数不早于 00:00 的第一个时刻（calendar.Moment）。
@@ -184,7 +198,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		renewed, err := e.st.RenewExpiry(ctx, n.ID, n.Billing.Cycle, n.Billing.ExpiresOn, to)
+		renewed, err := e.st.RenewExpiry(ctx, n.ID, n.Billing.Cycle, n.Billing.ExpiresOn, n.Billing.AnchorDay, to)
 		if err != nil {
 			// 写回出错，本轮没有得到推后之后的日期。按未推后的快照评估，开着自动续期的节点会收到"已过期"，续期成功的
 			// 下一轮又收到"到期日已更新"，这一对通知都是假的；所以跳过它，错误随扫描返回。日界循环（RunExpirySweep）里的

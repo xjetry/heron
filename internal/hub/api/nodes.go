@@ -361,7 +361,7 @@ func (s *Service) RenewNodeBilling(ctx context.Context, req *connect.Request[her
 		// 写入口都校验日期，读不懂的值只可能来自手改的库：请求本身没错，是节点的当前状态不能续费。
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("billing.expires_on: node %d stores %q, not a YYYY-MM-DD date; correct it with UpdateNode first", id, n.Billing.ExpiresOn))
 	}
-	err = s.store.RenewNodeBilling(ctx, id, n.Billing.Cycle, n.Billing.ExpiresOn, to)
+	err = s.store.RenewNodeBilling(ctx, id, n.Billing.Cycle, n.Billing.ExpiresOn, n.Billing.AnchorDay, to)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil, notFound(id)

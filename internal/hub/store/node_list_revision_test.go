@@ -61,6 +61,7 @@ func nodeWithFacts(t *testing.T) (*Store, int64) {
 // 列归类：true 表示这一列出现在 ListNodes 的内容里（直接或经推导），改它必须推进版本；false 的列与理由：
 //   - node.last_seen_at：实时状态，面板从快照取，分钟刷出每分钟写它；
 //   - node.token_hash：节点凭据，不在 ListNodes 里；
+//   - node.billing_anchor_day：续期内部锚定日号，不在 ListNodes 里；
 //   - node_facts.facts_hash、facts_rev：agent 对整份 Facts 算的摘要与 hub 的持久化字段集合版本，不在 ListNodes 里。
 //
 // 两张表的列由 PRAGMA 枚举，清单之外的列直接判红：加列必须在这里归类，并改 schema.go 里对应触发器的 WHEN。
@@ -72,6 +73,7 @@ var nodeListColumns = map[string]map[string]bool{
 		"last_source": true, "country": true, "country_ip": true, "country_pin": true, "maintenance": true,
 		"public_remark": true, "traffic_quota_bytes": true, "traffic_quota_mode": true,
 		"ipv4_pin": true, "ipv6_pin": true, "rented": true, "traffic_reset_minute": true, "billing_timezone": true,
+		"billing_anchor_day": false,
 	},
 	"node_facts": {
 		"node_id": true, "facts_hash": false, "hostname": true, "os": true, "kernel": true, "arch": true,

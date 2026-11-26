@@ -48,17 +48,21 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	if _, err := migrated.UpdateNode(t.Context(), 7, NodeEdit{Name: "kept", TrafficResetDay: 1, Billing: b}); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := migrated.GetNode(t.Context(), 7); err != nil || n.Billing != b {
+	want := b
+	want.AnchorDay = 1
+	if n, err := migrated.GetNode(t.Context(), 7); err != nil || n.Billing != want {
 		t.Fatalf("billing on a migrated database: %+v %v", n, err)
 	}
 }
 
-// 计费随建节点一次写入：CreateNode 落库的五项与 UpdateNode 写进去的读法一致；空值创建没有计费。
+// 计费随建节点一次写入：CreateNode 落库的计费字段与 UpdateNode 写进去的读法一致，到期日同时写入锚定日号；空值创建没有计费。
 func TestCreateNodeStoresBilling(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	full := Billing{Price: "12.50", Currency: "USD", Cycle: CycleMonthly, ExpiresOn: "2026-10-01", AutoRenew: true}
+	wantFull := full
+	wantFull.AnchorDay = 1
 	id, _, err := s.CreateNode(ctx, NewNode{Name: "billed", Billing: full}, hash(1))
 	if err != nil {
 		t.Fatal(err)
@@ -67,15 +71,15 @@ func TestCreateNodeStoresBilling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.GetNode(ctx, id); err != nil || n.Billing != full {
-		t.Fatalf("billed node read back %+v %v, want %+v", n.Billing, err, full)
+	if n, err := s.GetNode(ctx, id); err != nil || n.Billing != wantFull {
+		t.Fatalf("billed node read back %+v %v, want %+v", n.Billing, err, wantFull)
 	}
 	if n, err := s.GetNode(ctx, plain); err != nil || n.Billing != (Billing{}) {
 		t.Fatalf("plain node read back %+v %v, want zero", n.Billing, err)
 	}
 }
 
-// 计费五项随 UpdateNode 整体替换：零值即清除。billingChanged 只看这五项与库内原值是否不同，别的字段变不算。
+// 计费随 UpdateNode 整体替换：零值即清除。billingChanged 只看计费字段与库内原值是否不同，别的字段变不算。
 func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
@@ -94,6 +98,8 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 		t.Fatal("empty billing over empty billing reported a change")
 	}
 	full := Billing{Price: "12.50", Currency: "USD", Cycle: CycleMonthly, ExpiresOn: "2026-10-01", AutoRenew: true}
+	wantFull := full
+	wantFull.AnchorDay = 1
 	edit.Billing = full
 	if !update(edit) {
 		t.Fatal("setting billing reported no change")
@@ -103,15 +109,15 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 		func() ([]Node, error) { return s.ListNodes(ctx) },
 	} {
 		nodes, err := read()
-		if err != nil || len(nodes) != 1 || nodes[0].Billing != full {
-			t.Fatalf("read back %+v %v, want %+v", nodes, err, full)
+		if err != nil || len(nodes) != 1 || nodes[0].Billing != wantFull {
+			t.Fatalf("read back %+v %v, want %+v", nodes, err, wantFull)
 		}
 	}
 	edit.Name, edit.Public = "renamed", true
 	if update(edit) {
 		t.Fatal("changing only name and public reported a billing change")
 	}
-	if nodes, err := s.ListPublicNodes(ctx); err != nil || len(nodes) != 1 || nodes[0].Billing != full {
+	if nodes, err := s.ListPublicNodes(ctx); err != nil || len(nodes) != 1 || nodes[0].Billing != wantFull {
 		t.Fatalf("public nodes %+v %v", nodes, err)
 	}
 	edit.Billing.AutoRenew = false
@@ -146,7 +152,8 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 	}
 }
 
-// RenewExpiry 只在该行仍是推后所依据的取值时写入：到期日、周期或自动续期任一已被改过都不写。
+// RenewExpiry 只在该行仍是推后所依据的取值时写入：到期日、周期、锚定日号或自动续期任一已被改过都不写；
+// 写入只推进 expires_on，锚定日号原样保留。
 func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
@@ -158,42 +165,44 @@ func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	expiresOn := func() string {
+	billing := func() Billing {
 		t.Helper()
 		n, err := s.GetNode(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return n.Billing.ExpiresOn
+		return n.Billing
 	}
 	monthly := Billing{Cycle: CycleMonthly, ExpiresOn: "2026-01-31", AutoRenew: true}
 	for _, c := range []struct {
-		name string
-		row  Billing
-		from string
+		name   string
+		row    Billing
+		from   string
+		anchor int
 	}{
-		{"stale date", monthly, "2026-01-30"},
-		{"cycle changed", Billing{Cycle: CycleYearly, ExpiresOn: "2026-01-31", AutoRenew: true}, "2026-01-31"},
-		{"auto renew off", Billing{Cycle: CycleMonthly, ExpiresOn: "2026-01-31"}, "2026-01-31"},
+		{"stale date", monthly, "2026-01-30", 31},
+		{"stale anchor", monthly, "2026-01-31", 30},
+		{"cycle changed", Billing{Cycle: CycleYearly, ExpiresOn: "2026-01-31", AutoRenew: true}, "2026-01-31", 31},
+		{"auto renew off", Billing{Cycle: CycleMonthly, ExpiresOn: "2026-01-31"}, "2026-01-31", 31},
 	} {
 		set(c.row)
-		renewed, err := s.RenewExpiry(ctx, id, CycleMonthly, c.from, "2026-02-28")
-		if err != nil || renewed || expiresOn() != "2026-01-31" {
-			t.Fatalf("%s: renewed=%v err=%v expires_on=%s", c.name, renewed, err, expiresOn())
+		renewed, err := s.RenewExpiry(ctx, id, CycleMonthly, c.from, c.anchor, "2026-02-28")
+		if err != nil || renewed || billing().ExpiresOn != "2026-01-31" {
+			t.Fatalf("%s: renewed=%v err=%v billing=%+v", c.name, renewed, err, billing())
 		}
 	}
 	set(monthly)
-	renewed, err := s.RenewExpiry(ctx, id, CycleMonthly, "2026-01-31", "2026-02-28")
-	if err != nil || !renewed || expiresOn() != "2026-02-28" {
-		t.Fatalf("renew: renewed=%v err=%v expires_on=%s", renewed, err, expiresOn())
+	renewed, err := s.RenewExpiry(ctx, id, CycleMonthly, "2026-01-31", 31, "2026-02-28")
+	if err != nil || !renewed || billing().ExpiresOn != "2026-02-28" || billing().AnchorDay != 31 {
+		t.Fatalf("renew: renewed=%v err=%v billing=%+v", renewed, err, billing())
 	}
-	if renewed, err := s.RenewExpiry(ctx, 999, CycleMonthly, "2026-01-31", "2026-02-28"); err != nil || renewed {
+	if renewed, err := s.RenewExpiry(ctx, 999, CycleMonthly, "2026-01-31", 31, "2026-02-28"); err != nil || renewed {
 		t.Fatalf("unknown node: renewed=%v err=%v", renewed, err)
 	}
 }
 
-// 手动续期与自动续期共用条件写的谓词，但不要求开着自动续期：没开它的节点照样写入；周期或到期日在读到之后被改过时
-// 不写并返回 ErrPrecondition，节点不存在返回 ErrNotFound。只写到期日，其余计费字段原样保留。
+// 手动续期与自动续期共用条件写的谓词，但不要求开着自动续期：没开它的节点照样写入；周期、到期日或锚定日号在读到之后被
+// 改过时不写并返回 ErrPrecondition，节点不存在返回 ErrNotFound。只写到期日，锚定日号与其余计费字段原样保留。
 func TestRenewNodeBillingWritesOverTheValuesItWasComputedFromWithoutAutoRenew(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
@@ -215,29 +224,34 @@ func TestRenewNodeBillingWritesOverTheValuesItWasComputedFromWithoutAutoRenew(t 
 	}
 	manual := Billing{Price: "9.90", Currency: "USD", Cycle: CycleMonthly, ExpiresOn: "2026-01-31"}
 	for _, c := range []struct {
-		name string
-		row  Billing
-		from string
+		name   string
+		row    Billing
+		from   string
+		anchor int
 	}{
-		{"stale date", manual, "2026-01-30"},
-		{"cycle changed", Billing{Price: "9.90", Currency: "USD", Cycle: CycleYearly, ExpiresOn: "2026-01-31"}, "2026-01-31"},
+		{"stale date", manual, "2026-01-30", 31},
+		{"stale anchor", manual, "2026-01-31", 28},
+		{"cycle changed", Billing{Price: "9.90", Currency: "USD", Cycle: CycleYearly, ExpiresOn: "2026-01-31"}, "2026-01-31", 31},
 	} {
 		set(c.row)
-		err := s.RenewNodeBilling(ctx, id, CycleMonthly, c.from, "2026-02-28")
-		if !errors.Is(err, ErrPrecondition) || billing() != c.row {
-			t.Fatalf("%s: err=%v billing=%+v, want ErrPrecondition and %+v", c.name, err, billing(), c.row)
+		wantRow := c.row
+		wantRow.AnchorDay = 31
+		err := s.RenewNodeBilling(ctx, id, CycleMonthly, c.from, c.anchor, "2026-02-28")
+		if !errors.Is(err, ErrPrecondition) || billing() != wantRow {
+			t.Fatalf("%s: err=%v billing=%+v, want ErrPrecondition and %+v", c.name, err, billing(), wantRow)
 		}
 	}
 	set(manual)
-	if err := s.RenewNodeBilling(ctx, id, CycleMonthly, "2026-01-31", "2026-02-28"); err != nil {
+	if err := s.RenewNodeBilling(ctx, id, CycleMonthly, "2026-01-31", 31, "2026-02-28"); err != nil {
 		t.Fatalf("renew with auto renew off: %v", err)
 	}
 	want := manual
 	want.ExpiresOn = "2026-02-28"
+	want.AnchorDay = 31
 	if got := billing(); got != want {
 		t.Fatalf("after renew: %+v, want %+v", got, want)
 	}
-	if err := s.RenewNodeBilling(ctx, 999, CycleMonthly, "2026-01-31", "2026-02-28"); !errors.Is(err, ErrNotFound) {
+	if err := s.RenewNodeBilling(ctx, 999, CycleMonthly, "2026-01-31", 31, "2026-02-28"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown node: %v, want ErrNotFound", err)
 	}
 }

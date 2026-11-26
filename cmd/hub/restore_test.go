@@ -289,6 +289,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV58Config(t, cfg)
 			removeV57Config(t, cfg)
 			removeV56Config(t, cfg)
 			removeV52Config(t, cfg)
@@ -372,6 +373,12 @@ func removeV44Config(t *testing.T, config *sql.DB) {
 func removeV47Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
+}
+
+// 58 给 node 加了计费锚定日号列，在配置层。
+func removeV58Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node DROP COLUMN billing_anchor_day")
 }
 
 // 57 给 node 加了重置时刻与计费时区两列，在配置层。
@@ -546,6 +553,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV58Config(t, cfg)
 	removeV57Config(t, cfg)
 	removeV56Config(t, cfg)
 	removeV52Config(t, cfg)
@@ -959,6 +967,7 @@ func TestRestoreNormalizesPriceCurrencyOfV53Snapshot(t *testing.T) {
 	t.Parallel()
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
+	removeV58Config(t, cfg)
 	removeV57Config(t, cfg)
 	removeV56Config(t, cfg)
 	restoreExec(t, restoreDB(t, config), "UPDATE node SET price='5', currency=' usd ' WHERE id=1; UPDATE snapshot_meta SET schema_version=53")

@@ -83,6 +83,55 @@ var migrations = map[int]func(*sql.Tx) error{
 	55: migrateV55Metrics,
 	56: execAll(migrationV56Config),
 	57: execAll(append(append([]string{}, migrationV57Config...), migrationV57Trigger...)),
+	58: migrateV58Config,
+}
+
+// v58：节点的计费锚定日号（billing_anchor_day，含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。
+// 用现有 expires_on 的日号初始化：合法 YYYY-MM-DD 取日号（1–31），没有到期日或无法解析的日期留 NULL。
+// 此前已因按月钳位漂移到 28 日的节点无法从库里自动找回原日号，升级后重新保存一次目标到期日即可纠正。
+// 此列不在 ListNodes 的响应里，不改节点资料版本的更新触发器。
+// 回滚边界同其它迁移：写入后 schema 57 的二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV58Config = []string{
+	`ALTER TABLE node ADD COLUMN billing_anchor_day INTEGER`,
+}
+
+func migrateV58Config(tx *sql.Tx) error {
+	if err := execAll(migrationV58Config)(tx); err != nil {
+		return err
+	}
+	rows, err := tx.Query("SELECT id, expires_on FROM node WHERE expires_on <> ''")
+	if err != nil {
+		return err
+	}
+	type anchorUpdate struct {
+		id  int64
+		day int
+	}
+	var updates []anchorUpdate
+	for rows.Next() {
+		var id int64
+		var expiresOn string
+		if err := rows.Scan(&id, &expiresOn); err != nil {
+			rows.Close()
+			return err
+		}
+		if d, err := ParseBillingDate(expiresOn); err == nil {
+			updates = append(updates, anchorUpdate{id: id, day: d.Day()})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, u := range updates {
+		if _, err := tx.Exec("UPDATE node SET billing_anchor_day = ? WHERE id = ?", u.day, u.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // v57：节点的重置时刻与计费时区两列（含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。旧行取列默认值

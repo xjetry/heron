@@ -40,13 +40,18 @@ func BillingCycles() []BillingCycle {
 }
 
 // Billing 是节点的计费与到期，随 UpdateNode 整体替换，零值即"都没填"。写入口有四个：api 的 CreateNode 与 UpdateNode
-// 校验整组取值（共用 billingOf），其中价格与币种的格式由 store 在 insertNode 与 UpdateNodeTasks 里再按
-// CheckPriceCurrency 复查（规则与保证方见 billing.go）；RenewExpiry 与 RenewNodeBilling 只写 alert 推后得到的日期。
+// 校验整组取值（共用 billingOf），其中价格、币种与到期日/锚定日号的格式由 store 在 insertNode 与 UpdateNodeTasks 里
+// 再按 CheckPriceCurrency 与 resolveAnchorDay 复查（规则与保证方见 billing.go）；RenewExpiry 与 RenewNodeBilling 只写
+// alert 推后得到的到期日，不改锚定日号。
 type Billing struct {
 	Price     string
 	Currency  string
 	Cycle     BillingCycle
 	ExpiresOn string // YYYY-MM-DD；空表示没有到期日
+	// AnchorDay 是计费锚定日号（1–31）；0 对应库里的 NULL，只在 ExpiresOn 为空时合法。
+	// 续期按它对齐目标月日号，短月钳到月末、后续月份回到原日号。写入口在写入新到期日时设为该日期的日号，
+	// 到期日未变时保留原值，清空到期日时写 NULL；续期只推进 ExpiresOn，不改它。
+	AnchorDay int
 	AutoRenew bool
 }
 
@@ -418,10 +423,10 @@ func (s *Store) NetworkDetections(ctx context.Context) (map[int64]*heronv1.Netwo
 // node_facts。窗口函数在内层计算，先于外层 where 过滤——名次属于全部节点，where（标签交集、无标签、公开、
 // 监控范围）只筛行，不重排名次。
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.traffic_reset_minute, n.billing_timezone, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark, n.traffic_quota_bytes, n.traffic_quota_mode, n.ipv4_pin, n.ipv6_pin, n.rented,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.billing_anchor_day, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark, n.traffic_quota_bytes, n.traffic_quota_mode, n.ipv4_pin, n.ipv6_pin, n.rented,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics, f.execution
 	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, traffic_reset_minute, billing_timezone, offline_grace_s,
-		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark, traffic_quota_bytes, traffic_quota_mode, ipv4_pin, ipv6_pin, rented,
+		price, currency, billing_cycle, expires_on, billing_anchor_day, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark, traffic_quota_bytes, traffic_quota_mode, ipv4_pin, ipv6_pin, rented,
 		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
 	LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -433,18 +438,19 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	for rows.Next() {
 		var n Node
 		var created int64
-		var seen, grace sql.NullInt64
+		var seen, grace, anchorDay sql.NullInt64
 		var hostname, os, kernel, arch, virt, cpuModel, agentVersion sql.NullString
 		var network, diagnostics, execution sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &n.TrafficResetMinute, &n.BillingTimezone, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark, &n.TrafficQuotaBytes, &n.TrafficQuotaMode, &n.IPv4Pin, &n.IPv6Pin, &n.Rented,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &anchorDay, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark, &n.TrafficQuotaBytes, &n.TrafficQuotaMode, &n.IPv4Pin, &n.IPv6Pin, &n.Rented,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics, &execution); err != nil {
 			return nil, err
 		}
 		n.CreatedAt = time.Unix(created, 0).UTC()
 		n.OfflineGraceS = int(grace.Int64)
+		b.AnchorDay = int(anchorDay.Int64)
 		if seen.Valid {
 			n.LastSeenAt = time.Unix(seen.Int64, 0).UTC()
 		}
@@ -633,28 +639,35 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 			return err
 		}
 		var old Billing
+		var oldAnchor sql.NullInt64
 		var oldQuota uint64
 		var oldMode string
 		var oldSchedule TrafficSchedule
 		var oldRented bool
-		err = tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day, traffic_reset_minute, billing_timezone, rented FROM node WHERE id = ?", id).
-			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew, &oldQuota, &oldMode, &oldSchedule.Day, &oldSchedule.Minute, &oldSchedule.Timezone, &oldRented)
+		err = tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, billing_anchor_day, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day, traffic_reset_minute, billing_timezone, rented FROM node WHERE id = ?", id).
+			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &oldAnchor, &old.AutoRenew, &oldQuota, &oldMode, &oldSchedule.Day, &oldSchedule.Minute, &oldSchedule.Timezone, &oldRented)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
+		old.AnchorDay = int(oldAnchor.Int64)
 		// 互斥裁决比的是本次写入后的结果对：NodeEdit 是整体替换（与 maintenance 同一语义），
 		// maintenance 与 rented 都随 e 写，所以「关掉维护的同一次更新里标出租」合法；ExecuteChange
 		// 的字段掩码合并在上游合并出同一形状后经同一处裁决。
 		if err := checkNodeFlags(e.Maintenance, e.Rented); err != nil {
 			return err
 		}
+		anchorDay, err := resolveAnchorDay(e.Billing.ExpiresOn, e.Billing.AnchorDay, old.ExpiresOn, old.AnchorDay)
+		if err != nil {
+			return err
+		}
 		b := e.Billing
+		b.AnchorDay = anchorDay
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, traffic_reset_minute = ?, billing_timezone = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ?, traffic_quota_bytes = ?, traffic_quota_mode = ?, ipv4_pin = ?, ipv6_pin = ?, rented = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.TrafficResetMinute, e.BillingTimezone, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, v4, v6, e.Rented, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, billing_anchor_day = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ?, traffic_quota_bytes = ?, traffic_quota_mode = ?, ipv4_pin = ?, ipv6_pin = ?, rented = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.TrafficResetMinute, e.BillingTimezone, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, nullAnchorDay(b.AnchorDay), b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, v4, v6, e.Rented, id); err != nil {
 			return err
 		}
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
@@ -708,16 +721,17 @@ func (s *Store) nodeScopesAfterUpdate(ctx context.Context, tx *sql.Tx, ids []int
 }
 
 // renewExpiryTx 是推后到期日的条件写，自动续期（RenewExpiry）与手动续期（RenewNodeBilling）共用这一个谓词：推后的
-// 日期由调用方从它读到的快照算出（alert.renewedExpiry / alert.RenewedExpiry），只有该行此刻仍是那组周期与旧到期日时
-// 写回才对——快照之后 UpdateNode 若改了计费字段，按旧快照写回就会盖掉管理员刚保存的值。autoRenewOnly 另要求开着
-// 自动续期：那是到期扫描专用的守卫（扫描只该推后开着它的节点，快照之后被关掉就不再推后）；手动续期的主要对象正是
-// 没开它的节点，不带这一项。返回是否写入了一行；未写入时该行不存在或计费已变，由调用方区分。
-func renewExpiryTx(tx *sql.Tx, id int64, cycle BillingCycle, from, to string, autoRenewOnly bool) (bool, error) {
-	query := "UPDATE node SET expires_on = ? WHERE id = ? AND billing_cycle = ? AND expires_on = ?"
+// 日期由调用方从它读到的快照算出（alert.renewedExpiry / alert.RenewedExpiry），只有该行此刻仍是那组周期、旧到期日与
+// 锚定日号时写回才对——快照之后 UpdateNode 若改了计费字段，按旧快照写回就会盖掉管理员刚保存的值。只写 expires_on 一列，
+// 不改 billing_anchor_day，保证短月钳位后后续续期仍对齐原锚定日号。autoRenewOnly 另要求开着自动续期：那是到期扫描专用
+// 的守卫（扫描只该推后开着它的节点，快照之后被关掉就不再推后）；手动续期的主要对象正是没开它的节点，不带这一项。
+// 返回是否写入了一行；未写入时该行不存在或计费已变，由调用方区分。
+func renewExpiryTx(tx *sql.Tx, id int64, cycle BillingCycle, from string, anchorDay int, to string, autoRenewOnly bool) (bool, error) {
+	query := "UPDATE node SET expires_on = ? WHERE id = ? AND billing_cycle = ? AND expires_on = ? AND billing_anchor_day IS ?"
 	if autoRenewOnly {
 		query += " AND auto_renew = 1"
 	}
-	res, err := tx.Exec(query, to, id, cycle, from)
+	res, err := tx.Exec(query, to, id, cycle, from, nullAnchorDay(anchorDay))
 	if err != nil {
 		return false, err
 	}
@@ -725,15 +739,15 @@ func renewExpiryTx(tx *sql.Tx, id int64, cycle BillingCycle, from, to string, au
 	return n == 1, err
 }
 
-// RenewExpiry 把自动续期推后的到期日写回，前提见 renewExpiryTx（开着自动续期、周期与旧到期日都没变）。条件不成立
-// 时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描按新值重算；节点已被删除时，没有要
-// 重算的对象。
+// RenewExpiry 把自动续期推后的到期日写回，前提见 renewExpiryTx（开着自动续期、周期、旧到期日与锚定日号都没变）。
+// 条件不成立时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描按新值重算；节点已被删除时，
+// 没有要重算的对象。
 //
 // 推后由 hub 自身发起，记一条系统主体的 auto_renew_node 记录（systemContext）：触发这次扫描的请求（改计费的
 // UpdateNode）不是推后的主体，扫描也可能在维护循环里跑。条件不成立时连同记录一起回滚，不留"推后了"的假记录。
-func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, from, to string) (bool, error) {
+func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, from string, anchorDay int, to string) (bool, error) {
 	err := s.writeChange(systemContext(ctx), ChangeTarget{Action: ActionAutoRenewNode, ResourceID: id}, func(tx *sql.Tx) error {
-		renewed, err := renewExpiryTx(tx, id, cycle, from, to, true)
+		renewed, err := renewExpiryTx(tx, id, cycle, from, anchorDay, to, true)
 		if err == nil && !renewed {
 			err = errNotRenewed
 		}
@@ -748,12 +762,12 @@ func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, f
 // errNotRenewed 让条件不成立的自动续期整个事务回滚，只在 RenewExpiry 里出现，不出包。
 var errNotRenewed = errors.New("auto-renewal condition no longer holds")
 
-// RenewNodeBilling 把手动续期推后的到期日 to 写回，是"已续费"的类型化变更目标。cycle 与 from 是调用方算出 to
-// 所依据的周期与到期日，条件写见 renewExpiryTx（不要求开着自动续期）。节点不存在是 ErrNotFound，存在但周期或
-// 到期日已变（读到之后、写入之前有别的写改了它们）是 ErrPrecondition 类的 PreconditionError；两者都不改库。
-func (s *Store) RenewNodeBilling(ctx context.Context, id int64, cycle BillingCycle, from, to string) error {
+// RenewNodeBilling 把手动续期推后的到期日 to 写回，是"已续费"的类型化变更目标。cycle、from 与 anchorDay 是调用方算出
+// to 所依据的周期、到期日与锚定日号，条件写见 renewExpiryTx（不要求开着自动续期）。节点不存在是 ErrNotFound，存在但
+// 周期、到期日或锚定日号已变（读到之后、写入之前有别的写改了它们）是 ErrPrecondition 类的 PreconditionError；两者都不改库。
+func (s *Store) RenewNodeBilling(ctx context.Context, id int64, cycle BillingCycle, from string, anchorDay int, to string) error {
 	return s.writeChange(ctx, ChangeTarget{Action: ActionRenewNodeBilling, ResourceID: id}, func(tx *sql.Tx) error {
-		renewed, err := renewExpiryTx(tx, id, cycle, from, to, false)
+		renewed, err := renewExpiryTx(tx, id, cycle, from, anchorDay, to, false)
 		if err != nil || renewed {
 			return err
 		}
@@ -764,7 +778,7 @@ func (s *Store) RenewNodeBilling(ctx context.Context, id int64, cycle BillingCyc
 		if !exists {
 			return ErrNotFound
 		}
-		return PreconditionError{Detail: fmt.Sprintf("node %d: billing changed after it was read (billing_cycle %q, expires_on %q); refresh and retry", id, cycle, from)}
+		return PreconditionError{Detail: fmt.Sprintf("node %d: billing changed after it was read (billing_cycle %q, expires_on %q, billing_anchor_day %d); refresh and retry", id, cycle, from, anchorDay)}
 	})
 }
 
@@ -973,9 +987,13 @@ func insertNode(tx *sql.Tx, spec NewNode, tokenHash []byte, createdAt int64, pub
 	if err := checkBillingTimezone(spec.BillingTimezone); err != nil {
 		return 0, NewNodeTasks{}, err
 	}
-	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public, price, currency, billing_cycle, expires_on, auto_renew, billing_timezone, rented)
-		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ? FROM node`, spec.Name, tokenHash, createdAt, public,
-		spec.Billing.Price, spec.Billing.Currency, spec.Billing.Cycle, spec.Billing.ExpiresOn, spec.Billing.AutoRenew, spec.BillingTimezone, spec.Rented)
+	anchorDay, err := resolveAnchorDay(spec.Billing.ExpiresOn, spec.Billing.AnchorDay, "", 0)
+	if err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public, price, currency, billing_cycle, expires_on, billing_anchor_day, auto_renew, billing_timezone, rented)
+		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM node`, spec.Name, tokenHash, createdAt, public,
+		spec.Billing.Price, spec.Billing.Currency, spec.Billing.Cycle, spec.Billing.ExpiresOn, nullAnchorDay(anchorDay), spec.Billing.AutoRenew, spec.BillingTimezone, spec.Rented)
 	if err != nil {
 		return 0, NewNodeTasks{}, err
 	}

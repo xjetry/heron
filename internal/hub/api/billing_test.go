@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -218,13 +219,18 @@ func TestPublicSnapshotCarriesBillingWithoutAutoRenew(t *testing.T) {
 	}
 }
 
-// 库里读不懂的到期日只可能来自绕过 UpdateNode 的写库。它照原样下发，days_left 缺失而不是 0：0 会显示成"今天到期"。
+// 库里读不懂的到期日只可能来自绕过写入口的手改库。它照原样下发，days_left 缺失而不是 0：0 会显示成"今天到期"。
 func TestUnreadableExpiresOnHasNoDaysLeft(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	if _, err := h.store.UpdateNode(t.Context(), id, store.NodeEdit{Name: "n", TrafficResetDay: 1, Billing: store.Billing{ExpiresOn: "2026-02-30"}}); err != nil {
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(t.Context(), "UPDATE node SET expires_on = '2026-02-30', billing_anchor_day = NULL WHERE id = ?", id); err != nil {
 		t.Fatal(err)
 	}
 	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))

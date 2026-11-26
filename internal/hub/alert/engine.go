@@ -120,7 +120,7 @@ type Storage interface {
 	SaveSilence(ctx context.Context, si store.Silence) (store.Silence, error)
 	DeleteSilence(ctx context.Context, id int64) error
 	ListMonitoringNodes(ctx context.Context) ([]store.Node, error)
-	RenewExpiry(ctx context.Context, id int64, cycle store.BillingCycle, from, to string) (bool, error)
+	RenewExpiry(ctx context.Context, id int64, cycle store.BillingCycle, from string, anchorDay int, to string) (bool, error)
 	ProbeTaskNodeIDs(ctx context.Context, taskID uint64) ([]int64, error)
 	ProbeCertsByTask(ctx context.Context, taskID uint64) (map[int64]int64, error)
 	// 基线行是配置层的缓存，不是历史读：读写都在这里，算基线所需的历史只经 HistoryReader.ProbeBucketMeans。

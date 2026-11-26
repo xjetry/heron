@@ -40,9 +40,10 @@ func v8Fixture(t *testing.T, dir string) string {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 		t.Fatal(err)
 	}
-	if freshVersion != 57 {
-		t.Fatalf("fixture user_version = %d, want 57; rebuild the v8 fixture for the new version", freshVersion)
+	if freshVersion != 58 {
+		t.Fatalf("fixture user_version = %d, want 58; rebuild the v8 fixture for the new version", freshVersion)
 	}
+	removeV58Config(t, raw)
 	// 57 的两列被节点资料版本的更新触发器引用，SQLite 不许删被触发器引用的列：随 removeV46Revision 撤掉触发器之后再删。
 	removeV56Config(t, raw)
 	removeV55Metrics(t, raw)

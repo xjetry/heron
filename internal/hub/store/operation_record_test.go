@@ -80,10 +80,10 @@ func TestDirectAuditRecordsWithTheWrite(t *testing.T) {
 func TestAutoRenewRecordsSystemPrincipal(t *testing.T) {
 	t.Parallel()
 	f := newTargetFixture(t)
-	mustExec(t, f.s, "UPDATE node SET billing_cycle='monthly', expires_on='2025-11-15', auto_renew=1 WHERE id=?", f.node)
+	mustExec(t, f.s, "UPDATE node SET billing_cycle='monthly', expires_on='2025-11-15', billing_anchor_day=15, auto_renew=1 WHERE id=?", f.node)
 	request := &Audit{}
 	ctx := WithAudit(sessionContext(t.Context()), request)
-	renewed, err := f.s.RenewExpiry(ctx, f.node, CycleMonthly, "2025-11-15", "2026-01-15")
+	renewed, err := f.s.RenewExpiry(ctx, f.node, CycleMonthly, "2025-11-15", 15, "2026-01-15")
 	if err != nil || !renewed {
 		t.Fatalf("renew: %v %v", renewed, err)
 	}
@@ -96,11 +96,11 @@ func TestAutoRenewRecordsSystemPrincipal(t *testing.T) {
 	}
 	o := list[0]
 	if o.Action != "auto_renew_node" || o.ResourceID != f.node || o.SessionID != "" || o.Source != "" || o.Method != "" || o.OwnerID != 0 ||
-		!strings.Contains(o.BeforeJSON, "2025-11-15") || !strings.Contains(o.AfterJSON, "2026-01-15") {
+		!strings.Contains(o.BeforeJSON, "2025-11-15") || !strings.Contains(o.AfterJSON, "2026-01-15") || !strings.Contains(o.AfterJSON, `"billing_anchor_day":15`) {
 		t.Fatalf("system record: %+v", o)
 	}
 	// 读到的旧到期日已过时：不推后、不留记录。
-	if renewed, err := f.s.RenewExpiry(ctx, f.node, CycleMonthly, "2025-11-15", "2026-01-15"); err != nil || renewed {
+	if renewed, err := f.s.RenewExpiry(ctx, f.node, CycleMonthly, "2025-11-15", 15, "2026-01-15"); err != nil || renewed {
 		t.Fatalf("stale renew: %v %v", renewed, err)
 	}
 	if _, _, receipts := f.state(t); receipts != 1 {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/clock"
@@ -141,8 +142,10 @@ func TestRenewNodeBillingRefusesWhenBillingChangedConcurrently(t *testing.T) {
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "refresh") {
 		t.Fatalf("renew over a concurrent edit: %v, want FailedPrecondition asking to refresh", err)
 	}
-	if n, err := h.store.GetNode(t.Context(), id); err != nil || n.Billing != edited {
-		t.Fatalf("billing after the refused renewal = %+v %v, want the concurrent edit %+v", n.Billing, err, edited)
+	wantEdited := edited
+	wantEdited.AnchorDay = 30
+	if n, err := h.store.GetNode(t.Context(), id); err != nil || n.Billing != wantEdited {
+		t.Fatalf("billing after the refused renewal = %+v %v, want the concurrent edit %+v", n.Billing, err, wantEdited)
 	}
 }
 
@@ -201,5 +204,144 @@ func TestRenewNodeBillingThroughExecuteChange(t *testing.T) {
 	}
 	if n, _ := h.store.GetNode(t.Context(), b); n.Billing.ExpiresOn != "2026-01-20" {
 		t.Fatalf("node outside the grant renewed to %s", n.Billing.ExpiresOn)
+	}
+}
+
+// 写到期日的全部接口入口（CreateNode、UpdateNode、ExecuteChange 的 create_node / update_node）写入并维护锚定日号：
+//   - 1-31 建档或保存后手动连续续期依次落到 2-28、3-31，不漂到 3-28；
+//   - 2-28 期间通过 UpdateNode 或 ExecuteChange(update_mask=["note"]) 改非到期字段，锚定日号保持 31；
+//   - 改写到期日后锚定日号同步更新，清空到期日后归零；
+//   - ExecuteChange 的 renew_node_billing 快照带出不变的 billing_anchor_day。
+func TestRenewalAnchorDayAcrossAllAPIWriteEntries(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+
+	// 1. 直接 CreateNode 带 1-31 到期日 → 锚定 31，连续手动续期落到 2-28、3-31。
+	created, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{
+		Name:    "eom-direct",
+		Billing: monthlyUntil("2026-01-31"),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Msg.GetNode().GetId()
+	if n, err := h.store.GetNode(t.Context(), id); err != nil || n.Billing.AnchorDay != 31 {
+		t.Fatalf("after CreateNode: billing = %+v %v, want anchor 31", n.Billing, err)
+	}
+	if got := h.renew(t, id).GetBilling().GetExpiresOn(); got != "2026-02-28" {
+		t.Fatalf("first manual renew = %s, want 2026-02-28", got)
+	}
+	// 2-28 期间经 UpdateNode 只改备注，不改到期日：锚定日号保持 31。
+	upd := billed(id, monthlyUntil("2026-02-28"))
+	upd.Note = "memo"
+	h.update(t, upd)
+	if n, err := h.store.GetNode(t.Context(), id); err != nil || n.Billing.AnchorDay != 31 {
+		t.Fatalf("after UpdateNode(note only): billing = %+v %v, want anchor 31", n.Billing, err)
+	}
+	if got := h.renew(t, id).GetBilling().GetExpiresOn(); got != "2026-03-31" {
+		t.Fatalf("second manual renew = %s, want 2026-03-31", got)
+	}
+
+	// 2. 经 ExecuteChange(create_node / update_node / renew_node_billing) 走同一链路。
+	client, _, _ := grantedClient(t, h, &heronv1.TokenGrant{
+		AllNodes: true,
+		Permissions: []heronv1.TokenPermission{
+			heronv1.TokenPermission_TOKEN_PERMISSION_CREATE,
+			heronv1.TokenPermission_TOKEN_PERMISSION_CONFIGURE,
+		},
+	})
+	createReq := &heronv1.ExecuteChangeRequest{
+		RequestId: "create-eom",
+		Change: &heronv1.ExecuteChangeRequest_CreateNode{
+			CreateNode: &heronv1.CreateNodeRequest{Name: "eom-exec", Billing: monthlyUntil("2026-01-31")},
+		},
+	}
+	previewChange(t, client, createReq)
+	createResp, err := client.ExecuteChange(t.Context(), connect.NewRequest(createReq))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cRes heronv1.CreateNodeResponse
+	if err := createResp.Msg.Result.UnmarshalTo(&cRes); err != nil {
+		t.Fatal(err)
+	}
+	execID := cRes.GetNode().GetId()
+	if n, err := h.store.GetNode(t.Context(), execID); err != nil || n.Billing.AnchorDay != 31 {
+		t.Fatalf("after ExecuteChange(create_node): billing = %+v %v, want anchor 31", n.Billing, err)
+	}
+
+	// 经 ExecuteChange 首次续期到 2026-02-28，再只改 note 掩码，确认锚定仍在 31。
+	renew1 := &heronv1.ExecuteChangeRequest{
+		RequestId: "renew-eom-1",
+		Change:    &heronv1.ExecuteChangeRequest_RenewNodeBilling{RenewNodeBilling: &heronv1.RenewNodeBillingRequest{NodeId: execID}},
+	}
+	previewChange(t, client, renew1)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(renew1)); err != nil {
+		t.Fatal(err)
+	}
+	noteReq := &heronv1.ExecuteChangeRequest{
+		RequestId:  "note-eom",
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"note"}},
+		Change: &heronv1.ExecuteChangeRequest_UpdateNode{
+			UpdateNode: &heronv1.UpdateNodeRequest{Id: execID, Note: "via-token"},
+		},
+	}
+	previewChange(t, client, noteReq)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(noteReq)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := h.store.GetNode(t.Context(), execID); err != nil || n.Billing.ExpiresOn != "2026-02-28" || n.Billing.AnchorDay != 31 {
+		t.Fatalf("after ExecuteChange(update_node note): billing = %+v %v, want 2026-02-28 anchor 31", n.Billing, err)
+	}
+
+	// 再次经 ExecuteChange 续期：从 2026-02-28 回到 2026-03-31，快照中 billing_anchor_day 为 31 且不变。
+	renew2 := &heronv1.ExecuteChangeRequest{
+		RequestId: "renew-eom-2",
+		Change:    &heronv1.ExecuteChangeRequest_RenewNodeBilling{RenewNodeBilling: &heronv1.RenewNodeBillingRequest{NodeId: execID}},
+	}
+	p2 := previewChange(t, client, renew2)
+	if !strings.Contains(p2.Operation.BeforeJson, `"billing_anchor_day":31`) ||
+		!strings.Contains(p2.Operation.AfterJson, `"billing_anchor_day":31`) ||
+		!strings.Contains(p2.Operation.AfterJson, `"expires_on":"2026-03-31"`) {
+		t.Fatalf("renew2 preview receipt = %+v", p2.Operation)
+	}
+	r2, err := client.ExecuteChange(t.Context(), connect.NewRequest(renew2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var renewRes heronv1.RenewNodeBillingResponse
+	if err := r2.Msg.Result.UnmarshalTo(&renewRes); err != nil || renewRes.GetNode().GetBilling().GetExpiresOn() != "2026-03-31" {
+		t.Fatalf("renew2 result = %+v %v, want 2026-03-31", &renewRes, err)
+	}
+
+	// 经 ExecuteChange 显式改写到期日为 2026-04-15 → 锚定日号更新为 15；再清空 → 锚定日号归零。
+	reanchor := &heronv1.ExecuteChangeRequest{
+		RequestId:  "reanchor-15",
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"billing.expires_on"}},
+		Change: &heronv1.ExecuteChangeRequest_UpdateNode{
+			UpdateNode: &heronv1.UpdateNodeRequest{Id: execID, Billing: &heronv1.Billing{ExpiresOn: "2026-04-15"}},
+		},
+	}
+	previewChange(t, client, reanchor)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(reanchor)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := h.store.GetNode(t.Context(), execID); err != nil || n.Billing.AnchorDay != 15 {
+		t.Fatalf("after ExecuteChange(expires_on=2026-04-15): billing = %+v %v, want anchor 15", n.Billing, err)
+	}
+	clearExpiry := &heronv1.ExecuteChangeRequest{
+		RequestId:  "clear-expiry",
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"billing.expires_on"}},
+		Change: &heronv1.ExecuteChangeRequest_UpdateNode{
+			UpdateNode: &heronv1.UpdateNodeRequest{Id: execID, Billing: &heronv1.Billing{ExpiresOn: ""}},
+		},
+	}
+	previewChange(t, client, clearExpiry)
+	if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(clearExpiry)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := h.store.GetNode(t.Context(), execID); err != nil || n.Billing.ExpiresOn != "" || n.Billing.AnchorDay != 0 {
+		t.Fatalf("after ExecuteChange(clear expires_on): billing = %+v %v, want empty expiry & anchor 0", n.Billing, err)
 	}
 }
