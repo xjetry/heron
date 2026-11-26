@@ -38,7 +38,8 @@ it("新建 HTTP 任务默认要求 2xx；状态码判据只对 HTTP 出现，只
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "https://example.com/health" } });
   fireEvent.click(within(form).getByRole("radio", { name: "指定状态码" }));
   const code = within(form).getByLabelText("状态码");
-  expect(code).toHaveAttribute("min", "100");
+  // 1xx 是中间响应，探测只看得到最终响应：表单与 hub 同一范围 200–599。
+  expect(code).toHaveAttribute("min", "200");
   expect(code).toHaveAttribute("max", "599");
   expect(code).toBeRequired();
   fireEvent.change(code, { target: { value: "204" } });

@@ -225,7 +225,8 @@ func TestCheckTaskFamilyAndRecordType(t *testing.T) {
 }
 
 // 状态码判据只对 HTTP 任务生效：缺省（< 400）、严格 2xx 或单个精确状态码。精确码以外的策略不得带状态码，
-// 精确码必须在 100–599；其余种类带任何非缺省值都拒绝。hub 保存与 agent 应用都调用 CheckTask。
+// 精确码必须在 200–599：net/http 自行消化 101 以外的 1xx 中间响应，探测拿到的永远是最终响应，1xx 精确码
+// 永远匹配不上。其余种类带任何非缺省值都拒绝。hub 保存与 agent 应用都调用 CheckTask。
 func TestCheckTaskHTTPStatusPolicy(t *testing.T) {
 	const (
 		below400 = heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_UNSPECIFIED
@@ -243,12 +244,13 @@ func TestCheckTaskHTTPStatusPolicy(t *testing.T) {
 	}{
 		{"http_default", http, below400, 0, ""},
 		{"http_success", http, success, 0, ""},
-		{"http_exact_lowest", http, exact, 100, ""},
+		{"http_exact_lowest", http, exact, 200, ""},
 		{"http_exact_highest", http, exact, 599, ""},
 		{"http_exact_204", http, exact, 204, ""},
-		{"http_exact_missing", http, exact, 0, "http_expected_status must be between 100 and 599 when http_status_policy is HTTP_STATUS_POLICY_EXACT; got 0"},
-		{"http_exact_below", http, exact, 99, "http_expected_status must be between 100 and 599"},
-		{"http_exact_above", http, exact, 600, "http_expected_status must be between 100 and 599"},
+		{"http_exact_missing", http, exact, 0, "http_expected_status must be between 200 and 599 with HTTP_STATUS_POLICY_EXACT (a 1xx is never the final response); got 0"},
+		{"http_exact_interim", http, exact, 100, "http_expected_status must be between 200 and 599"},
+		{"http_exact_below", http, exact, 199, "http_expected_status must be between 200 and 599 with HTTP_STATUS_POLICY_EXACT (a 1xx is never the final response); got 199"},
+		{"http_exact_above", http, exact, 600, "http_expected_status must be between 200 and 599"},
 		{"http_success_with_status", http, success, 200, "http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got 200"},
 		{"http_default_with_status", http, below400, 302, "http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got 302"},
 		{"policy_undefined", http, heronv1.HttpStatusPolicy(3), 0, "http_status_policy must be HTTP_STATUS_POLICY_UNSPECIFIED, HTTP_STATUS_POLICY_SUCCESS or HTTP_STATUS_POLICY_EXACT"},

@@ -2172,8 +2172,8 @@ type ProbeTask struct {
 	DnsRecordType DnsRecordType `protobuf:"varint,10,opt,name=dns_record_type,json=dnsRecordType,proto3,enum=heron.v1.DnsRecordType" json:"dns_record_type,omitempty"`
 	// HTTP 任务接受的响应状态码，只对 HTTP 任务有意义；其他种类携带非缺省值即 InvalidArgument。
 	HttpStatusPolicy HttpStatusPolicy `protobuf:"varint,11,opt,name=http_status_policy,json=httpStatusPolicy,proto3,enum=heron.v1.HttpStatusPolicy" json:"http_status_policy,omitempty"`
-	// http_status_policy 为 EXACT 时要求的状态码，100–599；其余策略下必须为 0，否则 InvalidArgument：
-	// 写了却不生效的值会让调用方以为任务在按它判定。
+	// http_status_policy 为 EXACT 时要求的状态码，200–599（1xx 是中间响应，agent 只看得到其后的最终响应，
+	// 1xx 精确码永远匹配不上）；其余策略下必须为 0，否则 InvalidArgument：写了却不生效的值会让调用方以为任务在按它判定。
 	HttpExpectedStatus uint32 `protobuf:"varint,12,opt,name=http_expected_status,json=httpExpectedStatus,proto3" json:"http_expected_status,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache

@@ -863,8 +863,8 @@ export type ProbeTask = Message<"heron.v1.ProbeTask"> & {
   httpStatusPolicy: HttpStatusPolicy;
 
   /**
-   * http_status_policy 为 EXACT 时要求的状态码，100–599；其余策略下必须为 0，否则 InvalidArgument：
-   * 写了却不生效的值会让调用方以为任务在按它判定。
+   * http_status_policy 为 EXACT 时要求的状态码，200–599（1xx 是中间响应，agent 只看得到其后的最终响应，
+   * 1xx 精确码永远匹配不上）；其余策略下必须为 0，否则 InvalidArgument：写了却不生效的值会让调用方以为任务在按它判定。
    *
    * @generated from field: uint32 http_expected_status = 12;
    */

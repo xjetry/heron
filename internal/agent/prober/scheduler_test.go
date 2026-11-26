@@ -450,7 +450,7 @@ func TestApplyRejectsHTTPStatusPolicyViolations(t *testing.T) {
 	exact.Id, exact.HttpStatusPolicy, exact.HttpExpectedStatus = 4, heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT, 204
 	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{tcp, outOfRange, strict, exact}})
 	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
-	want := map[uint64]string{1: "http_status_policy only applies to an HTTP task", 2: "http_expected_status must be between 100 and 599"}
+	want := map[uint64]string{1: "http_status_policy only applies to an HTTP task", 2: "http_expected_status must be between 200 and 599"}
 	if len(rs) != len(want) {
 		t.Fatalf("rejections=%v, want %d", rs, len(want))
 	}

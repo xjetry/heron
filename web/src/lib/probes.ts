@@ -33,8 +33,8 @@ export const HTTP_STATUS_POLICIES: readonly { policy: HttpStatusPolicy; label: s
   { policy: HttpStatusPolicy.UNSPECIFIED, label: "< 400" },
   { policy: HttpStatusPolicy.EXACT, label: "指定状态码" },
 ];
-// 精确状态码的取值范围，与 probelimit 的 MinHTTPStatus、MaxHTTPStatus 同源。
-export const HTTP_STATUS_RANGE = { min: 100, max: 599 } as const;
+// 精确状态码的取值范围，与 probelimit 的 MinHTTPStatus、MaxHTTPStatus 同值：1xx 是中间响应，探测只看得到最终响应。
+export const HTTP_STATUS_RANGE = { min: 200, max: 599 } as const;
 const statusPolicyLabel = (task: ProbeTask): string => task.httpStatusPolicy === HttpStatusPolicy.EXACT
   ? String(task.httpExpectedStatus)
   : HTTP_STATUS_POLICIES.find((entry) => entry.policy === task.httpStatusPolicy)?.label ?? `判据 ${task.httpStatusPolicy}`;

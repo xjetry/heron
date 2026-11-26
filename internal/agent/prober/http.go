@@ -148,7 +148,7 @@ func (p *HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 }
 
 // statusAccepted 是 HTTP 任务状态码判据的唯一实现。取值范围由 probelimit.CheckTask 在 Apply 前裁决过
-// （EXACT 的码在 100–599，未定义的策略整条任务被拒），所以这里不会见到未定义的策略；万一见到按不满足处理，
+// （EXACT 的码在 200–599，未定义的策略整条任务被拒），所以这里不会见到未定义的策略；万一见到按不满足处理，
 // 方向是报丢包而不是把不认识的判据当成放宽。
 func statusAccepted(t *heronv1.ProbeTask, code int) bool {
 	switch t.GetHttpStatusPolicy() {

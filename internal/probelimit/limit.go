@@ -42,8 +42,10 @@ const (
 	CertSPKISHA256Len = 32
 	// ConfigIDLen 是任务配置身份的字节数：crypto/rand 生成的随机数，只比较相等。
 	ConfigIDLen = 16
-	// MinHTTPStatus 与 MaxHTTPStatus 是精确状态码判据可取的范围：RFC 9110 定义的五个状态码类。
-	MinHTTPStatus = 100
+	// MinHTTPStatus 与 MaxHTTPStatus 是精确状态码判据可取的范围：RFC 9110 的 2xx–5xx。1xx 是中间响应，
+	// net/http 自行消化 101 以外的 1xx、探测拿到的永远是其后的最终响应，探测又不发 Upgrade 请求，1xx 精确码
+	// 永远匹配不上——收下它就是一个注定全丢包、却看不出原因的任务。web 的 HTTP_STATUS_RANGE 与这里同值。
+	MinHTTPStatus = 200
 	MaxHTTPStatus = 599
 	// MaxResultAge 是结果的迟到预算：agent 取走时丢弃更老的，hub 拒收更老的。两侧必须是同一个数，
 	// 否则一边收下的结果另一边已经丢掉，或反过来把仍有效的结果丢掉。
@@ -105,7 +107,7 @@ func CheckTask(t *heronv1.ProbeTask) error {
 	}
 	if t.GetHttpStatusPolicy() == heronv1.HttpStatusPolicy_HTTP_STATUS_POLICY_EXACT {
 		if s := t.GetHttpExpectedStatus(); s < MinHTTPStatus || s > MaxHTTPStatus {
-			return fmt.Errorf("http_expected_status must be between %d and %d when http_status_policy is HTTP_STATUS_POLICY_EXACT; got %d", MinHTTPStatus, MaxHTTPStatus, s)
+			return fmt.Errorf("http_expected_status must be between %d and %d with HTTP_STATUS_POLICY_EXACT (a 1xx is never the final response); got %d", MinHTTPStatus, MaxHTTPStatus, s)
 		}
 	} else if s := t.GetHttpExpectedStatus(); s != 0 {
 		return fmt.Errorf("http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got %d", s)
