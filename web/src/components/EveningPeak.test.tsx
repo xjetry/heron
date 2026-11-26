@@ -108,7 +108,7 @@ describe.each(["管理", "公开"] as const)("%s端", (surface) => {
     await pick("晚高峰");
     expect(within(sliceNav()).getByRole("button", { name: "晚高峰" })).toHaveAttribute("aria-pressed", "true");
     expect(summaryOf("TCP example.com:443")).toEqual(EVENING.map((v, i) => `${["均值", "最小", "最大", "丢包率"][i]} ${v}`));
-    expect(JSON.parse(screen.getByTestId("chart-ms").dataset.plotted!)).toEqual([[50], [40], [90]]);
+    expect(JSON.parse(screen.getByTestId("chart-milliseconds").dataset.plotted!)).toEqual([[50], [40], [90]]);
     await pick("全时段");
     expect(summaryOf("TCP example.com:443")).toEqual(ALL.map((v, i) => `${["均值", "最小", "最大", "丢包率"][i]} ${v}`));
   });
@@ -120,7 +120,7 @@ describe.each(["管理", "公开"] as const)("%s端", (surface) => {
     expect(compareRow()).toEqual([...ALL, "0"]);
     await pick("晚高峰");
     expect(compareRow()).toEqual([...EVENING, "0"]);
-    expect(JSON.parse(screen.getByTestId("chart-ms").dataset.plotted!)).toEqual([[50]]);
+    expect(JSON.parse(screen.getByTestId("chart-milliseconds").dataset.plotted!)).toEqual([[50]]);
   });
 
   it("步长大到没有整桶落在晚高峰内时提示缩短查询窗口，不拿跨界的桶充数", async () => {
