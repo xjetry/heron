@@ -1,4 +1,4 @@
-import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
+import { createConnectQueryKey, useMutation } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { errorText } from "../api/auth";
@@ -8,6 +8,7 @@ import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { AdminService, SilenceKind, type Silence } from "../gen/heron/v1/admin_pb";
 import { useNodeList } from "../api/useNodeList";
+import { useAlertRules } from "../api/useAlertRules";
 import { withId } from "../lib/ids";
 import { dateTime } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
@@ -18,7 +19,7 @@ export function Silences() {
   const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; silence: Silence; opener: HTMLElement } | null>(null);
   const { error, mutationOptions } = useLatestError();
   const nodes = useNodeList({});
-  const rules = useQuery(AdminService.method.listAlertRules, {}, { refetchInterval: 10_000 });
+  const rules = useAlertRules({ poll: true });
   const { list: silences, hubNow } = useSilenceClock();
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listSilences, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveSilence, { ...mutationOptions, onSuccess: refresh });

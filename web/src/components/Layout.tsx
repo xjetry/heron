@@ -1,9 +1,11 @@
 import { useMutation } from "@connectrpc/connect-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { errorText } from "../api/auth";
+import { AlertRulesPollingProvider, useLayoutAlertRules } from "../api/useAlertRules";
 import { useLeaveSession } from "../api/useLeaveSession";
+import { alertTabTitle, firingCount } from "../lib/attention";
 import { HeronMark } from "./HeronMark";
 import { Icon, type IconName } from "./Icon";
 import { Modal } from "./Modal";
@@ -30,6 +32,23 @@ export function Layout() {
   const [menuOpener, setMenuOpener] = useState<HTMLElement | null>(null);
   const [choice, setChoice] = useState(() => readSchemeChoice(ADMIN_SCHEME_KEY));
   const current = navigation.flatMap((group) => group.items).find((item) => item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to))?.label ?? "工作台";
+  const baseTitle = useRef<string | null>(null);
+  const rules = useLayoutAlertRules();
+  const firing = firingCount(rules.data?.states);
+  // 挂载瞬间锁住原标题，避免触发数变化重跑 effect 时把已带前缀的标题误当作原标题；
+  // 离开布局（登出或会话失效跳登录页）时无条件恢复，不把告警数残留在登录页标签上。
+  useEffect(() => {
+    const initial = baseTitle.current ?? document.title;
+    baseTitle.current = initial;
+    return () => {
+      document.title = initial;
+      baseTitle.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    if (baseTitle.current === null) return;
+    document.title = alertTabTitle(baseTitle.current, firing);
+  }, [firing]);
   useEffect(() => {
     const previous = document.documentElement.dataset.theme;
     if (choice === "auto") delete document.documentElement.dataset.theme;
@@ -43,6 +62,7 @@ export function Layout() {
   const { reset } = logout;
   useEffect(() => { reset(); }, [location, reset]);
   return (
+    <AlertRulesPollingProvider>
     <div className="admin-shell">
       <a href="#admin-main" className="skip-link">跳到主要内容</a>
       <aside className="admin-sidebar">
@@ -68,5 +88,6 @@ export function Layout() {
       </div>
       {menuOpener && <Modal title="导航" className="navigation-drawer" opener={menuOpener} onClose={() => setMenuOpener(null)}><Navigation onNavigate={() => setMenuOpener(null)} /></Modal>}
     </div>
+    </AlertRulesPollingProvider>
   );
 }

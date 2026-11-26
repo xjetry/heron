@@ -165,3 +165,73 @@ it("导航后常驻布局不保留上一页的登出错误", async () => {
   await act(() => router.navigate("/nodes"));
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 });
+
+it("标签页标题在有触发中告警时加数量前缀，无告警或仅待定时保持原标题，数量变化实时更新", async () => {
+  const previous = document.title;
+  document.title = "Heron";
+  let states: { ruleId: bigint; nodeId: bigint; state: string }[] = [
+    { ruleId: 1n, nodeId: 1n, state: "firing" },
+    { ruleId: 2n, nodeId: 1n, state: "firing" },
+    { ruleId: 3n, nodeId: 2n, state: "pending" },
+  ];
+  try {
+    const { queryClient } = renderWithAdmin({ listAlertRules: async () => ({ rules: [], states }) }, routes, "/");
+    await waitFor(() => expect(document.title).toBe("(2) Heron"));
+    states = [{ ruleId: 1n, nodeId: 1n, state: "firing" }];
+    await act(async () => { await queryClient.refetchQueries(); });
+    await waitFor(() => expect(document.title).toBe("(1) Heron"));
+    states = [{ ruleId: 3n, nodeId: 2n, state: "pending" }];
+    await act(async () => { await queryClient.refetchQueries(); });
+    await waitFor(() => expect(document.title).toBe("Heron"));
+    states = [
+      { ruleId: 1n, nodeId: 1n, state: "firing" },
+      { ruleId: 2n, nodeId: 2n, state: "firing" },
+      { ruleId: 3n, nodeId: 3n, state: "firing" },
+    ];
+    await act(async () => { await queryClient.refetchQueries(); });
+    await waitFor(() => expect(document.title).toBe("(3) Heron"));
+  } finally { document.title = previous; }
+});
+
+it("切换管理页面保持标签页告警数且与子页面共享查询，不重复请求 listAlertRules", async () => {
+  const previous = document.title;
+  document.title = "Heron";
+  const listAlertRules = vi.fn(async () => ({
+    rules: [],
+    states: [{ ruleId: 1n, nodeId: 1n, state: "firing" }],
+  }));
+  try {
+    renderWithAdmin({
+      getSnapshot: async () => ({ now: 1000n, nodes: [] }),
+      listNodes: async () => ({ nodes: [] }),
+      listNotifyChannels: async () => ({ channels: [] }),
+      listProbeTasks: async () => ({ tasks: [] }),
+      listSilences: async () => ({ now: 1000n, silences: [] }),
+      listAlertRules,
+    }, appRouter.routes, "/");
+    await waitFor(() => expect(document.title).toBe("(1) Heron"));
+    expect(listAlertRules).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("link", { name: "告警规则" }));
+    expect(await screen.findByRole("heading", { name: "告警规则" })).toBeInTheDocument();
+    expect(document.title).toBe("(1) Heron");
+    fireEvent.click(screen.getByRole("link", { name: "维护静默" }));
+    expect(await screen.findByRole("heading", { name: "维护静默" })).toBeInTheDocument();
+    expect(document.title).toBe("(1) Heron");
+    expect(listAlertRules).toHaveBeenCalledTimes(1);
+  } finally { document.title = previous; }
+});
+
+it("登出离开管理布局后立即恢复原标签页标题", async () => {
+  const previous = document.title;
+  document.title = "Heron";
+  try {
+    const { router } = renderWithAdmin({
+      listAlertRules: async () => ({ rules: [], states: [{ ruleId: 1n, nodeId: 1n, state: "firing" }, { ruleId: 2n, nodeId: 1n, state: "firing" }] }),
+      logout: async () => ({}),
+    }, routes, "/");
+    await waitFor(() => expect(document.title).toBe("(2) Heron"));
+    fireEvent.click(screen.getByRole("button", { name: "登出" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(document.title).toBe("Heron");
+  } finally { document.title = previous; }
+});

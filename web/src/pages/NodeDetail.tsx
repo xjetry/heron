@@ -18,6 +18,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { useHubTimeZone } from "../api/useHubTimeZone";
 import { useNodeList } from "../api/useNodeList";
+import { useAlertRules } from "../api/useAlertRules";
 import { liveStatus, neverReported } from "../lib/adminStatus";
 import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
@@ -47,7 +48,7 @@ export function NodeDetail() {
   const tags = useQuery(AdminService.method.listTags, {}, { enabled: validId });
   // 逐盘容量只在概览 tab 显示，只在那里轮询；与快照同一节奏，hub 也不会比上报间隔更新得更快。
   const disks = useQuery(AdminService.method.getNodeDisks, { nodeId }, { enabled: validId && tab === "overview", refetchInterval: POLL_MS });
-  const rules = useQuery(AdminService.method.listAlertRules, {}, { enabled: validId && tab === "events" });
+  const rules = useAlertRules({ enabled: validId && tab === "events" });
   const channels = useQuery(AdminService.method.listNotifyChannels, {}, { enabled: validId && tab === "events" });
   // 流量响应同时携带历史窗口要用的 hub now；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
