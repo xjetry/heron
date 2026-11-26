@@ -947,6 +947,8 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 		}
 	}
 	id, _ := h.createNode(t, "n")
+	// 窗口截止到现在，起点在各级保留期之内，级别只由跨度决定；过去窗口的选级见 history_past_window_test.go。
+	now := h.clk.Now().Unix()
 	for _, tc := range []struct {
 		span  int64
 		level string
@@ -954,7 +956,7 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 	}{
 		{6 * 3600, "1m", 60}, {6*3600 + 1, "5m", 300}, {7 * 86400, "5m", 900}, {7*86400 + 1, "1h", 3600},
 	} {
-		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: 0, To: tc.span}))
+		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: now - tc.span, To: now}))
 		if err != nil {
 			t.Fatal(err)
 		}
