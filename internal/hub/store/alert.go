@@ -11,6 +11,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/outbound"
 	"github.com/xjetry/heron/internal/probelimit"
 )
@@ -226,10 +227,48 @@ type AlertEvent struct {
 	At             time.Time
 	Summary        string
 	Value          float64
+	// ValueUnit 是 Value 的单位，生成事件时与 Value 一起定下，不随规则之后的修改或删除变化。取值见 CheckEventValueUnit：
+	// 单位词表（metric.Units，空串是无量纲）、ValueUnitNotApplicable 或只由迁移写下的 ValueUnitUnknown。
+	ValueUnit string
 	// Silenced 表示事件生成时处于维护静默覆盖内：事件照常落库但不产生任何投递行。
 	// 恢复事件记配对 firing 的值，与恢复时刻是否静默无关。
 	Silenced   bool
 	Deliveries []Delivery
+}
+
+// AlertEvent.ValueUnit 在单位词表之外的两个取值。二者都不是单位，读者不能把 Value 当作有量纲的读数：
+//   - ValueUnitNotApplicable：这条事件没有观测值，Value 恒为 0。系统事件都是这样；到期规则因清除到期日而恢复、流量规则因清除配额而恢复时也是。
+//   - ValueUnitUnknown：引入单位之前的事件，迁移时推不出单位（规则已删除）。Value 是当时的观测值，单位已无从得知。
+//
+// 两者必须可区分：前者是"没有值"，后者是"有值但不知单位"。
+const (
+	ValueUnitNotApplicable = "n/a"
+	ValueUnitUnknown       = "unknown"
+)
+
+// CheckEventValueUnit 是新写一条事件时 value_unit 的准入：系统事件只能是 ValueUnitNotApplicable 且 Value 为 0；规则事件
+// 取单位词表或 ValueUnitNotApplicable。ValueUnitUnknown 只描述迁移前的历史，写入口不收——新事件的单位由生成它的一方
+// 给出（告警引擎按规则身份，见 alert.valueUnit；系统事件由 recordAlertEvent 写定），给不出就是缺陷，不能落成"未知"。
+func CheckEventValueUnit(tr Transition, value float64, unit string) error {
+	if _, system := SystemEventKind(tr); system {
+		if unit != ValueUnitNotApplicable || value != 0 {
+			return fmt.Errorf("system event %q carries no value: want value 0 with unit %q, got %v %q", tr, ValueUnitNotApplicable, value, unit)
+		}
+		return nil
+	}
+	if unit == ValueUnitNotApplicable || slices.Contains(metric.Units(), unit) {
+		return nil
+	}
+	return fmt.Errorf("alert event %q: value unit %q is not in the unit vocabulary", tr, unit)
+}
+
+// checkStoredEventValueUnit 是库里已有事件的取值判定（快照恢复预检）：写入口的准入之外，规则事件还可以是迁移写下的
+// ValueUnitUnknown。
+func checkStoredEventValueUnit(tr Transition, value float64, unit string) error {
+	if _, system := SystemEventKind(tr); !system && unit == ValueUnitUnknown {
+		return nil
+	}
+	return CheckEventValueUnit(tr, value, unit)
 }
 
 type Delivery struct {
@@ -1068,8 +1107,17 @@ func systemTargets(channels []int64) []DeliveryTarget {
 // 加入与发送之间没有别的同步：worker 可能已经读过这个批次、正按读到的行拼消息（补货路径可以在一次巡检中途读到
 // 尚未收齐的批次）。新加入的行不会被记进那次发送，是因为 BeginBatchAttempt 只在批次当前的行集合与调用方拼消息时
 // 读到的相同时才开始尝试，否则拒绝、由调用方重读。
+//
+// 系统事件没有观测值：哪些 transition 是系统事件由本包定义（SystemEventKind），它们的 value_unit 也在这里统一写成
+// ValueUnitNotApplicable，各个系统事件的写入口不各写一遍。规则事件的单位由调用方给出，经 CheckEventValueUnit 准入。
 func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, targets []DeliveryTarget) error {
-	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value, silenced) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value, ev.Silenced).Scan(&ev.ID); err != nil {
+	if _, system := SystemEventKind(ev.Transition); system {
+		ev.ValueUnit = ValueUnitNotApplicable
+	}
+	if err := CheckEventValueUnit(ev.Transition, ev.Value, ev.ValueUnit); err != nil {
+		return err
+	}
+	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value, value_unit, silenced) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value, ev.ValueUnit, ev.Silenced).Scan(&ev.ID); err != nil {
 		return err
 	}
 	// 维护静默的不变式：被静默的事件没有投递行，保留期内它因此在界面上呈现"已静默、未投递"，
@@ -1378,7 +1426,7 @@ func (s *Store) GetDeliveryBatch(ctx context.Context, batch int64) (DeliveryBatc
 	for _, d := range out.Deliveries {
 		var ev AlertEvent
 		var at int64
-		err := tx.QueryRowContext(ctx, selectAlertEvents+"WHERE id = ?", d.EventID).Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value, &ev.Silenced)
+		err := tx.QueryRowContext(ctx, selectAlertEvents+"WHERE id = ?", d.EventID).Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value, &ev.ValueUnit, &ev.Silenced)
 		if errors.Is(err, sql.ErrNoRows) {
 			// 事件与投递由 PruneAlertEvents 在同一事务删除，同一快照里有行就有事件。
 			return out, fmt.Errorf("alert delivery %d refers to missing alert event %d", d.ID, d.EventID)
@@ -1412,7 +1460,7 @@ func (s *Store) readAlertEvents(ctx context.Context, predicate string, args ...a
 	for rows.Next() {
 		var ev AlertEvent
 		var at int64
-		if err := rows.Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value, &ev.Silenced); err != nil {
+		if err := rows.Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value, &ev.ValueUnit, &ev.Silenced); err != nil {
 			return nil, err
 		}
 		ev.At = time.Unix(at, 0).UTC()
@@ -1458,7 +1506,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, nodeID int64, beforeID int6
 	return s.readAlertEvents(ctx, where, args...)
 }
 
-const selectAlertEvents = "SELECT id, rule_id, node_id, transition, at, summary, value, silenced FROM alert_event "
+const selectAlertEvents = "SELECT id, rule_id, node_id, transition, at, summary, value, value_unit, silenced FROM alert_event "
 
 // 只拼接实际过滤条件，node_id 的等值条件才能走 alert_event_by_node 的前缀。
 func alertEventWindow(nodeID, beforeID int64, limit int) (string, []any) {
