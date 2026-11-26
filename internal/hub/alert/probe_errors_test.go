@@ -22,3 +22,15 @@ func TestAllErrorMinuteNeitherRecoversNorFiresLoss(t *testing.T) {
 	must(t, f.e.EvaluateProbes(t.Context(), ts+120))
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 }
+
+// 部分错误的分钟按有效测量算丢包率：10 次里 8 次是本机错误、1 次超时，有效测量 2 次丢 1 次即 50%，
+// 越过 20% 阈值触发；按全部结果算会被错误稀释成 10%，链路真实的丢包就被本机错误掩盖。
+func TestPartialErrorMinuteLossExcludesErrors(t *testing.T) {
+	f := newFixture(t)
+	task := f.task(t, f.ids[:1])
+	ts := f.clk.Now().Unix() - 60
+	r := f.rule(t, store.AlertRule{Name: "探测", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task, Metric: store.MetricLossPct, Threshold: 20, ForMinutes: 1})
+	f.minutes(t, task, f.ids[0], ts, metric.ProbeBucket{Sent: 10, Lost: 1, Errors: 8, RttN: 1, RttSumUs: 900, RttMinUs: 900, RttMaxUs: 900})
+	must(t, f.e.EvaluateProbes(t.Context(), ts))
+	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+}

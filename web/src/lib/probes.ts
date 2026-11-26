@@ -95,10 +95,11 @@ export const targetRule = (kind: ProbeKind): { placeholder: string; maxLength: n
 // 不各写一份大小写敏感的前缀判断——那会让 "HTTPS://" 的任务在页面与 hub 上得到相反的结论。
 export const isHTTPSTarget = (kind: ProbeKind, target: string): boolean => kind === ProbeKind.HTTP && /^https:\/\//i.test(target.trim());
 
-// 丢包率与 hub 的 ProbeBucket.LossPct 同一口径：分子只计超时，分母是全部结果。error 是本机没能发起测量
-// （缺地址族、无 socket、解析失败），不是可达性事实：全是 error 的点（含 sent 为 0）没有丢包率，返回 null
-// 而不是 0%——画成 0% 会把本机失去地址的时段显示成链路完好。单点与窗口汇总都经这一个函数。
-export const lossOf = (sent: number, lost: number, errors: number): number | null => (sent > errors ? (lost / sent) * 100 : null);
+// 丢包率与 hub 的 ProbeBucket.LossPct 同一口径：分子只计超时，分母是有效测量数 sent − errors。error 是本机
+// 没能发起测量（缺地址族、无 socket、解析失败），不是可达性事实，既不算丢也不算通——进分母会把链路真实的丢包
+// 按本机错误的比例稀释掉。全是 error 的点（含 sent 为 0）没有丢包率，返回 null 而不是 0%——画成 0% 会把本机
+// 失去地址的时段显示成链路完好。单点与窗口汇总都经这一个函数。
+export const lossOf = (sent: number, lost: number, errors: number): number | null => (sent > errors ? (lost / (sent - errors)) * 100 : null);
 export const lossPercent: ProbeValue = (s) => lossOf(s.sent, s.lost, s.errors);
 // rtt 只在该点有成功探测时存在；没有就是空洞，不能画成 0。
 export const rttMeanMs: ProbeValue = (s) => (s.rttMeanUs === undefined ? null : s.rttMeanUs / 1000);

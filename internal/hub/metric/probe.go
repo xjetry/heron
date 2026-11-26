@@ -15,15 +15,16 @@ type ProbeBucket struct {
 	RttMinUs, RttMaxUs uint32
 }
 
-// LossPct 是桶的丢包率（百分比），分母是全部结果。探测错误是本机未能发起测量（缺地址族、解析失败、本地策略），
-// 不是可达性事实：全部结果都是错误（含没有结果）的桶没有丢包率，ok 为假，调用方必须按"没有读数"处理，
-// 不能当成 0%——那会让本机失去地址的一分钟把正在触发的丢包告警判成恢复。面板的 lossPercent（web/src/lib/probes.ts）
-// 与这里同一口径。
+// LossPct 是桶的丢包率（百分比）：分子是超时数，分母是有效测量数 Sent − Errors。探测错误是本机未能发起测量
+// （缺地址族、解析失败、本地策略），不是可达性事实，既不算丢也不算通——进分母会把链路真实的丢包按本机错误的比例
+// 稀释掉。全部结果都是错误（含没有结果）的桶没有有效测量，ok 为假，调用方必须按"没有读数"处理，不能当成 0%——
+// 那会让本机失去地址的一分钟把正在触发的丢包告警判成恢复。Add 保证 Lost + Errors ≤ Sent，所以有读数时值落在
+// [0, 100]。面板的 lossOf（web/src/lib/probes.ts）与这里同一口径。
 func (b *ProbeBucket) LossPct() (float64, bool) {
 	if b.Sent <= b.Errors {
 		return 0, false
 	}
-	return float64(b.Lost) / float64(b.Sent) * 100, true
+	return float64(b.Lost) / float64(b.Sent-b.Errors) * 100, true
 }
 
 func (b *ProbeBucket) Add(r *heronv1.ProbeResult) {

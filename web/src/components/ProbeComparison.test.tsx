@@ -122,7 +122,7 @@ it("FailedPrecondition 显示服务端消息", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("读量超出额度，请缩小窗口");
 });
 
-it("全超时 100%、全本地错误无丢包率读数、混合按 lost/sent，三者都不进 RTT 图；同名消歧，不可见单列", async () => {
+it("全超时 100%、全本地错误无丢包率读数、混合按 lost/(sent − errors)，三者都不进 RTT 图；同名消歧，不可见单列", async () => {
   const { ts } = pinClock();
   renderComparison({
     listProbeComparisonNodes: async () => listed([1n, 2n, 3n, 5n, 4n], 8),
@@ -139,7 +139,7 @@ it("全超时 100%、全本地错误无丢包率读数、混合按 lost/sent，�
   const rtt = await screen.findByTestId("chart-ms");
   expect(rtt.dataset.labels).toBe("ok");
   expect(rtt.dataset.values).toBe("[0]");
-  for (const [name, loss, errors] of [["edge #1", "100%", "0"], ["edge #2", "–", "5"], ["edge #3", "40%", "3"]]) {
+  for (const [name, loss, errors] of [["edge #1", "100%", "0"], ["edge #2", "–", "5"], ["edge #3", "57%", "3"]]) {
     expect(within(screen.getByRole("row", { name })).getAllByRole("cell").map((td) => td.textContent)).toEqual(["", name, "–", "–", "–", loss, errors]);
   }
   expect(screen.getByRole("checkbox", { name: "显示 gone" })).toBeDisabled();
@@ -349,7 +349,7 @@ it("页头显示类型、目标与节点数，汇总表排序、显隐和悬停�
   expect(table.getByRole("columnheader", { name: "均值" })).toHaveAttribute("aria-sort", "descending");
   fireEvent.click(screen.getByTestId("focus-1"));
   expect(table.getByRole("row", { name: "ok" })).toHaveAttribute("data-focused", "true");
-  expect(screen.getByText("丢包率 = 超时数 ÷ 发送数；错误不计入丢包，全是错误时没有丢包率。")).toBeInTheDocument();
+  expect(screen.getByText("丢包率 = 超时数 ÷（发送数 − 错误数）；错误既不算丢也不算通，全是错误时没有丢包率。")).toBeInTheDocument();
 });
 
 it("管理端任务行进入对比页，公开端只给已标注的任务入口", async () => {

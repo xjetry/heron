@@ -67,8 +67,8 @@ describe("toProbeAligned", () => {
     const s = resp.series[1].samples[0];
     expect(lossPercent(s)).toBeNull();
     expect(rttMeanMs(s)).toBeNull();
-    // 有一次有效测量就有读数，分母仍是全部结果。
-    expect(lossPercent({ ...s, sent: 6, lost: 1, errors: 4 })).toBeCloseTo(100 / 6);
+    // 有一次有效测量就有读数；分母是有效测量数 sent − errors，错误不稀释丢包：2 次有效测量丢 1 次是 50%。
+    expect(lossPercent({ ...s, sent: 6, lost: 1, errors: 4 })).toBe(50);
   });
   it("taskIdsOf 保持响应顺序", () => {
     expect(taskIdsOf(resp)).toEqual([3n, 7n]);
@@ -86,16 +86,21 @@ it.each([
   expect(isHTTPSTarget(kind, target)).toBe(want);
 });
 
-// 单节点探测卡片与跨节点对比表的汇总都经 summarizeProbes：均值按成功数加权，丢包率与单点同口径——全是本地错误的
-// 窗口没有丢包率，不是 0%。
+// 单节点探测卡片与跨节点对比表的汇总都经 summarizeProbes：均值按成功数加权，丢包率与单点同口径——分母是整窗的
+// 有效测量数，全是本地错误的窗口没有丢包率，不是 0%。
 it.each([
   {
-    name: "加权均值与最值、丢包按 lost/sent",
+    name: "加权均值与最值、丢包按 lost/(sent − errors)",
     samples: [
       { ts: 0n, sent: 100, lost: 0, errors: 0, rttMeanUs: 10_000, rttMinUs: 5_000, rttMaxUs: 15_000 },
       { ts: 60n, sent: 100, lost: 10, errors: 0, rttMeanUs: 50_000, rttMinUs: 40_000, rttMaxUs: 90_000 },
     ],
     want: { mean: 5500 / 190, min: 5, max: 90, lossPercent: 5, errors: 0 },
+  },
+  {
+    name: "部分本地错误不稀释丢包：整窗 2 次超时 ÷ 4 次有效测量",
+    samples: [{ ts: 0n, sent: 10, lost: 1, errors: 8 }, { ts: 60n, sent: 2, lost: 1, errors: 0, rttMeanUs: 20_000, rttMinUs: 20_000, rttMaxUs: 20_000 }],
+    want: { mean: 20, min: 20, max: 20, lossPercent: 50, errors: 8 },
   },
   { name: "全是本地错误：没有丢包率", samples: [{ ts: 0n, sent: 3, lost: 0, errors: 3 }], want: { mean: null, min: null, max: null, lossPercent: null, errors: 3 } },
   { name: "没有样本", samples: [], want: { mean: null, min: null, max: null, lossPercent: null, errors: 0 } },

@@ -20,13 +20,13 @@ const to = 300;
 it("按节点汇总：均值按成功数加权，极值、丢包与错误各按其口径累计，不可见节点标记", () => {
   const rows = summarizeComparison([1n, 2n, 3n], new Map([[1n, "a"], [2n, "b"]]), [chunk([
     { nodeId: 1n, samples: [
-      { ...sample(60, 4, 1, 1, 10_000), rttMinUs: 8_000, rttMaxUs: 12_000 },
+      { ...sample(60, 5, 2, 1, 10_000), rttMinUs: 8_000, rttMaxUs: 12_000 },
       { ...sample(120, 4, 0, 0, 40_000), rttMinUs: 5_000, rttMaxUs: 90_000 },
     ] },
     { nodeId: 2n, samples: [sample(60, 2, 2, 0)] },
   ], [3n])]);
   expect(rows).toEqual([
-    { id: 1n, label: "a", mean: 30, min: 5, max: 90, lossPercent: 12.5, errors: 1, unavailable: false },
+    { id: 1n, label: "a", mean: 30, min: 5, max: 90, lossPercent: 25, errors: 1, unavailable: false },
     { id: 2n, label: "b", mean: null, min: null, max: null, lossPercent: 100, errors: 0, unavailable: false },
     { id: 3n, label: "#3", mean: null, min: null, max: null, lossPercent: null, errors: 0, unavailable: true },
   ]);
@@ -65,16 +65,16 @@ it("块大小只取调用方传入的上限，0 与负数不是不限，也不�
   expect(chunkNodeIds([1n, 2n, 3n], -1)).toEqual({ ok: false, reason: "non-positive-limit" });
 });
 
-it("全超时 100%、全本地错误无丢包率读数、混合按 lost/sent；三者都没有 RTT，不把 null 画成 0", () => {
+it("全超时 100%、全本地错误无丢包率读数、混合按 lost/(sent − errors)；三者都没有 RTT，不把 null 画成 0", () => {
   const view = assembleComparison([1n, 2n, 3n], names, [chunk([
     { nodeId: 1n, samples: [sample(120, 10, 10, 0)] },
     { nodeId: 2n, samples: [sample(120, 5, 0, 5)] },
-    { nodeId: 3n, samples: [sample(120, 10, 4, 3)] },
+    { nodeId: 3n, samples: [sample(120, 10, 4, 2)] },
   ])], from, to);
   expect(view.complete).toBe(true);
   expect(view.loss.labels).toEqual(["edge #1", "other"]);
   expect(view.loss.data[0]).toEqual([60, 120, 180, 240]);
-  expect(view.loss.data.slice(1).map((col) => col[1])).toEqual([100, 40]);
+  expect(view.loss.data.slice(1).map((col) => col[1])).toEqual([100, 50]);
   expect(view.loss.missing).toEqual(["edge #2"]);
   expect(view.rtt.labels).toEqual([]);
   expect(view.rtt.data.slice(1)).toEqual([]);

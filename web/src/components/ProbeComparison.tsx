@@ -281,7 +281,7 @@ export function ProbeComparison({ taskId, methods, nodes, now, timeZone }: { tas
               })}
             </tbody>
           </table>
-          <p className="muted">丢包率 = 超时数 ÷ 发送数；错误不计入丢包，全是错误时没有丢包率。</p>
+          <p className="muted">丢包率 = 超时数 ÷（发送数 − 错误数）；错误既不算丢也不算通，全是错误时没有丢包率。</p>
         </>
       )}
     </section>

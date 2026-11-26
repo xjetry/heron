@@ -680,7 +680,8 @@ type ProbeSample struct {
 	// 不含 live 内存里尚未刷出的当前分钟。
 	Ts   int64  `protobuf:"varint,1,opt,name=ts,proto3" json:"ts,omitempty"`
 	Sent uint32 `protobuf:"varint,2,opt,name=sent,proto3" json:"sent,omitempty"`
-	// 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
+	// 计入丢包的超时数；丢包率 = lost / (sent − errors)：errors 是本机未能发起测量，既不算丢也不算通，
+	// 不进分母；sent == errors 时该点没有丢包率读数，不是 0%。
 	Lost   uint32 `protobuf:"varint,3,opt,name=lost,proto3" json:"lost,omitempty"`
 	Errors uint32 `protobuf:"varint,4,opt,name=errors,proto3" json:"errors,omitempty"`
 	// 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。

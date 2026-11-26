@@ -65,13 +65,13 @@ function column(samples: readonly ProbeSample[], xs: readonly number[], value: P
   });
 }
 
-// 0 是读数（全部本地错误的丢包率就是 0）。null 是没有读数，不能当成 0 画上去。
+// 0 是读数（有有效测量但没有超时的丢包率就是 0）。null 是没有读数，不能当成 0 画上去。
 function isPlotted(v: number | null): v is number {
   return v !== null && Number.isFinite(v);
 }
 
 // nodeIds 是 List 的全序。chunks 只含已经返回的块：没出现在任何块里的节点既不画线，也不进“没有读数”。
-// 丢包率只用 lossPercent（lost/sent，全是错误的点没有读数），不因缺少 RTT 另记成 100%。RTT 图只保留至少有一个 RTT 的节点。
+// 丢包率只用 lossPercent（lost/(sent − errors)，全是错误的点没有读数），不因缺少 RTT 另记成 100%。RTT 图只保留至少有一个 RTT 的节点。
 export function assembleComparison(
   nodeIds: readonly bigint[],
   names: ReadonlyMap<bigint, string>,

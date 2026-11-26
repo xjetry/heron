@@ -133,7 +133,8 @@ message ProbeSample {
   // 不含 live 内存里尚未刷出的当前分钟。
   int64 ts = 1;
   uint32 sent = 2;
-  // 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
+  // 计入丢包的超时数；丢包率 = lost / (sent − errors)：errors 是本机未能发起测量，既不算丢也不算通，
+  // 不进分母；sent == errors 时该点没有丢包率读数，不是 0%。
   uint32 lost = 3;
   uint32 errors = 4;
   // 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。

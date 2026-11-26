@@ -393,7 +393,8 @@ export type ProbeSample = Message<"heron.v1.ProbeSample"> & {
   sent: number;
 
   /**
-   * 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
+   * 计入丢包的超时数；丢包率 = lost / (sent − errors)：errors 是本机未能发起测量，既不算丢也不算通，
+   * 不进分母；sent == errors 时该点没有丢包率读数，不是 0%。
    *
    * @generated from field: uint32 lost = 3;
    */

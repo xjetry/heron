@@ -217,7 +217,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 
 ### 探测历史（`queryProbes`）
 
-请求同 `queryMetrics`。响应 `series` 每个探测任务一条：`taskId`、`kind`（`PROBE_KIND_ICMP` / `TCP` / `HTTP` / `DNS`；不标注时缺失）、`target`（目标；不标注时为空，用 `taskId` 称呼）、`samples`。样本 `{ ts, sent, lost, errors, rttMeanUs, rttMinUs, rttMaxUs }`：丢包率 = `lost / sent`（`errors` 是本地错误，不计入丢包）；RTT 单位微秒，只有有成功探测的点才带。没有样本的时间段就是没有结果，不是 0。按服务端给的顺序显示，不要按 id 重排。
+请求同 `queryMetrics`。响应 `series` 每个探测任务一条：`taskId`、`kind`（`PROBE_KIND_ICMP` / `TCP` / `HTTP` / `DNS`；不标注时缺失）、`target`（目标；不标注时为空，用 `taskId` 称呼）、`samples`。样本 `{ ts, sent, lost, errors, rttMeanUs, rttMinUs, rttMaxUs }`：丢包率 = `lost / (sent − errors)`（`errors` 是本地错误，既不算丢也不算通，不进分母；`sent == errors` 的点没有丢包率，不要画成 0%）；RTT 单位微秒，只有有成功探测的点才带。没有样本的时间段就是没有结果，不是 0。按服务端给的顺序显示，不要按 id 重排。
 
 内置页的「晚高峰」切换（单节点探测与跨节点对比都有）按 `getSite().timezone` 取每天 20:00–24:00：一个点 `[ts, ts + stepS)` 的每个时刻在该时区的墙钟小时都 ≥ 20 才算，跨过 20:00 或 24:00 的点整个不计；墙钟用 `Intl` 换算，不要按「20:00 加 4 小时」或固定偏移推，夏令时切换落在晚间时这一段可以是 3 或 5 小时。只切已经取到的数据，汇总（加权均值、最小、最大、丢包率）用切出的点重算。窗口很长时 `stepS` 可能大到没有一个点整个落在晚高峰里，这时提示缩短窗口，不要拿跨界的点充数。
 
