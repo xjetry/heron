@@ -125,3 +125,14 @@ func TestMergedRecoveryMessagePreservesDurations(t *testing.T) {
 		t.Fatalf("merged summary=%q", msg.Summary)
 	}
 }
+
+// 持续时长的两种句式由同一个函数写出：恢复追加"，告警持续 X"，静默解除补发追加"（静默结束时仍未恢复，已持续 X）"。
+func TestWithFiringDuration(t *testing.T) {
+	d := 3*time.Hour + 29*time.Minute
+	if got := withFiringDuration("节点 a 离线", d, atRecovery); got != "节点 a 离线，告警持续 3 小时 29 分钟" {
+		t.Errorf("recovery = %q", got)
+	}
+	if got := withFiringDuration("节点 a 离线", d, atUnsilence); got != "节点 a 离线（静默结束时仍未恢复，已持续 3 小时 29 分钟）" {
+		t.Errorf("unsilence = %q", got)
+	}
+}

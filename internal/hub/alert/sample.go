@@ -142,7 +142,7 @@ func (e *Engine) sampleEvent(ctx context.Context, r store.AlertRule, n store.Nod
 		return store.AlertEvent{}, fmt.Errorf("no sample for rule kind %q", r.Kind)
 	}
 	if phase == store.TransitionRecovered {
-		ev.Summary = withFiringDuration(ev.Summary, sampleFiringDuration)
+		ev.Summary = withFiringDuration(ev.Summary, sampleFiringDuration, atRecovery)
 	}
 	return ev, nil
 }

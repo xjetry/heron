@@ -551,7 +551,7 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 			silenced = cur.firedSilenced
 			if cur.state == store.StateFiring && !cur.firedAt.IsZero() {
 				// firedAt 由进入 firing 的转换记录；离线告警已等待宽限期，因此这是告警持续时间，不是节点离线时长。
-				summary = withFiringDuration(summary, now.Sub(cur.firedAt))
+				summary = withFiringDuration(summary, now.Sub(cur.firedAt), atRecovery)
 			}
 		} else if !r.Kind.IsCalendar() {
 			// 日历类提醒（到期、证书到期）永远不被静默，其余种类的触发按此刻的维护开关与静默窗口抑制。
@@ -666,7 +666,7 @@ func (e *Engine) renotifyUnsilenced(ctx context.Context, cy *cycle, nodes []stor
 			continue
 		}
 		// fired_at 对 firing 状态恒非零：setAlertState 在进入 firing 时写下它，迁移 39 为当时已在 firing 的行回填了 since_at。
-		summary := s.FiredSummary + "（静默结束时仍未恢复，已持续 " + formatAlertDuration(now.Sub(s.FiredAt)) + "）"
+		summary := withFiringDuration(s.FiredSummary, now.Sub(s.FiredAt), atUnsilence)
 		targets, merged := e.deliveryTargets(cy, r, store.TransitionFiring)
 		ev, err := e.st.RecordUnsilencedFiring(ctx, r.ID, node.ID, store.AlertEvent{At: now, Summary: summary, Value: s.FiredValue}, targets)
 		if err != nil {
