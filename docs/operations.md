@@ -171,7 +171,7 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
   ```
 
   某块合格的盘读不出（权限、I/O 错误）时整份逐盘读数缺失，节点诊断的采集失败项记「逐盘容量」，agent 日志点名路径；不需要监测它就把它加进排除规则。
-- 在线更新经 hub 中转（`--update-source hub`）的节点：更新器读 agent 配置时拒绝不认识的字段，不认识 `disk_exclude` 的旧版更新器会因此取不到更新。在这类节点上写 `disk_exclude` 之前先重跑新版安装器升级更新器，或改用 `run --disk-exclude`。
+- 在线更新经 hub 中转（`--update-source hub`）的节点：更新器从 agent 配置里只取 `hub`、`token`、`insecure_http`，其余字段一律忽略，agent 以后新增配置项也不影响它取更新。只有本版本之前安装的更新器还会拒读它不认识的字段（写上 `disk_exclude` 后取不到更新）：这类节点先重跑一次新版安装器升级更新器，再写 `disk_exclude`（或在此之前改用 `run --disk-exclude`）；升级之后不再受 agent 配置新增字段影响。
 - agent 日志有总量上限（突发之后被压掉的行数记在下一条日志里）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
 
 ## 排查

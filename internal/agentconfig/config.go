@@ -1,5 +1,6 @@
 // Package agentconfig 是 agent 配置文件的格式与 hub 地址规则。agent（register、run、configure）与节点上的
-// root 更新器（hub 来源）读同一份文件，解析与地址规则只在这里定义一次——更新器没有自己的一套。
+// root 更新器（hub 来源）读同一份文件，解析与地址规则只在这里定义一次——更新器没有自己的一套。agent 严格解析
+// 整份配置（Decode）；更新器只取连 hub 的字段（DecodeHubAccess），不因 agent 新增的配置项拒读。
 // 本包不依赖探测策略的解析（prober）：那会把探测代码带进 root 更新器；策略校验留在 agent 的 client 包。
 package agentconfig
 
@@ -40,15 +41,49 @@ type Config struct {
 // 宿主机以为拒绝了的地址实际放行。name 只用于报错。
 func Decode(r io.Reader, name string) (Config, error) {
 	var c Config
+	err := decodeObject(r, name, &c, true)
+	return c, err
+}
+
+// HubAccess 是配置里连 hub 所需的字段，与 Config 的同名字段是同一个 JSON 键（TestHubAccessReadsWhatSaveWrites
+// 从 Save 写出的文件读回核对）。节点上的 root 更新器（hub 来源）只读这些。
+type HubAccess struct {
+	Hub          string `json:"hub"`
+	Token        string `json:"token"`
+	InsecureHTTP bool   `json:"insecure_http"`
+}
+
+// DecodeHubAccess 从一份 agent 配置里只取 HubAccess，其余字段不论认不认识一律忽略：更新器与 agent 分开升级，
+// agent 新增的配置项（如 disk_exclude）若让更新器拒读，节点一写上它，经 hub 中转的在线更新就失败，而更新器
+// 恰恰要靠这次更新才能认识新字段。忽略的字段都不影响连 hub；取用的字段照样严格——类型错、hub 或 token 缺失、
+// 对象之后还有内容都是错误，不带着残缺的凭据去连 hub。name 只用于报错。
+func DecodeHubAccess(r io.Reader, name string) (HubAccess, error) {
+	var a HubAccess
+	if err := decodeObject(r, name, &a, false); err != nil {
+		return a, err
+	}
+	switch {
+	case a.Hub == "":
+		return a, fmt.Errorf("%s: hub is missing", name)
+	case a.Token == "":
+		return a, fmt.Errorf("%s: token is missing", name)
+	}
+	return a, nil
+}
+
+// decodeObject 把恰好一个 JSON 对象解进 v；strict 时未知字段是错误。
+func decodeObject(r io.Reader, name string, v any, strict bool) error {
 	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil {
-		return c, fmt.Errorf("%s: %w", name, err)
+	if strict {
+		dec.DisallowUnknownFields()
+	}
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
-		return c, fmt.Errorf("%s: unexpected content after the configuration object", name)
+		return fmt.Errorf("%s: unexpected content after the configuration object", name)
 	}
-	return c, nil
+	return nil
 }
 
 // Read 读文件并 Decode，不校验，供 configure 修正一份当前不合规的配置（例如升级后才被拒的明文 hub 地址）。

@@ -75,7 +75,13 @@ func TestHubSourceRefusesBeforeNetwork(t *testing.T) {
 		"hub_role":          {"hub", configFor(url), "only agent"},
 		"plain_http_remote": {"agent", func() ([]byte, error) { return []byte(`{"hub":"http://10.0.0.1:8080","token":"t"}`), nil }, "plain http"},
 		"read_error":        {"agent", func() ([]byte, error) { return nil, errors.New("managed file must be regular") }, "read agent config"},
-		"unknown_field":     {"agent", func() ([]byte, error) { return []byte(`{"hub":"` + url + `","token":"t","x":1}`), nil }, "unknown field"},
+		// 更新器用到的字段仍严格：类型错、缺失与对象之后的多余内容都在连 hub 之前报错。
+		"hub_wrong_type":      {"agent", func() ([]byte, error) { return []byte(`{"hub":1,"token":"t"}`), nil }, "hub"},
+		"token_wrong_type":    {"agent", func() ([]byte, error) { return []byte(`{"hub":"` + url + `","token":["t"]}`), nil }, "token"},
+		"insecure_wrong_type": {"agent", func() ([]byte, error) { return []byte(`{"hub":"` + url + `","token":"t","insecure_http":"yes"}`), nil }, "insecure_http"},
+		"hub_missing":         {"agent", func() ([]byte, error) { return []byte(`{"token":"t"}`), nil }, "hub"},
+		"token_missing":       {"agent", func() ([]byte, error) { return []byte(`{"hub":"` + url + `"}`), nil }, "token"},
+		"trailing_content":    {"agent", func() ([]byte, error) { return []byte(`{"hub":"` + url + `","token":"t"} {}`), nil }, "after the configuration object"},
 	} {
 		_, err := NewHubSource(tc.read).Fetch(boundedCtx(t), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, tc.role, "amd64")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -84,6 +90,24 @@ func TestHubSourceRefusesBeforeNetwork(t *testing.T) {
 	}
 	if h.calls.Load() != 0 {
 		t.Fatalf("refused fetches still reached the hub %d times", h.calls.Load())
+	}
+}
+
+// agent 配置的演进不能卡住更新器：更新器只取连 hub 所需的字段，agent 新增的字段（disk_exclude）与它不认识的字段
+// 一律忽略。否则每加一个 agent 配置项，已部署的更新器就在节点写上它之后取不到经 hub 中转的更新——而更新器
+// 自己正要靠这次更新才能认识新字段。
+func TestHubSourceIgnoresAgentFieldsItDoesNotUse(t *testing.T) {
+	want := signedArtifacts("agent", "amd64", "v1.2.3", []byte("archive-bytes"))
+	h := &relayHub{resp: &heronv1.GetReleaseResponse{Sums: want.Sums, Signature: want.Signature, Archive: want.Archive}}
+	url := serveRelay(t, h)
+	read := func() ([]byte, error) {
+		return []byte(`{"hub":"` + url + `","token":"node-secret-token","name":"n","probe_deny":["10.0.0.0/8"],"disk_exclude":["/mnt/*"],"field_from_a_later_agent":{"x":1}}`), nil
+	}
+	if _, err := NewHubSource(read).Fetch(boundedCtx(t), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, "agent", "amd64"); err != nil {
+		t.Fatal(err)
+	}
+	if h.auth != "Bearer node-secret-token" {
+		t.Fatalf("auth=%q", h.auth)
 	}
 }
 

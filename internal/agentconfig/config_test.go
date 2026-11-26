@@ -110,3 +110,25 @@ func TestSaveKeepsOwner(t *testing.T) {
 		t.Fatalf("owner=%d:%d perm=%o, want 65534:65534 600", sys.Uid, sys.Gid, st.Mode().Perm())
 	}
 }
+
+// 更新器读的 HubAccess 与 agent 写的 Config 必须落在同一组 JSON 键上：从 Save 写出的完整配置读回，三个字段原样取到，
+// 其余字段（含更新器不认识的）不妨碍读取。
+func TestHubAccessReadsWhatSaveWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := Config{Hub: "http://10.0.0.1:8080", Token: "node-token", Name: "n", InsecureHTTP: true, ProbeDeny: []string{"10.0.0.0/8"}, DiskExclude: []string{"/mnt/*"}}
+	if err := Save(path, want); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	got, err := DecodeHubAccess(f, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (HubAccess{Hub: want.Hub, Token: want.Token, InsecureHTTP: true}) {
+		t.Fatalf("got %+v from %+v", got, want)
+	}
+}

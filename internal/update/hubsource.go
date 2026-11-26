@@ -26,8 +26,9 @@ const maxRelayResponse = maxFetchBytes + 64<<10
 const hubFetchLimit = 2 * DownloadLimit
 
 // HubSource 经 hub 的 GetRelease 取产物，不做接受判定（见 Accept）。hub 地址、token 与明文许可在
-// 每个任务现读 agent 配置：节点 token 轮换后无须同步。解析与地址规则和 agent 同一实现（agentconfig），连接与 agent
-// 同一构造（hubclient），所以 https 要求、不跟随重定向、响应上限对两者同时成立。
+// 每个任务现读 agent 配置：节点 token 轮换后无须同步。只取这三个字段（agentconfig.DecodeHubAccess），agent 新增的
+// 配置项不会让更新器拒读；地址规则和 agent 同一实现（agentconfig.CheckHub），连接与 agent 同一构造（hubclient），
+// 所以 https 要求、不跟随重定向、响应上限对两者同时成立。
 type HubSource struct {
 	// readConfig 返回 agent 配置原文；正式实现按服务用户属主等检查打开并限量读取（serve 里构造）。
 	readConfig func() ([]byte, error)
@@ -48,7 +49,7 @@ func (s *HubSource) Fetch(ctx context.Context, task Request, role, arch string) 
 	if err != nil {
 		return Artifacts{}, fmt.Errorf("read agent config: %w", err)
 	}
-	cfg, err := agentconfig.Decode(bytes.NewReader(raw), agentConfigPath)
+	cfg, err := agentconfig.DecodeHubAccess(bytes.NewReader(raw), agentConfigPath)
 	if err != nil {
 		return Artifacts{}, err
 	}
