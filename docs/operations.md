@@ -44,7 +44,7 @@ docker run --rm -v heron-data:/data alpine:3.21 sh -c 'cd /data && rm -f heron.d
 - 前提：在对应机器重跑一次官方安装器，装上独立的 `heron-updater-hub` / `heron-updater-agent` root 服务。主服务仍以原来的非 root 用户运行。Docker、OpenRC、macOS 和不符合固定程序/配置路径的自定义服务不支持在线更新。
 - 更新只接受官方仓库已发布的正式版本，拒绝预发布、同版和降级。每台机器串行更新；节点任务离线等待最多 24 小时，仅尚未下发的任务可以取消。安装器与在线更新互斥，正在更新时重跑安装器会拒绝。
 - 下载与校验期间旧服务继续运行。agent 必须以新版本成功向 hub 上报才算完成：更新器最多等 90 秒，未确认就自动回滚。回滚本身失败时保留备份并报告错误，需要人工处理，事务与回滚备份在 `/var/lib/heron-update-hub` 与 `/var/lib/heron-update-agent`。
-- 更新器只替换主程序，不更新自身、systemd 单元或启动参数；更新器本身通过重跑新版官方安装器升级。
+- 更新器只替换主程序，不更新自身、systemd 单元或启动参数；更新器本身与新版 systemd 单元的沙箱加固均通过重跑新版官方安装器升级生效。
 - 节点默认从 GitHub 取产物；出站受限、只能连到 hub 的节点在安装时给 `install.sh` 加 `--update-source hub`，改由 hub 中转：hub 从 GitHub 取回、验签后转发，节点上的更新器照样验签。重跑安装器不带这个参数时沿用原设置，给 `--update-source github` 改回直连。面板生成安装命令时勾选「在线更新经 hub 中转」会带上这个参数。
 - 更新器日志：节点上 `journalctl -u heron-updater-agent`，hub 主机上 `journalctl -u heron-updater-hub`。
 

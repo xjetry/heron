@@ -27,7 +27,7 @@ curl -fsSL https://github.com/xjetry/heron/releases/latest/download/install-hub.
 
 ### 升级与卸载（hub）
 
-- 重跑同一条安装命令即升级：沿用 `/etc/systemd/system/heron-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值。
+- 重跑同一条安装命令即升级：沿用 `/etc/systemd/system/heron-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值。在线更新只替换主程序二进制、不改写 systemd 单元；已部署主机需重跑一次新版安装器，单元新增的沙箱加固才会生效。
 - 脚本只装自己所属的版本，没有 `--version`：`releases/latest/download/install-hub.sh` 装最新正式版；装指定版本取该版本的脚本，`https://github.com/xjetry/heron/releases/download/vX.Y.Z/install-hub.sh`。
 - 升级前先看 [operations.md 的升级与回退](operations.md#升级与回退)：新版本的 `serve` 会迁移数据库，迁移后旧版本打不开。
 - 手工定制（例如 `Environment=HERON_OFFLINE_AFTER=60s`）放进 drop-in（`systemctl edit heron-hub`）：每次安装都用发行包的单元覆盖主单元、只保留其中 `ExecStart` 的参数，不设 `ExecStart` 的 drop-in 升级时保留。普通卸载保留 drop-in，`--purge` 删除。
@@ -115,7 +115,7 @@ curl -fsSL https://github.com/xjetry/heron/releases/latest/download/install.sh |
 
 参数：`--hub`、`--key`（首次安装必需）、`--name`、`--insecure-http`、`--base-url`、`--update-source github|hub`（在线更新从哪里取产物，见 [operations.md](operations.md#在线更新)）。
 
-- 普通重跑即升级：已有配置时沿用现有注册，不消费 `--key`。
+- 普通重跑即升级：已有配置时沿用现有注册，不消费 `--key`。systemd 主机通过面板在线更新只替换主程序二进制、不改写服务单元；要让新版 systemd 单元的沙箱加固生效，需重跑一次新版安装器。
 - OpenRC 主机要求 OpenRC 正在作为 init 运行（`/run/openrc/softlevel` 存在）。容器里只装了 OpenRC 而未以其启动时，安装器在建账户、下载与注册之前拒绝退出并提示改用 agent Docker 镜像；`--uninstall` 仍可执行，会跳过 `rc-service stop` 并经 `/proc` 确认进程已退出。
 - `--update-source` 只对 Linux systemd 有效，OpenRC 主机的安装器会拒绝它。
 - 卸载：同一条命令把参数换成 `--uninstall`；加 `--purge` 一并删除配置、日志目录、`heron-agent` 用户与同名组：
