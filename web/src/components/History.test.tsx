@@ -125,7 +125,7 @@ it("公开节点页每个探测任务一张 RTT 图：均值实线，最小 / �
   expect(chart.dataset.labels).toBe("RTT 均值,最小,最大");
   expect(chart.dataset.soft).toBe("[false,true,true]");
   expect(chart.dataset.bands).toBe('[{"lower":1,"upper":2}]');
-  expect(chart.dataset.unit).toBe("ms");
+  expect(chart.dataset.unit).toBe("milliseconds");
   // 未标注（已撤下）的任务只有编号，没有对比页链接。
   const gone = screen.getByRole("heading", { name: "任务 #4" });
   expect(within(gone).queryByRole("link")).toBeNull();

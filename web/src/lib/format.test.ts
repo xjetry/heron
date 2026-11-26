@@ -3,9 +3,9 @@ import { ago, bytes, dateTime, day, duration, formatUnit, percent } from "./form
 
 describe("format", () => {
   it("ms 按量级取位数", () => {
-    expect(formatUnit(0.4567, "ms")).toBe("0.46 ms");
-    expect(formatUnit(12.34, "ms")).toBe("12.3 ms");
-    expect(formatUnit(250.7, "ms")).toBe("251 ms");
+    expect(formatUnit(0.4567, "milliseconds")).toBe("0.46 ms");
+    expect(formatUnit(12.34, "milliseconds")).toBe("12.3 ms");
+    expect(formatUnit(250.7, "milliseconds")).toBe("251 ms");
   });
   it("bytes 用二进制单位，小数只在个位数时出现", () => {
     expect(bytes(0)).toBe("0 B");

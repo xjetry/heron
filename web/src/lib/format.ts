@@ -41,7 +41,7 @@ export function ago(unixSeconds: number | bigint, now: number | bigint): string 
 // 单位随数据来（MetricSeries.unit），显示层不查表。
 export function formatUnit(v: number, unit: string): string {
   switch (unit) {
-    case "ms":
+    case "milliseconds":
       return `${v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)} ms`;
     case "percent":
       return percent(v);

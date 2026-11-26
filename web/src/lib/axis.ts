@@ -8,7 +8,7 @@ export function axisValues(values: number[], unit: string): string[] {
   const gaps = values.slice(1).map((v, i) => Math.abs(v - values[i])).filter((v) => v > 0);
   if (gaps.length === 0) return values.map((v) => formatUnit(v, unit));
   let scale = 1;
-  let suffix = unit === "percent" ? "%" : unit === "ms" ? " ms" : unit === "count/s" ? "/s" : "";
+  let suffix = unit === "percent" ? "%" : unit === "milliseconds" ? " ms" : unit === "count/s" ? "/s" : "";
   const rate = unit === "bytes/s";
   if (unit === "bytes" || rate) {
     const peak = Math.max(...values.map(Math.abs));

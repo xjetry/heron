@@ -1,6 +1,6 @@
 import { AlertKind, BaselineMode, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, RttMode, type AlertDelivery, type AlertEvent, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/heron/v1/admin_pb";
 import { remainingText } from "./billing";
-import { duration, formatUnit, percent } from "./format";
+import { duration, formatUnit } from "./format";
 import { withId } from "./ids";
 import { disambiguate, kindLabel } from "./probes";
 
@@ -86,7 +86,7 @@ function resourceThresholdText(metric: ResourceMetric, v: number): string {
 // unit 与 formatUnit 的单位名一致：丢包阈值是百分数，RTT 阈值是毫秒（proto AlertRule.threshold）。
 export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] = [
   { value: ProbeMetric.LOSS_PCT, label: "丢包率", unit: "percent" },
-  { value: ProbeMetric.RTT_MS, label: "RTT 均值", unit: "ms" },
+  { value: ProbeMetric.RTT_MS, label: "RTT 均值", unit: "milliseconds" },
 ];
 
 // rtt 规则的判定方式与相对判定的基线来源（proto RttMode、BaselineMode）。rtt 规则的 rtt_mode 由 hub 显式回显，
@@ -226,30 +226,27 @@ export function ruleLabel(id: bigint, rules: readonly AlertRule[] | undefined): 
   return rule ? withId(rule.name, rule.id) : `规则 #${id}`;
 }
 
-// AlertEvent.value 的单位随规则种类（proto AlertEvent.value 与 internal/hub/alert 各 apply 调用处）：离线是未上报秒数，
-// 探测同规则阈值的单位，到期与证书到期是剩余天数（负数已过期），流量是配额百分比，资源随指标（字节速率按面板的 Mbps 口径）。
-// 没有观测值的事件（系统事件、触发 / 恢复之外的变化且值为 0）返回 null。规则未知（列表未到、已删除或面板不认识的种类）时
-// 不猜单位，只写数字。到期规则因清除到期日而恢复时值为 0：剩 0 天必然仍在提醒窗口内，不会是恢复值，所以恢复的 0 不写成"剩 0 天"。
-export function eventValueText(ev: AlertEvent, rule: AlertRule | undefined): string | null {
+// AlertEvent.value 的单位随事件下发（value_unit，hub 生成事件时定下），这里只按单位写、不查规则：规则改过或删了，事件照样
+// 读得对。写法按事件场景挑：时长与剩余天数写成人话，字节速率用告警阈值同一的 Mbps 口径（MBPS_TO_BYTES_PER_S），其余与
+// 图表同用 formatUnit（空串无量纲写两位小数）。n/a 表示事件没有观测值（系统事件、因清除到期日或流量配额而恢复），返回 null；
+// unknown 是升级前、规则已删除推不出单位的事件，只写数字并注明单位未知，不按任何单位换算。面板不认识的单位（hub 比面板
+// 新）同样不换算，数字后原样带上单位名。
+export function eventValueText(ev: AlertEvent): string | null {
   const v = ev.value;
-  if (v === 0 && ev.transition !== "firing" && ev.transition !== "recovered") return null;
-  switch (rule?.kind) {
-    case AlertKind.OFFLINE: return v < 60 ? `${Math.round(v)} s` : duration(Math.round(v));
-    case AlertKind.PROBE: {
-      const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
-      return metric ? formatUnit(v, metric.unit) : plain(v);
-    }
-    case AlertKind.EXPIRY:
-    case AlertKind.CERT_EXPIRY:
-      return v === 0 && ev.transition === "recovered" ? null : remainingText(Math.round(v));
-    case AlertKind.TRAFFIC: return percent(v);
-    case AlertKind.RESOURCE:
-      switch (resourceUnit(rule.resourceMetric)) {
-        case "per-core": return v.toFixed(2);
-        case "mbps": return `${(v / MBPS_TO_BYTES_PER_S).toFixed(1)} Mbps`;
-        default: return percent(v);
-      }
-    default: return plain(v);
+  switch (ev.valueUnit) {
+    case "n/a": return null;
+    case "unknown": return `${plain(v)}（单位未知）`;
+    case "seconds": return v < 60 ? `${Math.round(v)} s` : duration(Math.round(v));
+    case "days": return remainingText(Math.round(v));
+    case "bytes/s": return `${(v / MBPS_TO_BYTES_PER_S).toFixed(1)} Mbps`;
+    case "percent":
+    case "milliseconds":
+    case "bytes":
+    case "count":
+    case "count/s":
+    case "":
+      return formatUnit(v, ev.valueUnit);
+    default: return `${plain(v)} ${ev.valueUnit}`;
   }
 }
 

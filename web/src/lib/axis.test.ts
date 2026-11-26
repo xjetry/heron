@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { axisValues } from "./axis";
 
 it("ms 轴带后缀且精度足以区分刻度", () => {
-  expect(axisValues([0, 0.5, 1], "ms")).toEqual(["0.0 ms", "0.5 ms", "1.0 ms"]);
+  expect(axisValues([0, 0.5, 1], "milliseconds")).toEqual(["0.0 ms", "0.5 ms", "1.0 ms"]);
 });
 
 it("count/s 轴带 /s 后缀且精度足以区分刻度", () => {

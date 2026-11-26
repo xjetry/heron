@@ -255,7 +255,7 @@ export function ProbeComparison({ taskId, methods, nodes, now, timeZone }: { tas
         <>
           <div className="card compare-chart">
             {view.rtt.labels.length > 0
-              ? <Chart data={view.rtt.data} labels={view.rtt.labels} unit="ms" height={280} legend={false} hidden={hiddenLines} onHiddenChange={onHiddenLines} onFocus={(i) => setFocusedId(i === null ? null : lineIds[i] ?? null)} />
+              ? <Chart data={view.rtt.data} labels={view.rtt.labels} unit="milliseconds" height={280} legend={false} hidden={hiddenLines} onHiddenChange={onHiddenLines} onFocus={(i) => setFocusedId(i === null ? null : lineIds[i] ?? null)} />
               : <p className="muted">窗口内没有读数</p>}
           </div>
           <table className="compare-table">
@@ -271,9 +271,9 @@ export function ProbeComparison({ taskId, methods, nodes, now, timeZone }: { tas
                   <tr key={String(row.id)} aria-label={row.label} data-focused={line !== undefined && focusedId === row.id ? "true" : undefined} className={row.unavailable ? "muted" : undefined}>
                     <td><input type="checkbox" aria-label={`显示 ${row.label}`} disabled={line === undefined} checked={line !== undefined && !hiddenIds.has(row.id)} onChange={() => { if (line !== undefined) toggleHidden(row.id); }} /></td>
                     <td>{row.label}</td>
-                    <td className="num">{row.mean === null ? "–" : formatUnit(row.mean, "ms")}</td>
-                    <td className="num">{row.min === null ? "–" : formatUnit(row.min, "ms")}</td>
-                    <td className="num">{row.max === null ? "–" : formatUnit(row.max, "ms")}</td>
+                    <td className="num">{row.mean === null ? "–" : formatUnit(row.mean, "milliseconds")}</td>
+                    <td className="num">{row.min === null ? "–" : formatUnit(row.min, "milliseconds")}</td>
+                    <td className="num">{row.max === null ? "–" : formatUnit(row.max, "milliseconds")}</td>
                     <td className="num">{row.lossPercent === null ? "–" : <span data-level={row.lossPercent > 1 ? "attention" : undefined}>{percent(row.lossPercent)}</span>}</td>
                     <td className="num">{row.errors}</td>
                   </tr>
