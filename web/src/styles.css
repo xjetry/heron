@@ -395,7 +395,7 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .tabs [role="tab"] { height: 36px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); }
 .tabs [role="tab"][aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
 .node-head-meta { margin: 4px 0 12px; font-size: 13px; color: var(--muted); }
-.node-head-title .node-head-edit { margin-left: auto; }
+.node-head-title .node-head-actions { margin-left: auto; display: flex; gap: 8px; }
 
 /* 自绘的日期 / 时刻控件（components/DateInput.tsx）：一个与其它输入框同高同边框的外框，里面是几段定宽数字、分隔符与两个图标按钮。
    各段用等宽数字，位数由 data-length 定宽；焦点与错误画在外框上，而不是每段各画一圈。 */

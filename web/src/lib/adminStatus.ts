@@ -12,3 +12,10 @@ export function liveStatus(node: Pick<Node, "maintenance" | "rented">, live: Pic
   if (!live && !node.maintenance && !node.rented) return undefined;
   return nodeStatus({ online: live?.online ?? false, maintenance: node.maintenance, rented: node.rented, lastSeenAt: live?.lastSeenAt });
 }
+
+// 节点资料里的 lastSeenAt 是 ListNodes 读取时的值，它的变化不推进资料版本（条件读取下可能一直停在从未上报）；快照条目随
+// POLL_MS 刷新，两边任一处有上报时间都算上报过；快照里没有这个节点时只看节点资料。不经 nodeStatus：维护中的节点也可能
+// 从未上报，这里问的只是"有没有 agent 用过它的凭据"——换发凭据会不会让一台在运行的 agent 断掉，各入口都按它判断。
+export function neverReported(node: Pick<Node, "lastSeenAt">, live: Pick<LiveNode, "lastSeenAt"> | undefined): boolean {
+  return node.lastSeenAt === undefined && live?.lastSeenAt === undefined;
+}

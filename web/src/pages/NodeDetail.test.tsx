@@ -687,3 +687,70 @@ it("诊断 tab 不请求逐盘容量", async () => {
   expect(screen.queryByRole("region", { name: "本地磁盘" })).not.toBeInTheDocument();
   expect(asked).toBe(0);
 });
+
+describe("详情页的安装命令入口", () => {
+  const snapshot = (lastSeenAt?: bigint) => async () => ({ now: 1_000n, hubVersion: "v1.1.0", boundAgentVersion: "v1.0.9", nodes: [{ id: 7n, online: lastSeenAt !== undefined, lastSeenAt }] });
+  const openInstaller = async () => {
+    const head = within(await screen.findByRole("group", { name: "节点状态" }));
+    fireEvent.click(await head.findByRole("button", { name: "安装命令" }));
+    return within(await screen.findByRole("dialog", { name: "安装命令" }));
+  };
+  afterEach(() => localStorage.clear());
+
+  it("已出租的节点没有安装命令入口，编辑仍在", async () => {
+    renderWithAdmin({ ...defaultImpl, getSnapshot: snapshot(),
+      listNodes: async () => ({ nodes: [{ ...(await listNodes()).nodes[0], rented: true }] }),
+    }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    const head = within(await screen.findByRole("group", { name: "节点状态" }));
+    expect(await head.findByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(head.queryByRole("button", { name: "安装命令" })).toBeNull();
+  });
+
+  it("从未上报：确认前不换发，确认后同一抽屉给出带 --re-register 的命令", async () => {
+    localStorage.setItem("heron-install-hub", "https://hub.example:28080");
+    const rotateNodeToken = vi.fn(async () => ({ token: "fresh" }));
+    renderWithAdmin({ ...defaultImpl, getSnapshot: snapshot(), rotateNodeToken }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    const drawer = await openInstaller();
+    expect(drawer.getByText("db-01（#7） 从未上报，没有 agent 在用当前凭据，换发不影响任何主机。")).toBeInTheDocument();
+    expect(drawer.queryByLabelText("curl 安装命令")).toBeNull();
+    expect(rotateNodeToken).not.toHaveBeenCalled();
+    fireEvent.click(drawer.getByRole("button", { name: "换发 token 并生成安装命令" }));
+    expect(await drawer.findByLabelText("curl 安装命令")).toHaveTextContent(
+      "curl -fsSL https://github.com/xjetry/heron/releases/download/v1.1.0/install.sh | sh -s -- --hub https://hub.example:28080 --key fresh --re-register");
+    expect(drawer.getByText(/此命令会重新注册/)).toBeInTheDocument();
+    expect(rotateNodeToken).toHaveBeenCalledTimes(1);
+    expect(rotateNodeToken).toHaveBeenCalledWith(expect.objectContaining({ id: 7n }), expect.anything());
+  });
+
+  it.each([
+    { source: "快照", snapshotSeen: 990n, nodeSeen: undefined },
+    { source: "节点资料", snapshotSeen: undefined, nodeSeen: 990n },
+  ])("$source 里有上报时间时警告运行中的 agent 会断，取消不换发", async ({ snapshotSeen, nodeSeen }) => {
+    const rotateNodeToken = vi.fn(async () => ({ token: "fresh" }));
+    renderWithAdmin({ ...defaultImpl, getSnapshot: snapshot(snapshotSeen), rotateNodeToken,
+      listNodes: async () => ({ nodes: [{ ...(await listNodes()).nodes[0], lastSeenAt: nodeSeen }] }),
+    }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    const drawer = await openInstaller();
+    expect(await drawer.findByText(/上报过指标：换发后主机上正在运行的 agent 立即无法上报/)).toBeInTheDocument();
+    expect(drawer.queryByText(/从未上报/)).toBeNull();
+    fireEvent.click(drawer.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(rotateNodeToken).not.toHaveBeenCalled();
+  });
+
+  it("换发失败只显示错误，不出命令，可重试", async () => {
+    let fail = true;
+    const rotateNodeToken = vi.fn(async () => {
+      if (fail) throw new ConnectError("credential changed", Code.Aborted);
+      return { token: "fresh" };
+    });
+    renderWithAdmin({ ...defaultImpl, getSnapshot: snapshot(), rotateNodeToken }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    const drawer = await openInstaller();
+    fireEvent.click(drawer.getByRole("button", { name: "换发 token 并生成安装命令" }));
+    expect(await drawer.findByRole("alert")).toHaveTextContent("credential changed");
+    expect(drawer.queryByLabelText("curl 安装命令")).toBeNull();
+    fail = false;
+    fireEvent.click(drawer.getByRole("button", { name: "换发 token 并生成安装命令" }));
+    expect(await drawer.findByLabelText("curl 安装命令")).toHaveTextContent(/--key fresh .*--re-register/);
+  });
+});

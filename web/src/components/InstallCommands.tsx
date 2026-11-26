@@ -6,7 +6,7 @@ import { clearGhProxy, loadGhProxy, parseGhProxy, saveGhProxy } from "../lib/ins
 import { defaultProxyPort, loadProxyPort, parseProxyPort, saveProxyPort, sshProxyArgs } from "../lib/installProxy";
 import { clearInstallHub, loadInstallHub, parseInstallHub, saveInstallHub } from "../lib/installHub";
 
-// 四个安装参数都是选填，都只存在这台浏览器的 localStorage、hub 不记录，所有用到本组件的入口（添加节点、换 token、注册窗口）
+// 四个安装参数都是选填，都只存在这台浏览器的 localStorage、hub 不记录，所有用到本组件的入口（添加节点、换 token、节点详情的安装命令、注册窗口）
 // 与节点列表的"复制安装命令"读同一份记住的值；命令由 lib/installCommand.ts 的 installCommand 拼出，这里只负责输入与展示。
 // origin 是浏览器当前的 origin，Hub 连接地址留空时用它；生效地址也是判定要不要 --insecure-http 的依据。
 // Hub 连接地址或 GitHub 代理不合法时不出任何命令（含 SSH 反代参数），输入框的内容因此改不了命令的结构；本地反代端口只影响

@@ -12,12 +12,13 @@ import { EventFeed, useAlertEvents } from "../components/EventFeed";
 import { ExecutionScope } from "../components/ExecutionScope";
 import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
 import { NodeAddresses, addressText } from "../components/NodeAddresses";
+import { NodeInstallDrawer } from "../components/NodeInstallDrawer";
 import { NowGrid } from "../components/NowGrid";
 import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { useHubTimeZone } from "../api/useHubTimeZone";
 import { useNodeList } from "../api/useNodeList";
-import { liveStatus } from "../lib/adminStatus";
+import { liveStatus, neverReported } from "../lib/adminStatus";
 import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { ago, bytes, dateTime } from "../lib/format";
@@ -58,6 +59,7 @@ export function NodeDetail() {
   // 事件 tab 才取事件：它是低频内容，不该随每次打开详情多发一条请求。
   const events = useAlertEvents(validId && tab === "events" ? nodeId : null);
   const [editor, setEditor] = useState<HTMLElement | null>(null);
+  const [installer, setInstaller] = useState<HTMLElement | null>(null);
   const update = useMutation(AdminService.method.updateNode, {
     onSuccess: async () => {
       try { await qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }, { throwOnError: true }); }
@@ -113,7 +115,11 @@ export function NodeDetail() {
           <h1>{node ? node.name : `节点 #${nodeId}`}</h1>
           {node?.country && <CountryBadge code={node.country} />}
           {status && <StatusBadge status={status} detail={live?.lastSeenAt !== undefined && snap.data ? `最近上报 ${ago(live.lastSeenAt, Number(snap.data.now))}` : undefined} />}
-          {node && <button type="button" className="node-head-edit" disabled={editor !== null} onClick={(event) => { update.reset(); setEditor(event.currentTarget); }}>编辑</button>}
+          {node && <div className="node-head-actions">
+            {/* 已出租的机器不装 agent，没有安装对象，与节点列表的复制安装命令同一条件。 */}
+            {!node.rented && <button type="button" disabled={editor !== null || installer !== null} onClick={(event) => setInstaller(event.currentTarget)}>安装命令</button>}
+            <button type="button" disabled={editor !== null || installer !== null} onClick={(event) => { update.reset(); setEditor(event.currentTarget); }}>编辑</button>
+          </div>}
         </div>
         {node?.facts && <p className="node-head-meta num">
           {[addressText(node.network?.ipv4), addressText(node.network?.ipv6), node.facts.hostname || "—", node.facts.kernel || "—", node.facts.agentVersion || "—"].join(" · ")}
@@ -125,6 +131,8 @@ export function NodeDetail() {
         {TABS.map((t) => <button key={t.id} id={`tab-${t.id}`} type="button" role="tab" aria-selected={tab === t.id} aria-controls={`panel-${t.id}`} onClick={() => select(t.id)}>{t.label}</button>)}
       </div>
       {panel}
+      {installer && node && !node.rented && <NodeInstallDrawer key={String(node.id)} node={node} reported={!neverReported(node, live)} hubVersion={snap.data?.hubVersion} boundAgentVersion={bound}
+        snapshotError={snap.error} opener={installer} onClose={() => setInstaller(null)} />}
       {editor && node && <NodeEditor key={String(node.id)} node={node} opener={editor} knownTags={tags.data?.tags ?? []} saving={update.isPending} error={update.error} listError={nodes.error}
         onClose={() => setEditor(null)} onSave={(patch) => update.mutate({ id: node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
     </section>

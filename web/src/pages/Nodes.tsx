@@ -33,7 +33,7 @@ import { Missing } from "../components/Bar";
 import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { StatusBadge } from "../components/StatusBadge";
-import { liveById, liveStatus } from "../lib/adminStatus";
+import { liveById, liveStatus, neverReported } from "../lib/adminStatus";
 
 import { applyScope, applySort, facetsFromParams, isFaceted, isScoped, NO_FACETS, NO_SCOPE, NODE_FACET_MODE_KEYS, nodeFacetOptions, nodeListReturnState, paramsWithFacets, paramsWithRegions, paramsWithScope, paramsWithSearch, paramsWithSort, paramsWithTagFilter, paramsWithTagMatch, scopeFromParams, searchFromParams, sortFromParams, STATUS_OPTIONS, tagFilterFromParams, type NodeSort, type ScopeFilters, type TagFilter } from "../lib/nodeFilters";
 import type { TagMatch } from "../lib/tags";
@@ -323,13 +323,6 @@ export function Nodes() {
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
     {creating && <NodeCreateDrawer opener={creating} pending={create.isPending} error={create.error} onClose={() => setCreating(null)} onCreate={(request) => create.mutate(request)} />}
   </section>;
-}
-
-// 节点资料里的 lastSeenAt 是 ListNodes 读取时的值，它的变化不推进资料版本（条件读取下可能一直停在从未上报）；快照条目随
-// POLL_MS 刷新，两边任一处有上报时间都算上报过；快照里没有这个节点时只看节点资料。不经 nodeStatus：维护中的节点也可能
-// 从未上报，这里问的只是"有没有 agent 用过它的凭据"。
-function neverReported(node: Node, live: { lastSeenAt?: bigint } | undefined): boolean {
-  return node.lastSeenAt === undefined && live?.lastSeenAt === undefined;
 }
 
 function NodeRow({ node, live, boundAgentVersion, detailState, selection, orderControl, orderClass, onDragOver, onDrop, menu }: {

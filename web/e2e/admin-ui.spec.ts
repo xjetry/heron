@@ -659,3 +659,42 @@ test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
 });
+
+// 详情页的安装命令要现场换发凭据：上报过的节点先看到警告，确认后旧运行 token 立即被拒，命令里的新 key 能注册。
+// 头部多了一个按钮，窄屏下不能把页面撑出横向滚动。
+test('详情页安装命令：警告、换发后旧 token 失效、新 key 可注册', async ({ page, browserName, hub }, testInfo) => {
+  await page.goto('/admin/login');
+  await login(page);
+  const name = `detail-install-${browserName}`;
+  const created = await rpc(page, AdminService.method.createNode, { name });
+  const node = mustField(created, 'node');
+  hub.deleteNodeAtEnd(node.id);
+  const { token } = must(await rpc(page, AgentService.method.register, { key: must(created).token }));
+  const report = (bearer: string) => rpc(page, AgentService.method.report, { metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 5 }, facts: { agentVersion: 'dev' }, factsHash: 1n }, bearer);
+  must(await report(token));
+  const label = `${name}（#${node.id}）`;
+
+  await page.goto(`/admin/nodes/${node.id}`);
+  await page.setViewportSize({ width: 375, height: 812 });
+  const head = page.getByRole('group', { name: '节点状态' });
+  await expect(head.getByRole('button', { name: '安装命令', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await page.screenshot({ path: testInfo.outputPath('detail-install-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 960 });
+
+  await head.getByRole('button', { name: '安装命令', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '安装命令' });
+  await expect(drawer.getByText(`${label} 上报过指标：换发后主机上正在运行的 agent 立即无法上报`, { exact: false })).toBeVisible();
+  await drawer.getByRole('button', { name: '换发 token 并生成安装命令', exact: true }).click();
+  const command = await drawer.getByLabel('curl 安装命令').textContent();
+  const key = command?.match(/--key (\S+)/)?.[1];
+  expect(key).toBeTruthy();
+  expect(command).toContain(' --re-register');
+  await page.screenshot({ path: testInfo.outputPath('detail-install-desktop.png'), fullPage: true });
+
+  const stale = await report(token);
+  expect(stale.ok).toBe(false);
+  must(await rpc(page, AgentService.method.register, { key: key! }));
+  await drawer.getByRole('button', { name: '完成', exact: true }).click();
+  await expect(drawer).toHaveCount(0);
+});

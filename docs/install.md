@@ -101,7 +101,7 @@ printf '%s\n' "$ADMIN_PASSWORD" | docker exec -i heron heron-hub passwd --db /da
 - **接入窗口 key**：面板「批量添加节点」开一个窗口；或在 hub 主机上 `heron-hub window open --db /var/lib/heron/heron.db`（`--max` 限名额、`--ttl` 限时长）。
 - **节点安装凭据**：面板「节点」页直接添加节点，创建时返回 `heron_install_` 开头的凭据；`heron-hub node create --db /var/lib/heron/heron.db --name <名称>` 同样返回。
 
-hub 认领节点后使该凭据失效，返回只用于上报的运行 token：安装凭据不能上报，运行 token 不能再次注册。在面板「换 token」后，必须用弹窗中带 `--re-register` 的命令重新注册，普通升级不消费 key。
+hub 认领节点后使该凭据失效，返回只用于上报的运行 token：安装凭据不能上报，运行 token 不能再次注册。在面板「换 token」或节点详情页「安装命令」换发后，旧凭据（含正在运行的 agent 的运行 token）立即失效，必须用弹窗中带 `--re-register` 的命令重新注册；普通升级不消费 key，也不需要换发。
 
 安装命令以本仓库 README 与 GitHub Release 为准，不以 hub 面板为准：面板由 hub 提供，hub 失守时面板上的命令可以被整条换掉。复制前核对脚本地址是 `https://github.com/xjetry/heron/releases/…`。
 
