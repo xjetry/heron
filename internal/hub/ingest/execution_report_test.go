@@ -181,6 +181,14 @@ func TestRestoredOldFactsAreRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 撤回 v56–v59 在配置层新增的列，否则降到 v33 后重跑配置快照迁移会撞上已有的列。
+	if _, err := raw.Exec(`ALTER TABLE node DROP COLUMN billing_anchor_day;
+		ALTER TABLE alert_event DROP COLUMN value_unit;
+		ALTER TABLE node DROP COLUMN billing_timezone; ALTER TABLE node DROP COLUMN traffic_reset_minute;
+		ALTER TABLE operation DROP COLUMN principal; ALTER TABLE operation DROP COLUMN session_id;
+		ALTER TABLE operation DROP COLUMN source; ALTER TABLE operation DROP COLUMN method; ALTER TABLE operation DROP COLUMN resource_key`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := raw.Exec("ALTER TABLE probe_task DROP COLUMN http_status_policy; ALTER TABLE probe_task DROP COLUMN http_expected_status; ALTER TABLE probe_task DROP COLUMN ip_family; ALTER TABLE probe_task DROP COLUMN dns_record_type; ALTER TABLE alert_state DROP COLUMN fired_summary; ALTER TABLE alert_state DROP COLUMN fired_value; ALTER TABLE alert_state DROP COLUMN notified_at; DROP TABLE silence_rule; ALTER TABLE silence DROP COLUMN all_rules; ALTER TABLE traffic DROP COLUMN observed_at"); err != nil {
 		t.Fatal(err)
 	}
