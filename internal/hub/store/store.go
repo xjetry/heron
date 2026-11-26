@@ -57,7 +57,8 @@ var (
 
 // Store 的所有写请求由 runWriter 串行提交；WriteMinuteBatch 在事务内核对节点、任务及上卷水位，
 // 因此删除已提交的主体不会被迟到的分钟批次重新写入。Rollup 在写事务中推进水位，
-// WriteMinuteBatch 用已提交的水位拒绝更早的行，查询不能把迟到行混入已冻结的历史。
+// WriteMinuteBatch 用已提交的水位拒绝更早的行，查询不能把迟到行混入已冻结的历史。这条拒绝只挡迟到行、不挡当下的
+// 真实数据，前提是水位不超前于墙钟；两处用水位之前都先做时钟超前检查（repairClockAhead）。
 type Store struct {
 	path  string
 	files fileStatter

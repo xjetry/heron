@@ -174,6 +174,10 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 - 在线更新经 hub 中转（`--update-source hub`）的节点：更新器从 agent 配置里只取 `hub`、`token`、`insecure_http`，其余字段一律忽略，agent 以后新增配置项也不影响它取更新。只有本版本之前安装的更新器还会拒读它不认识的字段（写上 `disk_exclude` 后取不到更新）：这类节点先重跑一次新版安装器升级更新器，再写 `disk_exclude`（或在此之前改用 `run --disk-exclude`）；升级之后不再受 agent 配置新增字段影响。
 - agent 日志有总量上限（突发之后被压掉的行数记在下一条日志里）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
 
+## 墙钟
+
+分钟历史按 hub 收到上报时的墙钟归属，hub 主机需要 NTP 校时。墙钟快过之后被往回校（例如开机时 RTC 偏快、随后由 NTP 校正），hub 在下一次写入分钟数据或下一轮数据整理时自动清理快钟留下的痕迹：把推进到未来的数据整理水位退回按现在算的位置，删掉标在未来时刻的分钟数据（它们实际属于更早的时刻，无法还原到正确的分钟），之后的数据照常写入、照常整理。日志各记一条 Warn：`rollup watermark was ahead of the wall clock` 带回退幅度（`rolled_back`），`minute rows ahead of the wall clock deleted` 带删除行数。快钟期间的历史清理也按快钟的"现在"计算保留期，每一级最老的历史会多删掉与快出幅度等长的一段，删掉的无法找回。
+
 ## 排查
 
 - hub 日志：`journalctl -u heron-hub`（Docker：`docker logs heron`）。

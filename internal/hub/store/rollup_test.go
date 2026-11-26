@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,10 +54,10 @@ func TestRollupIsExactAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix() // 整点
 	id, _, _ := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	clk.SetWall(time.Unix(base+20*60, 0)) // now = 整点+20m → ceiling = +15m
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+15*60)}); err != nil {
 		t.Fatal(err)
 	}
-	clk.SetWall(time.Unix(base+20*60, 0)) // now = 整点+20m → ceiling = +15m
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +117,11 @@ func TestHourRollupOnlyUsesFrozenFiveMinuteRows(t *testing.T) {
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
 	id, _, _ := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
-	// 两个整小时的分钟行；now 让 5m 水位停在第二小时中间。
-	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+120*60)}); err != nil {
+	// 第二小时只到 now 为止；now 让 5m 水位停在第二小时中间。
+	clk.SetWall(time.Unix(base+95*60, 0)) // ceiling = +90m
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+95*60)}); err != nil {
 		t.Fatal(err)
 	}
-	clk.SetWall(time.Unix(base+95*60, 0)) // ceiling = +90m
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +200,7 @@ func TestQueryMetricsRebucketsAndKeepsNoData(t *testing.T) {
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
 	id, _, _ := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	clk.SetWall(time.Unix(base+10*60, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+10*60)}); err != nil {
 		t.Fatal(err)
 	}
@@ -444,6 +446,7 @@ func TestQueryMetricsHonorsAlignedPointLimitWithoutDroppingSamples(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	clk.SetWall(time.Unix(base+11*60, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+11*60)}); err != nil {
 		t.Fatal(err)
 	}
@@ -463,6 +466,37 @@ func TestQueryMetricsHonorsAlignedPointLimitWithoutDroppingSamples(t *testing.T)
 	}
 	if count != 11 || sum != 55 {
 		t.Fatalf("point limiting lost samples: n=%d sum=%v, want 11 and 55", count, sum)
+	}
+}
+
+// 窗口对齐贴着 int64 上限也不溢出：alignWindow 用最后一秒所在桶的闭区间上界表达，而不是 to + step。写入口拒绝晚于
+// 当前分钟的行，这样的行只能直接写表造出来；这里只用它观察读路径在上限处的算术，读路径不检查时钟。
+func TestQueryMetricsReadsRowAtInt64Limit(t *testing.T) {
+	t.Parallel()
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _, err := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := int64(math.MaxInt64 - math.MaxInt64%60)
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(insertMetricFixture("metric_1m"), append([]any{id, ts}, bucketArgs(bucket(7))...)...)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	from, to := int64(math.MaxInt64-60), int64(math.MaxInt64)
+	lv, step := ChooseLevel(from, to, 0)
+	rows, err := s.QueryMetrics(ctx, id, from, to, lv, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].TS != ts {
+		t.Fatalf("near-limit query lost its row: %+v", rows)
+	}
+	if mean, ok := rows[0].Bucket.Mean(0); !ok || mean != 7 {
+		t.Fatalf("near-limit row mean = %v %v, want 7", mean, ok)
 	}
 }
 
@@ -500,6 +534,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 		b.AddSum(metric.RxBytes, 50)
 		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, CoverageStart: base, Bucket: b})
 	}
+	clk.SetWall(time.Unix(base+5*60, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
 	}
@@ -540,10 +575,10 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 			probeRow(id, base+i*60, 7, []uint32{uint32(100 + i)}, 1, 1),
 			probeRow(id, base+i*60, 9, nil, 2, 0))
 	}
+	clk.SetWall(time.Unix(base+1200, 0))
 	if _, err := s.WriteMinuteBatch(ctx, batch); err != nil {
 		t.Fatal(err)
 	}
-	clk.SetWall(time.Unix(base+1200, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -24,15 +24,10 @@ func TestCoverageFirstBatchRetryDropAndWatermark(t *testing.T) {
 			h := newHub(t)
 			id, token := h.node(t)
 			base := h.clk.Now()
-			if mode == "watermark" {
-				h.clk.Advance(10 * time.Minute)
-				if err := h.store.Rollup(t.Context()); err != nil {
-					t.Fatal(err)
-				}
-				h.clk.SetWall(base)
-			}
 			h.live.SetReceiving(true)
-			fw := &failingWriter{Store: h.store, fail: mode != "watermark"}
+			// 三种模式的首批都写不进去：retry 与 drop 是写库一直失败；watermark 的批次一直写失败，直到上卷越过它们，
+			// 写进去时首报那一分钟已早于 5m 水位、被冻结检查拒绝。
+			fw := &failingWriter{Store: h.store, fail: true}
 			h.svc.writer = fw
 			h.clk.Advance(30 * time.Second)
 			if _, err := h.client.Report(t.Context(), report(token, &heronv1.Metrics{})); err != nil {
@@ -48,11 +43,17 @@ func TestCoverageFirstBatchRetryDropAndWatermark(t *testing.T) {
 				minutes = maxPendingBatches + 2
 			}
 			if mode == "watermark" {
-				minutes = 7
+				minutes = 10
 			}
 			for n := 2; n <= minutes; n++ {
 				coverageBeats(h, base.Add(time.Duration(n)*time.Minute))
 				h.svc.Flush(t.Context(), false)
+			}
+			if mode == "watermark" {
+				// now = base+10m：5m 水位推进到 base+5m，待重试批次里首报所在的分钟落在它之前。
+				if err := h.store.Rollup(t.Context()); err != nil {
+					t.Fatal(err)
+				}
 			}
 			fw.fail = false
 			h.svc.Flush(t.Context(), false)

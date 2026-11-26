@@ -181,6 +181,7 @@ func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
 		{NodeID: id, TS: base + 60, TaskID: t9, Bucket: &metric.ProbeBucket{}},
 		{NodeID: id, TS: base, TaskID: t8, Bucket: &metric.ProbeBucket{}},
 	}
+	h.clk.SetWall(time.Unix(base+240, 0))
 	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Probes: rows}); err != nil {
 		t.Fatal(err)
 	}

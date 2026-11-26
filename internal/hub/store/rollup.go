@@ -124,8 +124,18 @@ func (f *family) rollupSQL(i int) string {
 // 同一事务推进水位。两族全部级别都成功后才记下 maintenance_state 的 rollup 完成时刻。levels 必须从细到粗：lowerUpto 取自刚完成的下级，
 // 按本级桶长对齐后限制上界，只消费下级已冻结的整桶。当前正常推进路径中，
 // 此上界与 ceiling 的对齐上界相同；min 显式保留两项约束，不替代处理顺序。
+//
+// 推进之前先按同一个时刻做时钟超前检查（repairClockAhead），ceiling 取自那个写事务里读的墙钟：检查保证每级水位不晚于
+// 本次的上界，rollupLevel 的 limit <= upto 分支因此只表示"没有新的整桶"，不会把超前的水位原样传给下一级当作 lowerUpto。
 func (s *Store) Rollup(ctx context.Context) error {
-	ceiling := s.clk.Now().Add(-RollupLag).Unix()
+	var ceiling int64
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		now := s.clk.Now()
+		ceiling = now.Add(-RollupLag).Unix()
+		return s.repairClockAhead(tx, now)
+	}); err != nil {
+		return fmt.Errorf("check rollup state against the wall clock: %w", err)
+	}
 	for _, f := range families {
 		lowerUpto := int64(math.MaxInt64)
 		for i := 1; i < len(levels); i++ {
@@ -142,6 +152,82 @@ func (s *Store) Rollup(ctx context.Context) error {
 		return fmt.Errorf("record rollup completion: %w", err)
 	}
 	return nil
+}
+
+// repairClockAhead 在调用方的写事务里检查两条"已持久化的时序状态不超前于墙钟"的不变式，违反即就地修复：
+//
+//   - 每族每个粗级的水位（rollup_state.upto_ts）不晚于 alignDown(now − RollupLag, 本级桶长)。Rollup 推进水位只推进到按当时
+//     墙钟算出的这个上界（rollupLevel 的 limit 不超过它），水位超过它只说明推进时的墙钟比现在快。
+//   - 1m 行的 ts 不晚于 metric.LatestMinute(now)。WriteMinuteBatch 按同一个上界拒绝更晚的行，库里更晚的行只可能是写入时
+//     墙钟比现在快打的点：它标的那一分钟还没到，留着就会在那一分钟到来后与真实数据在写入口相加（upsert 是加法合并）。
+//
+// 写入口的冻结检查与 Rollup 的推进都以水位为准，两处在用水位之前都先调用本函数：WriteMinuteBatch 在同一个事务里先查后读，
+// Rollup 在推进之前单独提交一次。rollup_state 的写者只有 rollupLevel 与本函数，前者推进不越过同一时刻算出的上界，
+// 后者只往回退，所以 Rollup 各片随后重读到的水位也不超前。
+//
+// 修复：超前的 1m 行直接删除。超前的水位退回上界，并删掉本级 ts ≥ 新水位的行：正常状态下粗级没有不早于水位的行
+// （rollupLevel 只在 [旧水位, 新水位) 里写桶），删掉即回到这个状态，之后由 Rollup 从细一级的整桶重算。重算是整桶覆盖写
+// （rollupSQL 的 INSERT OR REPLACE），本来就不累加到旧行上；必须删的是重算时已经没有源行的桶——它们的源行正是上面删掉
+// 的超前 1m 行，INSERT OR REPLACE 只覆盖重算产出的桶，清不掉这些桶。
+//
+// 退回后上下级的先后仍然成立：粗一级的上界 alignDown(c, 3600) 不晚于细一级的上界 alignDown(c, 300)，1h 水位因此不超过
+// 5m 的新水位，删掉的 5m 行都还没被 1h 消费。重算出原值的前提是 [新水位, 旧水位) 里带真实时刻的细级行还在：Prune 对
+// 细一级的截止点不晚于 now − 保留期（再与粗一级水位取较早者），墙钟超前 Δ 时这个 now 比真实时刻快 Δ；Δ 比细一级保留期
+// 至少小 RollupLag 加一个本级桶长时，截止点不晚于新水位，这段行不会被清掉。
+//
+// 只处理 node 表里的节点：已删节点在清理作业完成前留下的行对任何读者都不可见（family.live），上卷也不聚合它们，
+// 清理作业按主体整条删除，与 ts 无关。
+func (s *Store) repairClockAhead(tx *sql.Tx, now time.Time) error {
+	ceiling := now.Add(-RollupLag).Unix()
+	latest := metric.LatestMinute(now)
+	for _, f := range families {
+		for i := 1; i < len(levels); i++ {
+			var upto int64
+			if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i]).Scan(&upto); err != nil {
+				return err
+			}
+			bound := alignDown(ceiling, levels[i].Bucket)
+			if upto <= bound {
+				continue
+			}
+			if _, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", bound, f.states[i]); err != nil {
+				return err
+			}
+			res, err := tx.Exec(deleteFromSQL(f.tables[i], ">="), bound)
+			if err != nil {
+				return err
+			}
+			n, _ := res.RowsAffected()
+			s.log.Warn("rollup watermark was ahead of the wall clock, rolled back", "rollup_level", f.states[i], "watermark", upto,
+				"rolled_back_to", bound, "rolled_back", time.Duration(upto-bound)*time.Second, "rows_deleted", n)
+		}
+		// 正常运行时只走到这条读为止：它在每次写入与上卷时都跑。
+		var newest sql.NullInt64
+		if err := tx.QueryRow(newestRowSQL(f.tables[0])).Scan(&newest); err != nil {
+			return err
+		}
+		if !newest.Valid || newest.Int64 <= latest {
+			continue
+		}
+		res, err := tx.Exec(deleteFromSQL(f.tables[0], ">"), latest)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		s.log.Warn("minute rows ahead of the wall clock deleted", "table", f.tables[0], "newest", newest.Int64,
+			"latest_allowed", latest, "ahead", time.Duration(newest.Int64-latest)*time.Second, "rows_deleted", n)
+	}
+	return nil
+}
+
+// newestRowSQL 取 table 里现存节点的最新一行的 ts：每个节点经主键 (node_id, ts …) 倒序取一行，不扫描全部历史。
+func newestRowSQL(table string) string {
+	return "SELECT max((SELECT ts FROM " + table + " WHERE node_id = node.id ORDER BY ts DESC LIMIT 1)) FROM node"
+}
+
+// deleteFromSQL 删掉 table 里现存节点 ts op ? 的行：节点集合驱动主键 (node_id, ts …) 的范围查找，只碰要删的行。
+func deleteFromSQL(table, op string) string {
+	return "DELETE FROM " + table + " WHERE node_id IN (SELECT id FROM node) AND ts " + op + " ?"
 }
 
 // rollupSlice 限制每次占用写协程的历史跨度，让其他写请求能在追赶的片间提交。
@@ -209,6 +295,13 @@ const (
 	MinRetentionAlertEvents = 24 * time.Hour
 )
 
+// 保留期下限覆盖 RollupLag 加粗一级的桶长（5m 300 秒、1h 3600 秒）：Prune 按保留期的截止点因此不晚于 repairClockAhead
+// 退回后的粗一级水位（见 Prune）。差值为负时无法转换为 uint64，编译即失败。
+const (
+	_ = uint64(MinRetentionM1 - RollupLag - 300*time.Second)
+	_ = uint64(MinRetentionM5 - RollupLag - 3600*time.Second)
+)
+
 // Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
 // 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
 // 事件下限覆盖满队列的最坏投递时长，不能在正常重试完成前清掉事件。
@@ -256,8 +349,11 @@ func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 	for _, f := range families {
 		for i, lv := range levels {
 			cutoff := alignDown(now-int64(r.ForLevel(lv.Name)/time.Second), lv.Bucket)
-			// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
-			// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
+			// 初始化后写水位的只有 rollupLevel 与 repairClockAhead。rollupLevel 每片 end > upto，且与聚合原子提交，只让水位
+			// 前进；repairClockAhead 只把超前的水位退回 alignDown(now' − RollupLag, 粗级桶长)，墙钟不往回拨时 now' 不早于
+			// 这里的 now。保留期下限覆盖 RollupLag 加粗级桶长（下面的编译期断言），按保留期的截止点因此不晚于退回后的水位，
+			// min 之后更不晚：这次读之后水位前进，至多延迟清理；水位被退回，也删不到退回后要重算的行。墙钟在两次读之间往回拨
+			// 的情形，即 repairClockAhead 所说的超前幅度前提。
 			if i+1 < len(levels) {
 				var consumed int64
 				if err := s.r.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i+1]).Scan(&consumed); err != nil {

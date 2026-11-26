@@ -769,6 +769,7 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 		b.Add(&heronv1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
 		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, CoverageStart: base, Bucket: b})
 	}
+	h.clk.SetWall(time.Unix(base+600, 0))
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
 	}
@@ -840,18 +841,20 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 		}
 	}
 
+	// 贴着 int64 上限的窗口照常受理。那里不会有数据：写入口拒绝晚于当前分钟的行；窗口对齐在上限处不溢出、能读出
+	// 那里的行，由 store 的 TestQueryMetricsReadsRowAtInt64Limit 用直接写表的行钉住。
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(7)})
 	ts := int64(math.MaxInt64 - math.MaxInt64%60)
-	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, CoverageStart: ts, Bucket: b}}}); err != nil {
-		t.Fatal(err)
+	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, CoverageStart: ts, Bucket: b}}}); err != nil || n != 1 {
+		t.Fatalf("near-limit row: rejected=%d err=%v, want it rejected as later than the current minute", n, err)
 	}
 	out, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: math.MaxInt64 - 60, To: math.MaxInt64}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Msg.Ts) != 1 || out.Msg.Ts[0] != ts || out.Msg.Series[0].Samples[0].GetMean() != 7 {
-		t.Fatalf("near-limit query lost its row: %v", out.Msg)
+	if len(out.Msg.Ts) != 0 {
+		t.Fatalf("near-limit query returned points for a row the write path rejected: %v", out.Msg)
 	}
 }
 

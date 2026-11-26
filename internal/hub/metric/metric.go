@@ -198,6 +198,19 @@ type Row struct {
 	Coverage Coverage
 }
 
+// LatestMinute 是墙钟读数为 now 时，分钟桶起点（Row.TS、ProbeRow.TS）最晚可能取到的合法值：当前分钟的起点再加一个
+// 桶长。分钟桶按收到上报时的墙钟归属（live 的 Observe 与 AddProbe 都取不晚于读钟时刻的分钟），正常运行时最晚的桶就是
+// 当前仍开着的那一分钟（退出时 Drain 连它一起刷出）。多留的一个桶长给不足一分钟的向后校时：NTP 在分钟边界附近把墙钟
+// 往回拨几秒时，刚打点的桶比校时后的当前分钟晚一分钟，那仍是真实数据。起点晚于它的桶只可能是墙钟曾超前一分钟以上时
+// 打的点——它标的那一分钟还没到，数据其实属于更早的真实时刻。
+//
+// live 的刷出与 store 的写入口、时钟超前检查共用这一个上界：live 不把这样的桶一直留到它标的时刻到来、再与那一分钟的
+// 真实数据相加，store 拒绝写入这样的行、删除已经写进库的这种行。三处取同一个值，写入口接受的行才不会被检查删掉。
+func LatestMinute(now time.Time) int64 {
+	s := now.Unix()
+	return s - s%60 + 60
+}
+
 type Coverage struct {
 	Minutes, Observed, ObservedReported *uint32
 }
