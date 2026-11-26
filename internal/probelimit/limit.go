@@ -113,8 +113,8 @@ func CheckTask(t *heronv1.ProbeTask) error {
 		return fmt.Errorf("http_expected_status only applies with HTTP_STATUS_POLICY_EXACT; got %d", s)
 	}
 	// DNS 任务连向解析器的地址族由 dns_server 字面量唯一决定，查询的记录类型另由 dns_record_type 表达；
-	// 两种语义混进同一字段就分不清"经 IPv6 连解析器"与"查 AAAA"。其余种类没有记录类型可查。
-	// 静默忽略都会让调用方以为它生效了。
+	// 两种语义混进同一字段就分不清"经 IPv6 连解析器"与"查 AAAA"，所以 DNS 任务带 ip_family 即拒绝。其余种类没有
+	// 记录类型可查，带 dns_record_type 同样拒绝而不是静默忽略——忽略会让调用方以为它生效了。
 	if t.GetKind() == heronv1.ProbeKind_PROBE_KIND_DNS {
 		if t.GetIpFamily() != heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED {
 			return fmt.Errorf("ip_family does not apply to a DNS task; dns_server decides the resolver's family and dns_record_type the queried record; got %s", t.GetIpFamily())
