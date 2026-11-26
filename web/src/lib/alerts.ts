@@ -234,7 +234,11 @@ export function eventValueText(ev: AlertEvent, rule: AlertRule | undefined): str
   const v = ev.value;
   if (v === 0 && ev.transition !== "firing" && ev.transition !== "recovered") return null;
   switch (rule?.kind) {
-    case AlertKind.OFFLINE: return v < 60 ? `${Math.round(v)} s` : duration(Math.round(v));
+    case AlertKind.OFFLINE: {
+      // 先四舍五入再选秒或分钟：59.6 秒舍入为 60 后切到 duration（1m），避免出现 "60 s"。
+      const seconds = Math.round(v);
+      return seconds < 60 ? `${seconds} s` : duration(seconds);
+    }
     case AlertKind.PROBE: {
       const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
       return metric ? formatUnit(v, metric.unit) : plain(v);
