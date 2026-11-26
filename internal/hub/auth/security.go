@@ -118,7 +118,7 @@ func (a *Auth) ConfigureWebAuthn(origin string) error {
 	}
 	s.Origin = normalized
 	s.RPID = rpID
-	return a.commitSecurity(ctx, b, s, false, nil, "")
+	return a.commitSecurity(ctx, 0, b, s, false, nil, "")
 }
 func (a *Auth) readSecurity(ctx context.Context) (store.AdminSecurity, securityState, error) {
 	b, err := a.store.AdminSecurity(ctx)
@@ -128,7 +128,10 @@ func (a *Auth) readSecurity(ctx context.Context) (store.AdminSecurity, securityS
 	}
 	return b, s, err
 }
-func (a *Auth) commitSecurity(ctx context.Context, b store.AdminSecurity, s securityState, revoke bool, session *[32]byte, source string) error {
+
+// commitSecurity 的 action 是面板安全操作的写目标（securityActions），经 store 留操作记录；启动时导入来源与登录签发
+// 会话传 0，不进记录链（见 store.CommitAdminSecurity）。
+func (a *Auth) commitSecurity(ctx context.Context, action store.ChangeAction, b store.AdminSecurity, s securityState, revoke bool, session *[32]byte, source string) error {
 	data, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -137,7 +140,7 @@ func (a *Auth) commitSecurity(ctx context.Context, b store.AdminSecurity, s secu
 	if revoke && b.Event == nil {
 		b.Event = &store.AlertEvent{Transition: store.TransitionAuthChanged, At: now, Summary: "管理员认证方式变更，时间 " + now.In(a.loc).Format(time.RFC3339)}
 	}
-	err = a.store.CommitAdminSecurity(ctx, b, string(data), revoke, session, now, now.Add(SessionAbsolute), source)
+	err = a.store.CommitAdminSecurity(ctx, action, b, string(data), revoke, session, now, now.Add(SessionAbsolute), source)
 	if err == nil && b.Event != nil && a.loginSender != nil {
 		a.loginSender.Enqueue(*b.Event)
 	}
@@ -148,7 +151,7 @@ func (a *Auth) commitSecurity(ctx context.Context, b store.AdminSecurity, s secu
 // 与 node.last_source、登录通知同一口径），签发事务与认证状态提交仍是同一个事务。
 func (a *Auth) issueSession(ctx context.Context, b store.AdminSecurity, s securityState, from netip.Addr) (string, error) {
 	plain, h := NewToken()
-	if err := a.commitSecurity(ctx, b, s, false, &h, SourceText(from)); err != nil {
+	if err := a.commitSecurity(ctx, 0, b, s, false, &h, SourceText(from)); err != nil {
 		return "", err
 	}
 	return plain, nil
@@ -451,8 +454,29 @@ func (a *Auth) proveSecurity(ctx context.Context, b store.AdminSecurity, s *secu
 	}
 	return nil
 }
+
+// securityActions 把每种安全操作映射到它的操作记录动作。SecurityAction 的每条成功路径都恰好写一条记录：提交安全
+// 状态的种类在那次提交里写（commitSecurity），只发出挑战、不提交的 REAUTH_BEGIN 在挑战存下之后单独写
+// （store.RecordOperation）。
+var securityActions = map[SecurityActionKind]store.ChangeAction{
+	SecurityTOTPBegin:          store.ActionSecurityTOTPBegin,
+	SecurityTOTPEnable:         store.ActionSecurityTOTPEnable,
+	SecurityTOTPDisable:        store.ActionSecurityTOTPDisable,
+	SecurityPasskeyBegin:       store.ActionSecurityPasskeyBegin,
+	SecurityPasskeyRebindBegin: store.ActionSecurityPasskeyRebindBegin,
+	SecurityPasskeyRegister:    store.ActionSecurityPasskeyRegister,
+	SecurityPasskeyDelete:      store.ActionSecurityPasskeyDelete,
+	SecurityReauthBegin:        store.ActionSecurityReauthBegin,
+	SecurityReauthFinish:       store.ActionSecurityReauthFinish,
+	SecurityRecoveryRegenerate: store.ActionSecurityRecoveryRegenerate,
+}
+
 func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session string, from netip.Addr) (SecurityResult, error) {
 	var out SecurityResult
+	act, ok := securityActions[in.Action]
+	if !ok {
+		return out, ErrSecurity
+	}
 	b, s, err := a.readSecurity(ctx)
 	if err != nil {
 		return out, err
@@ -476,9 +500,12 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			return out, e
 		}
 		out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "reauth", Session: session, Generation: b.Generation, Origin: origin, RPID: s.RPID, Data: data})
+		if err != nil {
+			return out, err
+		}
 		raw, _ := json.Marshal(options)
 		out.OptionsJSON = string(raw)
-		return out, err
+		return out, a.store.RecordOperation(ctx, store.ChangeTarget{Action: act})
 	}
 	if in.Action == SecurityReauthFinish {
 		if err = a.checkLoginSource(from); err != nil {
@@ -492,7 +519,7 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			a.securityFailure(ctx, from)
 			return out, ErrSecurity
 		}
-		if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+		if err = a.commitSecurity(ctx, act, b, s, false, nil, ""); err != nil {
 			return out, err
 		}
 		out.ProofToken, err = a.putChallenge(securityChallenge{Kind: "proof", Session: session, Generation: b.Generation + 1, Origin: c.Origin, RPID: c.RPID})
@@ -558,7 +585,7 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			}
 			out.TOTPSecret = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret[:])
 			out.TOTPURI = "otpauth://totp/Heron:admin?issuer=Heron&algorithm=SHA1&digits=6&period=30&secret=" + out.TOTPSecret
-			if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+			if err = a.commitSecurity(ctx, act, b, s, false, nil, ""); err != nil {
 				return out, err
 			}
 			out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "totp", Session: session, Generation: b.Generation + 1, Secret: out.TOTPSecret})
@@ -596,7 +623,7 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			if e != nil {
 				return out, e
 			}
-			if err = a.commitSecurity(ctx, b, s, false, nil, ""); err != nil {
+			if err = a.commitSecurity(ctx, act, b, s, false, nil, ""); err != nil {
 				return out, err
 			}
 			out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "register", Session: session, Generation: b.Generation + 1, Origin: origin, RPID: rpID, Rebind: rebind, Data: data})
@@ -631,7 +658,7 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			return out, ErrSecurity
 		}
 	}
-	if err = a.commitSecurity(ctx, b, s, true, nil, ""); err != nil {
+	if err = a.commitSecurity(ctx, act, b, s, true, nil, ""); err != nil {
 		return SecurityResult{}, err
 	}
 	out.RevokeSession = true

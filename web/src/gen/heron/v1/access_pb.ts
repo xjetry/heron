@@ -11,7 +11,7 @@ import { file_google_protobuf_descriptor } from "@bufbuild/protobuf/wkt";
  * Describes the file heron/v1/access.proto.
  */
 export const file_heron_v1_access: GenFile = /*@__PURE__*/
-  fileDesc("ChVoZXJvbi92MS9hY2Nlc3MucHJvdG8SCGhlcm9uLnYxKmoKBkFjY2VzcxIWChJBQ0NFU1NfVU5TUEVDSUZJRUQQABIQCgxBQ0NFU1NfTE9HSU4QARIPCgtBQ0NFU1NfUkVBRBACEhIKDkFDQ0VTU19TRVNTSU9OEAMSEQoNQUNDRVNTX0NIQU5HRRAEOkoKBmFjY2VzcxIeLmdvb2dsZS5wcm90b2J1Zi5NZXRob2RPcHRpb25zGNGGAyABKA4yEC5oZXJvbi52MS5BY2Nlc3NSBmFjY2Vzc0IuWixnaXRodWIuY29tL3hqZXRyeS9oZXJvbi9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_google_protobuf_descriptor]);
+  fileDesc("ChVoZXJvbi92MS9hY2Nlc3MucHJvdG8SCGhlcm9uLnYxKmoKBkFjY2VzcxIWChJBQ0NFU1NfVU5TUEVDSUZJRUQQABIQCgxBQ0NFU1NfTE9HSU4QARIPCgtBQ0NFU1NfUkVBRBACEhIKDkFDQ0VTU19TRVNTSU9OEAMSEQoNQUNDRVNTX0NIQU5HRRAEKj8KBUF1ZGl0EhUKEUFVRElUX1VOU1BFQ0lGSUVEEAASDgoKQVVESVRfTk9ORRABEg8KC0FVRElUX1dSSVRFEAI6SgoGYWNjZXNzEh4uZ29vZ2xlLnByb3RvYnVmLk1ldGhvZE9wdGlvbnMY0YYDIAEoDjIQLmhlcm9uLnYxLkFjY2Vzc1IGYWNjZXNzOkcKBWF1ZGl0Eh4uZ29vZ2xlLnByb3RvYnVmLk1ldGhvZE9wdGlvbnMY04YDIAEoDjIPLmhlcm9uLnYxLkF1ZGl0UgVhdWRpdEIuWixnaXRodWIuY29tL3hqZXRyeS9oZXJvbi9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_google_protobuf_descriptor]);
 
 /**
  * Access 声明 AdminService 的方法接受哪种凭据，由挂载时绑定的拦截器在构造时读出并裁决。
@@ -66,10 +66,55 @@ export const AccessSchema: GenEnum<Access> = /*@__PURE__*/
   enumDesc(file_heron_v1_access, 0);
 
 /**
+ * Audit 声明方法的成功调用是否写操作记录（Operation，经 ListOperations 查询）。ACCESS_SESSION 与 ACCESS_CHANGE 的
+ * 每个方法都必须显式声明 AUDIT_NONE 或 AUDIT_WRITE，ACCESS_CHANGE 只能是 AUDIT_WRITE；ACCESS_READ 与 ACCESS_LOGIN 的
+ * 方法不得声明（保持 AUDIT_UNSPECIFIED）：READ 按定义无副作用，LOGIN 是认证本身——签发的会话连同来源记在会话表里
+ * （ListSessions），失败与锁定走登录通知，不进操作记录。任一条不满足时 hub 在构造处理器时拒绝启动，新增方法不会以
+ * "默认不记"随发布出去。
+ *
+ * @generated from enum heron.v1.Audit
+ */
+export enum Audit {
+  /**
+   * @generated from enum value: AUDIT_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 没有任何成功路径改变 hub 的持久状态或向外发出动作：只读（含读出凭据元数据、回显可能含密钥的内容、向外部
+   * 只读查询），或只在本会话的进程内留下短期授权（主题交互预览）。
+   *
+   * @generated from enum value: AUDIT_NONE = 1;
+   */
+  NONE = 1,
+
+  /**
+   * 有成功路径改变 hub 的持久状态或向外发出动作（发送测试通知、提交 hub 自身更新）。会话调用的每次成功恰好写一条
+   * 操作记录，持久状态的改动与记录在同一事务提交，业务拒绝不写；向外的动作先发出再写记录，记录写失败时回答
+   * Internal。ExecuteChange 由类型化变更的回执承担：执行写一条，预览与重放不写。
+   *
+   * @generated from enum value: AUDIT_WRITE = 2;
+   */
+  WRITE = 2,
+}
+
+/**
+ * Describes the enum heron.v1.Audit.
+ */
+export const AuditSchema: GenEnum<Audit> = /*@__PURE__*/
+  enumDesc(file_heron_v1_access, 1);
+
+/**
  * 50000–99999 是留给组织内部扩展的字段号区间。
  *
  * @generated from extension: heron.v1.Access access = 50001;
  */
 export const access: GenExtension<MethodOptions, Access> = /*@__PURE__*/
   extDesc(file_heron_v1_access, 0);
+
+/**
+ * @generated from extension: heron.v1.Audit audit = 50003;
+ */
+export const audit: GenExtension<MethodOptions, Audit> = /*@__PURE__*/
+  extDesc(file_heron_v1_access, 1);
 

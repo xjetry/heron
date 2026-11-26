@@ -8,6 +8,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -122,6 +123,8 @@ type Service struct {
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
 	access map[string]heronv1.Access
+	// audit 是每个过程的操作记录口径，与 access 同时读出并互相核对（auditTable），之后只读。
+	audit map[string]heronv1.Audit
 
 	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
 	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
@@ -130,7 +133,7 @@ type Service struct {
 	// nodeListEpoch 是本进程的随机纪元，拼进 ListNodesResponse.revision：库里的计数在恢复备份后可能回到旧值，换进程
 	// 即换纪元，旧标签页带来的版本一定对不上，不依赖计数单调。
 	nodeListEpoch string
-	github        *theme.GitHubClient
+	github        themeReleaseClient
 	previewMu     sync.Mutex
 	previews      map[string]themePreviewGrant
 	updateLocal   localUpdateClient
@@ -222,12 +225,14 @@ func New(cfg Config, deps Deps) *Service {
 	if deps.Traffic.Zone() != cfg.Location {
 		panic("api.Config.Location must be the traffic book's zone")
 	}
+	adminService := heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")
+	access := accessTable(adminService)
 	return &Service{
 		cfg: cfg, store: deps.Store, auth: deps.Auth, live: deps.Live, nodes: deps.Nodes, traffic: deps.Traffic, probes: deps.Probes,
 		alerts: deps.Alerts, notifier: deps.Notifier, clk: deps.Clock, log: deps.Log,
 		history:   history{store: deps.Store, probes: deps.Probes, log: deps.Log, gate: newHistoryGate()},
 		heartbeat: cfg.Heartbeat,
-		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
+		access:    access, audit: auditTable(adminService, access),
 		uploading: make(chan struct{}, 1), nodeListEpoch: rand.Text(),
 		github: theme.NewGitHubClient(), previews: make(map[string]themePreviewGrant),
 		updateLocal: update.NewClient("hub"), updateSource: update.NewOfficialSource(),
@@ -353,7 +358,8 @@ func (s *Service) accessInterceptor() connect.Interceptor { return accessInterce
 func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	s := i.s
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		level, ok := s.access[req.Spec().Procedure]
+		procedure := req.Spec().Procedure
+		level, ok := s.access[procedure]
 		if !ok {
 			return nil, unauthenticated("unauthenticated")
 		}
@@ -363,6 +369,8 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			scheme: scheme,
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
+		// 写操作记录的发起方：来源与登录锁定、会话来源列同一取法（peer.from 经 --trusted-proxies 解析）。
+		caller := store.Caller{Source: auth.SourceText(peer.from), Method: procedure[strings.LastIndexByte(procedure, '/')+1:]}
 		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401；有效 token 只读 READ，
 		// 写入只能经 CHANGE 再检查具体权限，不能借已有写权限直接调用会话方法。
 		// Login 带 Bearer 也落在 403，但文案不能写成"去开一个面板会话"：token 代替不了密码。
@@ -392,7 +400,9 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			if !principal.AllNodes && !scopedReadAllowed(req.Spec().Procedure) && level != heronv1.Access_ACCESS_CHANGE {
 				return nil, permissionDenied("this method requires a site-wide API token")
 			}
-			return next(store.WithPrincipal(ctx, principal), req)
+			// token 只能调 READ 与 CHANGE：前者不写，后者的记录由类型化变更的回执承担，都不需要直调审计。
+			caller.Kind = store.PrincipalAPIToken
+			return next(store.WithCaller(store.WithPrincipal(ctx, principal), caller), req)
 		}
 		if level == heronv1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。
@@ -412,8 +422,30 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		}
 		// ctx 里放通过校验的那个 token，而不是第一个候选：Logout、撤销当前会话与会话列表的"当前"都读它。
 		// 放第一个候选时，排在前面的无效值会让 Logout 吊销一个不存在的会话，真正在用的会话照旧有效。
-		return next(context.WithValue(ctx, sessionKey{}, tok), req)
+		ctx = context.WithValue(ctx, sessionKey{}, tok)
+		h := auth.HashToken(tok)
+		caller.Kind, caller.Session = store.PrincipalSession, hex.EncodeToString(h[:])
+		ctx = store.WithCaller(ctx, caller)
+		// 审计放在鉴权之后：AuthenticateSession 顺手清理过期会话的写不能认领它。ExecuteChange（ACCESS_CHANGE）由
+		// 类型化变更承担记录，不放直调审计。
+		if level == heronv1.Access_ACCESS_SESSION && s.audit[procedure] == heronv1.Audit_AUDIT_WRITE {
+			return s.audited(ctx, next, req, caller.Method)
+		}
+		return next(ctx, req)
 	}
+}
+
+// audited 给一次会话直调放一份直调审计并执行方法。方法成功返回却没有记录是接线错误——它的主写没经
+// store.writeChange，或副作用之后漏了 RecordOperation——与 ExecuteChange 的零消费同一口径：记 Error 日志点名方法，
+// 回答 Internal，不把一次没留记录的写报告为成功。
+func (s *Service) audited(ctx context.Context, next connect.UnaryFunc, req connect.AnyRequest, method string) (connect.AnyResponse, error) {
+	a := &store.Audit{}
+	resp, err := next(store.WithAudit(ctx, a), req)
+	if err == nil && !a.Recorded() {
+		s.log.Error("audited call returned without recording its operation", "method", method)
+		return nil, internalError("operation was not recorded")
+	}
+	return resp, err
 }
 
 func (i accessInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {

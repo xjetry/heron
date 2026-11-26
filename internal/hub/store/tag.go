@@ -89,7 +89,7 @@ func addNodeTag(tx *sql.Tx, node int64, name string) error {
 
 // BatchUpdateNodeTags 只改变请求点名的关联；关联增删与最终数量检查共用写事务，不用客户端的旧集合覆盖其它标签。
 func (s *Store) BatchUpdateNodeTags(ctx context.Context, ids []int64, add, remove []string) (result NodeUpdateResult, err error) {
-	err = s.write(ctx, func(tx *sql.Tx) error {
+	err = s.writeChange(ctx, ChangeTarget{Action: ActionBatchUpdateNodeTags, ResourceKey: idsKey(ids)}, func(tx *sql.Tx) error {
 		// 空集合不代表全部节点；存储入口也显式拒绝没有目标的修改。
 		if len(ids) == 0 {
 			return errors.New("node_ids must not be empty")
