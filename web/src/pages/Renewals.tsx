@@ -11,7 +11,7 @@ import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Node } from "../gen/heron/v1/admin_pb";
 import { useNodeList } from "../api/useNodeList";
-import { type AmortizedTotal, byExpiryDay, canRenew, costSummary, type CurrencyTotal, hubToday, moneyText, priceText, RENEWAL_WINDOW_DAYS } from "../lib/billing";
+import { type AmortizedTotal, byExpiryDay, canRenew, costSummary, type CurrencyTotal, moneyText, priceText, RENEWAL_WINDOW_DAYS } from "../lib/billing";
 import { isDate } from "../lib/format";
 import { withId } from "../lib/ids";
 import { TRAFFIC_MS } from "../lib/poll";
@@ -21,9 +21,11 @@ import { NodeEditor } from "./NodeEditor";
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 
-// 续费日历：按月看节点的到期日。数据只来自 ListNodes 的 billing；日历日与"今天"都是 hub 时区（--timezone）的，
-// 今天由 hub 下发的 days_left 反推（hubToday），日期运算走 lib/ymd 的 UTC 运算——浏览器的时钟与时区一处都不读，
-// 管理员与 hub 不在同一时区时格子也不会错开一天。"已续费"调 RenewNodeBilling，推后的日期由 hub 算。
+// 续费日历：按月看节点的到期日。数据只来自 ListNodes：格子按到期日原文（日历日）分组，"今天"是 hub 时区（--timezone）的
+// 今天（ListNodes.hub_today），剩余天数与上色取各节点按自己计费时区算好的 days_left；日期运算走 lib/ymd 的 UTC 运算——
+// 浏览器的时钟与时区一处都不读，管理员与 hub 不在同一时区时格子也不会错开一天。计费时区与 hub 不同的节点，它的 days_left
+// 与"到期日 − 今天"可以差一天：剩余天数按节点自己的日界，日历上的今天按 hub 的。"已续费"调 RenewNodeBilling，推后的
+// 日期由 hub 算。
 export function Renewals() {
   const qc = useQueryClient();
   const nodes = useNodeList({}, { refetchInterval: TRAFFIC_MS });
@@ -57,17 +59,17 @@ export function Renewals() {
   }, [focusDay]);
 
   const gate = queryGate(nodes);
-  const header = <PageHeader title="续费日历" description="按到期日汇总节点；日期与今天按 hub 时区。点日期列出当日到期的节点。" />;
+  const header = <PageHeader title="续费日历" description="按到期日汇总节点；今天按 hub 时区，剩余天数按各节点的计费时区。点日期列出当日到期的节点。" />;
   const banner = errorBanner(nodes.error, error, update.error);
   if (!gate.ready) return <section>{header}{banner}{gate.loading}</section>;
   const list = gate.data.nodes;
-  const today = hubToday(list.map((n) => n.billing));
+  const today = gate.data.hubToday;
+  const days = byExpiryDay(list);
   // 概览不依赖今天：月均持有成本只要价格与周期，节点都没填到期日时也照常显示。
   const overview = <CostOverview nodes={list} />;
-  if (today === undefined) {
+  if (days.size === 0) {
     return <section>{header}{banner}{overview}<EmptyState title="还没有设置到期日的节点。">在节点的编辑抽屉里填写到期日与计费周期后，节点按到期日出现在这里。</EmptyState></section>;
   }
-  const days = byExpiryDay(list);
   const focus = picked?.focus ?? today;
   const selected = picked?.selected ?? today;
   const [year, month] = focus.split("-");
@@ -171,7 +173,7 @@ function CostOverview({ nodes }: { nodes: readonly Node[] }) {
     </div>
     {s.overdue.length > 0 && <p className="cost-overdue">已过期未处理：{s.overdue.map(totalText).join("；")}（不计入 {RENEWAL_WINDOW_DAYS} 天待续费）</p>}
     {s.rentedAmortized.length > 0 && <p className="muted">已出租节点另计：月均 {s.rentedAmortized.map((t) => `${moneyText(t.currency, t.monthly)} · ${t.count} 台`).join("；")}（不计入自用成本）</p>}
-    <p className="muted cost-note">按原币种分列，不做汇率换算；只计填了价格与计费周期的节点，一次性买断不计。日期按 hub 时区。</p>
+    <p className="muted cost-note">按原币种分列，不做汇率换算；只计填了价格与计费周期的节点，一次性买断不计。剩余天数按各节点的计费时区。</p>
   </section>;
 }
 

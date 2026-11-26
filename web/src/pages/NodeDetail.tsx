@@ -23,7 +23,7 @@ import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { ago, bytes, dateTime } from "../lib/format";
 import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
-import { resetDayClamps, trafficDetail, trafficText } from "../lib/traffic";
+import { resetRuleText, trafficDetail, trafficText } from "../lib/traffic";
 import { laggingNode } from "../lib/lagging";
 import { NodeEditor } from "./NodeEditor";
 
@@ -55,7 +55,7 @@ export function NodeDetail() {
   const timeZone = useHubTimeZone();
   const history = useHistory(ADMIN_HISTORY, nodeId, validId && traffic.data ? Number(traffic.data.now) : undefined, timeZone);
   const nodeTraffic = traffic.data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
-  const daily = useDailyTraffic(nodeId, nodeTraffic?.periodStart, traffic.data ? Number(traffic.data.now) : undefined, validId && tab === "traffic");
+  const daily = useDailyTraffic(nodeId, nodeTraffic?.previousPeriodStart, traffic.data ? Number(traffic.data.now) : undefined, validId && tab === "traffic");
   // 事件 tab 才取事件：它是低频内容，不该随每次打开详情多发一条请求。
   const events = useAlertEvents(validId && tab === "events" ? nodeId : null);
   const [editor, setEditor] = useState<HTMLElement | null>(null);
@@ -88,7 +88,7 @@ export function NodeDetail() {
         </> : time.loading}
       </>}
       {tab === "traffic" && <>
-        {nodeTraffic && traffic.data && <DailyTraffic response={daily.data} traffic={nodeTraffic} timeZone={traffic.data.timezone} now={Number(traffic.data.now)} />}
+        {nodeTraffic && traffic.data && <DailyTraffic response={daily.data} traffic={nodeTraffic} now={Number(traffic.data.now)} />}
         <TrafficCard nodeId={nodeId} data={traffic.data} />
       </>}
       {tab === "diagnostics" && (gate.ready && node ? <>
@@ -161,7 +161,6 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
     },
   });
   const t = data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
-  const timeZone = data?.timezone;
   if (!t) return null;
   // 编辑框首次出现时预填当前值；之后由用户输入驱动。
   const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
@@ -177,8 +176,9 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
       <dl className="facts">
         <dt>本周期</dt><dd><span className="num">{trafficText(t)}</span> <span className="muted">{trafficDetail(t)}</span></dd>
         <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
-        <dt>周期起点</dt><dd>{dateTime(t.periodStart, timeZone)}</dd>
-        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, timeZone)}（每月 {t.resetDay} 日{resetDayClamps(t.resetDay) ? "，不足该日的月份取最后一日" : ""}，{timeZone}）</dd>
+        {/* 周期按节点的计费时区（t.timezone，没设时是 hub 的 --timezone）判定，起点与下次重置也按它显示。 */}
+        <dt>周期起点</dt><dd>{dateTime(t.periodStart, t.timezone)}</dd>
+        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, t.timezone)}（{resetRuleText(t)}）</dd>
       </dl>
       <form onSubmit={onSubmit} className="row">
         <label>本周期下行 (GiB)<input value={form.rx} onChange={(e) => setDraft({ ...form, rx: e.target.value })} inputMode="decimal" /></label>

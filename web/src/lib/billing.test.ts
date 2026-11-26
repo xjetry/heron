@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingCycle, BillingCycleSchema } from "../gen/heron/v1/types_pb";
-import { BILLING_CYCLES, byExpiryDay, canRenew, costSummary, cycleLabel, hubToday, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
+import { BILLING_CYCLES, byExpiryDay, canRenew, costSummary, cycleLabel, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };
 
@@ -99,18 +99,6 @@ describe("sortByExpiry", () => {
   it("今天到期（0 天）排在已过期之后、未到期之前", () => {
     const nodes = [{ name: "later", billing: due(1) }, { name: "today", billing: due(0) }, { name: "gone", billing: due(-1) }];
     expect(names(sortByExpiry(nodes))).toEqual(["gone", "today", "later"]);
-  });
-});
-
-describe("hubToday", () => {
-  it("由第一个带 daysLeft 的节点反推，跨月跨年按日历日算", () => {
-    const due = (expiresOn: string, daysLeft?: number): BillingView => ({ ...none, expiresOn, daysLeft });
-    expect(hubToday([undefined, due("", undefined), due("2026-02-30", undefined), due("2026-03-01", 59)])).toBe("2026-01-01");
-    expect(hubToday([due("2025-12-20", -12)])).toBe("2026-01-01");
-    expect(hubToday([due("2028-03-01", 1)])).toBe("2028-02-29");
-  });
-  it("没有任何 daysLeft 时不知道今天", () => {
-    expect(hubToday([undefined, { ...none, expiresOn: "2026-02-30" }])).toBeUndefined();
   });
 });
 

@@ -53,7 +53,7 @@ function renderNode(surface: "管理" | "公开", { stepS = 60, timeZone = "UTC"
   if (surface === "管理") {
     renderWithAdmin({
       queryMetrics: metrics, queryProbes, getSnapshot: async () => ({ nodes: [] }), getNodeDisks: async () => ({}), listTags: async () => ({ tags: [] }),
-      listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [], now: BigInt(HUB_NOW), timezone: timeZone }),
+      listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [], now: BigInt(HUB_NOW) }),
       getSettings: siteFails ? fail : async () => ({ settings: {}, timezone: timeZone }),
     }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   } else {

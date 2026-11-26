@@ -26,9 +26,14 @@ const listNodes = async () => ({
 const trafficOf = (nodeId: bigint) => ({
   nodeId, name: "db-01",
   traffic: { totalRx: 10n * 1024n ** 3n, totalTx: 5n * 1024n ** 3n, periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n,
-    periodStart: 1_756_684_800n, nextResetAt: 1_759_276_800n, resetDay: 1, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
+    previousPeriodStart: 1_754_006_400n, periodStart: 1_756_684_800n, nextResetAt: 1_759_276_800n, resetDay: 1, resetMinute: 0, timezone: "UTC",
+    quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
 });
-const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [trafficOf(7n)] });
+const getTraffic = async () => ({ now: 1_757_000_000n, nodes: [trafficOf(7n)] });
+const withTraffic = (patch: Partial<ReturnType<typeof trafficOf>["traffic"]>) => async () => {
+  const r = await getTraffic();
+  return { ...r, nodes: r.nodes.map((n) => ({ ...n, traffic: { ...n.traffic, ...patch } })) };
+};
 
 const defaultImpl = {
   listNodes, getTraffic,
@@ -315,23 +320,32 @@ it("详情编辑保存的请求带上 rented", async () => {
 });
 
 describe("NodeDetail", () => {
-  it.each(["UTC", "Asia/Tokyo"])("流量周期按 hub 时区 %s 显示", async (timezone) => {
+  // hub 时区（GetSettings.timezone）设成第三个时区：页面若按 hub 时区而不是节点的周期时区显示，两例都红。
+  it.each(["UTC", "Asia/Tokyo"])("流量周期按节点的周期时区 %s 显示，不按 hub 时区", async (timezone) => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } }),
-      getTraffic: async () => ({ ...await getTraffic(), timezone }) },
+      getSettings: async () => ({ settings: {}, timezone: "Pacific/Kiritimati" }), getTraffic: withTraffic({ timezone }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     const t = trafficOf(7n).traffic;
     const start = dateTime(t.periodStart, timezone);
     const next = dateTime(t.nextResetAt, timezone);
     expect(await screen.findByText(start)).toBeInTheDocument();
-    expect(screen.getByText(`${next}（每月 1 日，${timezone}）`)).toBeInTheDocument();
+    expect(screen.getByText(`${next}（每月 1 日 00:00，${timezone}）`)).toBeInTheDocument();
+  });
+
+  it("重置时刻写成 HH:MM", async () => {
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } }),
+      getTraffic: withTraffic({ resetMinute: 8 * 60 + 5, timezone: "Asia/Kolkata" }) },
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
+    const next = dateTime(trafficOf(7n).traffic.nextResetAt, "Asia/Kolkata");
+    expect(await screen.findByText(`${next}（每月 1 日 08:05，Asia/Kolkata）`)).toBeInTheDocument();
   });
 
   it("重置日大于 28 时说明短月取月末，日号仍显示配置值", async () => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } }),
-      getTraffic: async () => { const r = await getTraffic(); return { ...r, timezone: "UTC", nodes: r.nodes.map((n) => ({ ...n, traffic: n.traffic && { ...n.traffic, resetDay: 31 } })) }; } },
+      getTraffic: withTraffic({ resetDay: 31 }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     const next = dateTime(trafficOf(7n).traffic.nextResetAt, "UTC");
-    expect(await screen.findByText(`${next}（每月 31 日，不足该日的月份取最后一日，UTC）`)).toBeInTheDocument();
+    expect(await screen.findByText(`${next}（每月 31 日 00:00，不足该日的月份取最后一日，UTC）`)).toBeInTheDocument();
   });
 
   it("流量卡显示周期与总量，并按 GiB 提交校正后刷新", async () => {

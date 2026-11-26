@@ -5,7 +5,7 @@ import { useRetained } from "../api/useRetained";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { QueryMetricsResponse } from "../gen/heron/v1/query_pb";
 import { type Traffic, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
-import { DAILY_MAX_POINTS, type DayTraffic, type Direction, amount, dailyTraffic, dailyWindow, periodDays, quotaDirection, topDays, unattributedBytes } from "../lib/dailyTraffic";
+import { DAILY_MAX_POINTS, type DayTraffic, type Direction, amount, dailyTraffic, dailyWindow, periodSlices, quotaDirection, topDays, unattributedBytes } from "../lib/dailyTraffic";
 import { bytes } from "../lib/format";
 import { SERIES_PALETTE } from "../lib/seriesPalette";
 import { QUOTA_MODE_LABELS } from "../lib/traffic";
@@ -17,8 +17,8 @@ const TX_COLOR = SERIES_PALETTE[1];
 
 // 查询只在流量 tab 打开时发（enabled），hook 仍放在页面顶层，与告警事件同一种写法：错误进页面横幅。
 // identity 传 nodeId：切到另一个节点时不沿用上一个节点的数据（见 useRetained）。
-export function useDailyTraffic(nodeId: bigint, periodStart: bigint | undefined, now: number | undefined, enabled: boolean) {
-  const w = periodStart !== undefined && now !== undefined ? dailyWindow(periodStart, now) : undefined;
+export function useDailyTraffic(nodeId: bigint, previousPeriodStart: bigint | undefined, now: number | undefined, enabled: boolean) {
+  const w = previousPeriodStart !== undefined && now !== undefined ? dailyWindow(previousPeriodStart, now) : undefined;
   const request = enabled && w ? { nodeId, from: BigInt(w.from), to: BigInt(w.to), maxPoints: DAILY_MAX_POINTS } : skipToken;
   return useRetained(useQuery(AdminService.method.queryMetrics, request), nodeId);
 }
@@ -38,13 +38,16 @@ const readout = (d: DayTraffic) =>
 const measureLabel = (mode: TrafficQuotaMode, dir: Direction) =>
   mode === TrafficQuotaMode.MAX ? `${QUOTA_MODE_LABELS[mode]}，按${dir === "rx" ? "下载" : "上传"}计` : QUOTA_MODE_LABELS[mode];
 
-export function DailyTraffic({ response, traffic, timeZone, now }: { response: QueryMetricsResponse | undefined; traffic: Traffic; timeZone: string; now: number }) {
+// 日界与周期都按节点的计费时区（traffic.timezone），与流量卡上的周期起点、下次重置同一个时区。
+export function DailyTraffic({ response, traffic, now }: { response: QueryMetricsResponse | undefined; traffic: Traffic; now: number }) {
   const titleId = useId();
   const [period, setPeriod] = useState<Period>("current");
   const [hovered, setHovered] = useState<string | null>(null);
-  const days = periodDays(traffic.periodStart, traffic.resetDay, now, timeZone);
-  const today = days.current.at(-1) ?? "";
-  const list = response ? dailyTraffic(response, timeZone, period === "current" ? days.current : days.previous) : undefined;
+  const timeZone = traffic.timezone;
+  const slices = periodSlices(traffic, now);
+  // 今天只在本周期里标：重置时刻不是零点时，上周期的最后一天可以与今天同一个日期，但那一段已经结束，不是"统计中"。
+  const today = period === "current" ? slices.current.days.at(-1) ?? "" : "";
+  const list = response ? dailyTraffic(response, timeZone, slices[period]) : undefined;
   const peak = list ? Math.max(0, ...list.map(total)) : 0;
   const dir = list ? quotaDirection(traffic.quotaMode, list) : "sum";
   const top = list ? topDays(list, dir) : [];
@@ -62,8 +65,9 @@ export function DailyTraffic({ response, traffic, timeZone, now }: { response: Q
           <button type="button" aria-pressed={period === "previous"} onClick={() => setPeriod("previous")}>上周期</button>
         </nav>
         <InfoTip label="口径说明">
-          由历史数据里每小时的下行、上行字节数按 hub 时区（{timeZone}）的日期相加，用来粗略定位哪天用得多；用量最高的日子按配额的计入方式排，
-          与流量卡的"本周期"一致。离线期间、hub 重启后首次上报的流量与手动校正只计入周期用量，不归到具体日期；超出 1 小时级保留期的日子显示无数据。
+          由历史数据里每小时的下行、上行字节数按节点计费时区（{timeZone}）的日期相加，用来粗略定位哪天用得多；用量最高的日子按配额的计入方式排，
+          与流量卡的"本周期"一致。重置时刻不是零点时，重置那天分成两段，分别列在上周期的最后一天与本周期的第一天；跨过周期边界或日界的那一小时整块计入它开始的一侧。
+          离线期间、hub 重启后首次上报的流量与手动校正只计入周期用量，不归到具体日期；超出 1 小时级保留期的日子显示无数据。
         </InfoTip>
       </header>
       {!list ? <p className="muted">加载中…</p> : <>

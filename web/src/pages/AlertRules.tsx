@@ -249,7 +249,7 @@ function AlertRuleDrawer({ title, submitLabel, ruleId, nodes, channels, tasks, i
           <div className="row">
             <label>提前天数<input type="number" required min={1} max={365} step={1} value={draft.daysBefore} onChange={(e) => set({ daysBefore: e.target.value })} /></label>
           </div>
-          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
+          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；"今"按节点的计费时区，没设时按 hub 时区。到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日与计费时区在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区与各节点计费时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
         </>
       ) : draft.kind === AlertKind.CERT_EXPIRY ? (
         <>

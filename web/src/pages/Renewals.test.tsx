@@ -4,7 +4,7 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { BillingCycle } from "../gen/heron/v1/types_pb";
 import { Renewals } from "./Renewals";
 
-// hub 的今天是 2026-01-01：每个节点的 daysLeft 都按它算（expiresOn − today）。
+// hub 的今天是 2026-01-01（ListNodes.hub_today）：夹具节点都没设计费时区，daysLeft 都按它算（expiresOn − today）。
 const node = (id: bigint, name: string, expiresOn: string, daysLeft: number | undefined, billingCycle = BillingCycle.MONTHLY, autoRenew = false) => ({
   id, name, public: false, note: "", sortOrder: Number(id), createdAt: 0n, trafficResetDay: 1, tags: [],
   billing: { price: "5", currency: "USD", billingCycle, expiresOn, autoRenew, daysLeft },
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("Renewals", () => {
-  // 浏览器所在的时区与 hub 的不同：hub 的今天（2026-01-01，由 daysLeft 反推）、浏览器本地的日历日、浏览器时钟的 UTC
+  // 浏览器所在的时区与 hub 的不同：hub 的今天（2026-01-01，ListNodes.hub_today）、浏览器本地的日历日、浏览器时钟的 UTC
   // 日历日三者互不相同，格子、今天与默认选中的日子仍是 hub 的。两个方向各一例：基里巴斯（UTC+14）本地已是 1 月 3 日、
   // UTC 是 1 月 2 日；帕果帕果（UTC−11）本地还是 12 月 30 日、UTC 是 12 月 31 日。按浏览器本地日期或按浏览器时钟的
   // UTC 日期取今天的实现，在两例里都会把今天标错一天以上。
@@ -41,7 +41,7 @@ describe("Renewals", () => {
     vi.setSystemTime(new Date(instant));
     // 假时区真的生效了：浏览器的两种日历日都不是 hub 的今天，否则这条用例证明不了什么。
     expect([new Date().getDate(), new Date().getUTCDate()]).toEqual([localDate, utcDate]);
-    render({ listNodes: async () => ({ nodes: fleet }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: fleet }) });
     expect(await screen.findByText("2026 年 1 月")).toBeInTheDocument();
     const grid = screen.getByRole("table", { name: "2026 年 1 月到期日历" });
     const current = within(grid).getAllByRole("button").filter((b) => b.getAttribute("aria-current") === "date");
@@ -53,8 +53,21 @@ describe("Renewals", () => {
     expect(screen.getByText("2026-01-01 没有到期的节点。")).toBeInTheDocument();
   });
 
+  // 计费时区比 hub 晚一天的节点：它的今天还是 12 月 31 日，1 月 2 日到期剩 2 天。日历的今天仍是 hub 的 1 月 1 日，
+  // 不由这个节点的 daysLeft 反推（反推得 12 月 31 日）；它的剩余天数照 hub 下发的显示。
+  it("今天取 hub_today，不由计费时区不同的节点的剩余天数反推", async () => {
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [node(1n, "honolulu", "2026-01-02", 2), fleet[3]] }) });
+    expect(await screen.findByText("2026 年 1 月")).toBeInTheDocument();
+    const grid = screen.getByRole("table", { name: "2026 年 1 月到期日历" });
+    const current = within(grid).getAllByRole("button").filter((b) => b.getAttribute("aria-current") === "date");
+    expect(current.map((b) => b.dataset.ymd)).toEqual(["2026-01-01"]);
+    fireEvent.click(day("2026-01-02"));
+    const list = screen.getByRole("region", { name: "2026-01-02 到期的节点" });
+    expect(within(list).getByText("剩 2 天")).toBeInTheDocument();
+  });
+
   it("点日期列出当日到期的节点；没有周期的节点没有「已续费」", async () => {
-    render({ listNodes: async () => ({ nodes: fleet }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: fleet }) });
     fireEvent.click(await screen.findByRole("button", { name: "2026-01-10，2 台到期" }));
     const list = screen.getByRole("region", { name: "2026-01-10 到期的节点" });
     const rows = within(list).getAllByRole("row").slice(1);
@@ -68,14 +81,14 @@ describe("Renewals", () => {
     // 第一个已出租、剩 3 天（若取它上色会是需关注）；第二个未出租、剩 40 天。两者同一到期日，台数含全部，颜色为中性。
     const leased = { ...node(1n, "leased", "2026-01-04", 3), rented: true };
     const kept = node(2n, "kept", "2026-01-04", 40);
-    render({ listNodes: async () => ({ nodes: [leased, kept] }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [leased, kept] }) });
     const cell = await screen.findByRole("button", { name: "2026-01-04，2 台到期" });
     expect(cell.querySelector(".renewal-count")).toHaveAttribute("data-level", "neutral");
     expect(cell.querySelector(".renewal-count")).toHaveTextContent("2 台");
   });
 
   it("已过期的节点留在它的到期日，翻到上个月可见并带严重级别", async () => {
-    render({ listNodes: async () => ({ nodes: fleet }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: fleet }) });
     fireEvent.click(await screen.findByRole("button", { name: "上个月" }));
     const cell = day("2025-12-20");
     expect(cell).toHaveAccessibleName("2025-12-20，1 台到期");
@@ -89,7 +102,7 @@ describe("Renewals", () => {
       return { node: { ...node(nodeId, "tokyo", expires, 32) } };
     });
     const updateNode = vi.fn(async () => ({}));
-    render({ listNodes: async () => ({ nodes: [node(1n, "tokyo", expires, expires === "2026-01-02" ? 1 : 32), fleet[1]] }), renewNodeBilling, updateNode });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [node(1n, "tokyo", expires, expires === "2026-01-02" ? 1 : 32), fleet[1]] }), renewNodeBilling, updateNode });
     fireEvent.click(await screen.findByRole("button", { name: "2026-01-02，1 台到期" }));
     fireEvent.click(screen.getByRole("button", { name: "已续费 tokyo（#1）" }));
     expect(renewNodeBilling).not.toHaveBeenCalled();
@@ -102,7 +115,7 @@ describe("Renewals", () => {
   });
 
   it("「编辑计费」打开节点编辑抽屉", async () => {
-    render({ listNodes: async () => ({ nodes: fleet }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: fleet }) });
     fireEvent.click(await screen.findByRole("button", { name: "2026-01-02，1 台到期" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑计费 tokyo（#1）" }));
     expect(await screen.findByRole("dialog", { name: "编辑节点 · tokyo（#1）" })).toBeInTheDocument();
@@ -112,7 +125,7 @@ describe("Renewals", () => {
   it("编辑计费保存的请求带上 rented", async () => {
     const updateNode = vi.fn(async () => ({}));
     const leased = { ...node(1n, "tokyo", "2026-01-02", 1), rented: true };
-    render({ listNodes: async () => ({ nodes: [leased] }), updateNode });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [leased] }), updateNode });
     fireEvent.click(await screen.findByRole("button", { name: "2026-01-02，1 台到期" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑计费 tokyo（#1）" }));
     fireEvent.click(await screen.findByRole("button", { name: "保存" }));
@@ -120,7 +133,7 @@ describe("Renewals", () => {
   });
 
   it("方向键在格子间移动焦点，PageDown 换月", async () => {
-    render({ listNodes: async () => ({ nodes: fleet }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: fleet }) });
     const start = await screen.findByRole("button", { name: "2026-01-01，无到期" });
     expect(start).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(start, { key: "ArrowRight" });
@@ -134,7 +147,7 @@ describe("Renewals", () => {
   it("顶部费用概览按原币种分列待续费、逾期与月均持有成本，已出租节点另行旁注", async () => {
     const priced = (id: bigint, name: string, price: string, currency: string, billingCycle: BillingCycle, daysLeft: number) =>
       ({ ...node(id, name, "2026-01-01", daysLeft, billingCycle), billing: { price, currency, billingCycle, expiresOn: "2026-01-01", autoRenew: false, daysLeft } });
-    render({ listNodes: async () => ({ nodes: [
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [
       priced(1n, "soon", "10.50", "USD", BillingCycle.MONTHLY, 3),
       priced(2n, "edge", "120", "EUR", BillingCycle.YEARLY, 30),
       priced(3n, "far", "30", "USD", BillingCycle.QUARTERLY, 60),
@@ -152,27 +165,27 @@ describe("Renewals", () => {
   });
 
   it("没有逾期、没有已出租的带价节点时不显示这两行", async () => {
-    render({ listNodes: async () => ({ nodes: [node(1n, "tokyo", "2026-01-02", 1)] }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [node(1n, "tokyo", "2026-01-02", 1)] }) });
     const overview = await screen.findByRole("region", { name: "费用概览" });
     expect(within(overview).queryByText(/^已过期未处理/)).toBeNull();
     expect(within(overview).queryByText(/^已出租节点另计/)).toBeNull();
   });
 
   it("一台带价有周期的节点都没有时不显示概览", async () => {
-    render({ listNodes: async () => ({ nodes: [node(1n, "tokyo", "2026-01-02", 1, BillingCycle.UNSPECIFIED)] }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [node(1n, "tokyo", "2026-01-02", 1, BillingCycle.UNSPECIFIED)] }) });
     expect(await screen.findByText("2026 年 1 月")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "费用概览" })).toBeNull();
   });
 
   it("节点都没填到期日时仍按价格与周期给出月均持有成本", async () => {
-    render({ listNodes: async () => ({ nodes: [node(1n, "bare", "", undefined)] }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [node(1n, "bare", "", undefined)] }) });
     expect(await screen.findByText("还没有设置到期日的节点。")).toBeInTheDocument();
     const overview = screen.getByRole("region", { name: "费用概览" });
     expect(within(within(overview).getByRole("list", { name: "月均持有成本" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["US$5 / 月 · 年化 US$60 · 1 台"]);
   });
 
   it("没有任何节点带到期日时给出空态，不按浏览器时钟画一个月", async () => {
-    render({ listNodes: async () => ({ nodes: [node(1n, "bare", "", undefined), node(2n, "broken", "2026-02-30", undefined)] }) });
+    render({ listNodes: async () => ({ hubToday: "2026-01-01", nodes: [node(1n, "bare", "", undefined), node(2n, "broken", "2026-02-30", undefined)] }) });
     expect(await screen.findByText("还没有设置到期日的节点。")).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
   });

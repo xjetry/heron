@@ -1,6 +1,6 @@
 // 日历日（YYYY-MM-DD）的运算，日期选择器（components/Calendar.tsx）与续费日历（pages/Renewals.tsx）共用。
 // 全部在 UTC 上做：只关心日历日，不经过任何时区，夏令时切换日不会少一天或多一天，结果也与浏览器所在的时区无关。
-// 本文件不取"今天"：今天是谁的今天由调用方决定（日期选择器用浏览器本地日期，续费日历用 hub 下发的 days_left 反推）。
+// 本文件不取"今天"：今天是谁的今天由调用方决定（日期选择器用浏览器本地日期，续费日历用 ListNodes 下发的 hub_today）。
 
 // 用 setUTCFullYear 而不是 Date.UTC：后者把 0–99 年当成 1900–1999 年，而 isDate 收 0001 年起的日期。
 function utc(year: number, monthIndex: number, day: number): number {
@@ -14,7 +14,7 @@ const fromUtc = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 export const addDays = (ymd: string, n: number) => fromUtc(toUtc(ymd) + n * 86_400_000);
 
 // ymd 所在月往后 n 个月的第 day 日，day 夹到 [1, 该月天数]：31 日遇到 2 月取 2 月 28 / 29 日，不溢出到 3 月。
-export function dayInMonth(ymd: string, n: number, day: number): string {
+function dayInMonth(ymd: string, n: number, day: number): string {
   const [y, m] = ymd.split("-").map(Number);
   const first = new Date(utc(y, m - 1 + n, 1));
   const last = new Date(utc(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();

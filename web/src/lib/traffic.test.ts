@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseQuota, quotaInput, trafficDetail, trafficParts, trafficText } from "./traffic";
+import { parseQuota, parseResetTime, quotaInput, RESET_MINUTE_MAX, resetRuleText, resetTimeText, trafficDetail, trafficParts, trafficText } from "./traffic";
 import { create } from "@bufbuild/protobuf";
 import { TrafficQuotaMode, TrafficSchema } from "../gen/heron/v1/types_pb";
 
@@ -36,4 +36,20 @@ describe("quota conversion", () => {
     t.quotaMode = TrafficQuotaMode.TX;
     expect(trafficDetail(t)).toBe("下载 + 上传 · 未设配额");
   });
+});
+
+it("重置时刻在分钟数与 HH:MM 之间往返，两端是 00:00 与 23:59", () => {
+  expect(resetTimeText(0)).toBe("00:00");
+  expect(resetTimeText(510)).toBe("08:30");
+  expect(resetTimeText(RESET_MINUTE_MAX)).toBe("23:59");
+  for (const m of [0, 1, 59, 60, 510, RESET_MINUTE_MAX]) expect(parseResetTime(resetTimeText(m))).toBe(m);
+});
+
+it("不是两位时两位分、或超出 00:00–23:59 的文本不是重置时刻", () => {
+  for (const text of ["", "8:30", "08:3", "24:00", "23:60", "08:30:00", "ab:cd"]) expect(parseResetTime(text)).toBeNull();
+});
+
+it("周期规则说明带日、时刻、短月钳位与时区", () => {
+  expect(resetRuleText({ resetDay: 1, resetMinute: 0, timezone: "UTC" })).toBe("每月 1 日 00:00，UTC");
+  expect(resetRuleText({ resetDay: 31, resetMinute: 510, timezone: "Asia/Kolkata" })).toBe("每月 31 日 08:30，不足该日的月份取最后一日，Asia/Kolkata");
 });
