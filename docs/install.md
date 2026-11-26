@@ -116,6 +116,7 @@ curl -fsSL https://github.com/xjetry/heron/releases/latest/download/install.sh |
 参数：`--hub`、`--key`（首次安装必需）、`--name`、`--insecure-http`、`--base-url`、`--update-source github|hub`（在线更新从哪里取产物，见 [operations.md](operations.md#在线更新)）。
 
 - 普通重跑即升级：已有配置时沿用现有注册，不消费 `--key`。
+- OpenRC 主机要求 OpenRC 正在作为 init 运行（`/run/openrc/softlevel` 存在）。容器里只装了 OpenRC 而未以其启动时，安装器在建账户、下载与注册之前拒绝退出并提示改用 agent Docker 镜像；`--uninstall` 仍可执行，会跳过 `rc-service stop` 并经 `/proc` 确认进程已退出。
 - `--update-source` 只对 Linux systemd 有效，OpenRC 主机的安装器会拒绝它。
 - 卸载：同一条命令把参数换成 `--uninstall`；加 `--purge` 一并删除配置、日志目录、`heron-agent` 用户与同名组：
 
@@ -205,6 +206,8 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 - `install-hub.sh` 装自己所属的 hub 版本；`install.sh` 与 `install-macos.sh` 装该 release 的 hub 绑定的 agent 版本，`releases/latest/download/` 下的因而是最新 hub 绑定的版本。要装指定版本，取那个版本 release 里的脚本：`https://github.com/xjetry/heron/releases/download/vX.Y.Z/<脚本名>`。
 - 仓库里的源码脚本没有内嵌哈希，只能卸载；安装请用 release 里的脚本。
 - 安装凭据只能消费一次。脚本已显示注册成功并写好配置、但后续步骤失败时，去掉 `--re-register` 按普通升级重跑，沿用已写入的运行 token。注册响应丢失或配置写入失败时，在面板为原节点重新换发凭据：不重复创建节点，也不重用已消费的凭据。
+- **下载超时与重试**：使用 `curl` 时连接阶段（含 TLS 握手）限时 30 秒，连上后平均速率连续 60 秒低于 1 KiB/s 即中止；未收到任何正文时的握手/传输重置（退出码 16、18、35、52、55、56、92）以及 HTTP 502/503/504 会自动重试，最多 5 次、间隔 5 秒。连接失败、DNS 解析失败、证书错误、超时或收到部分正文后断开不重试；收到部分正文后断开说明线路慢而不稳，可将发布包另行取到本地目录或近处 HTTP 服务器后用 `--base-url` 离线安装。主机仅装有 `wget` 时以 `-T 60` 同时限制建连与读空闲（无低速中止），未写出正文字节时按同样次数与间隔重试。
+- **失败回滚与暂存清理**：升级在停旧服务之后才替换二进制；之后任一步失败、新服务未能持续存活，或遇到 SSH 断开、管道读端关闭与中断信号时，退出处理会屏蔽后续信号并忽略诊断输出失败，完整换回上一版二进制并重新拉起旧服务（`install-hub.sh` 同步恢复数据库备份）。脚本正常或异常退出时自动清理本次暂存文件，因强杀或断电遗留超过一天的同命名暂存文件会在下次启动时回收。
 
 ## 支持平台
 

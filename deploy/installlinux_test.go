@@ -10,8 +10,10 @@ import (
 // install.sh 的替身。本地账户记录在 $HERON_INSTALL_ROOT/etc/passwd 与 etc/group 里；
 // state/remote-passwd 里的账户由 NSS 的非本地源解析得到：id 查得到，本地文件里没有。
 // userdel、groupdel 只改本地文件，找不到记录时照 shadow 4.13 实测的报错与退出码（6）失败。
-// systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行的进程（uid 与 exe 齐备：脚本按两者认本服务的
-// 进程），stop 把它拿走，供脚本的起停确认读取。
+// systemctl 与 rc-service 记下参数；start 在假 /proc 里放一个以服务用户运行的进程（uid 与 exe 齐备：脚本按两者认本服务的
+// 进程），stop 把它拿走，供脚本的起停确认读取。rc-service 照 openrc 0.62.6 实测：没有 run/openrc/softlevel（OpenRC 没在
+// 运行）时 start、stop 都返回 1；rc-update 只改 etc/runlevels 下的链接，与 OpenRC 在不在运行无关。apt-get 记下参数，
+// install 时建出 CA 证书包：PATH 上有真 apt-get 的主机（CI）也不会真去装包。
 // curl 是三个脚本共用的 fileCurl。服务的真实起停由 scripts/install-accept.sh 在容器里验证。
 var linuxStubs = map[string]string{
 	"flock": `#!/bin/sh
@@ -32,28 +34,43 @@ case "$flag" in
   -gn) awk -F: -v g="$gid" '$3 == g { print $1; found = 1; exit } END { exit !found }' "$HERON_INSTALL_ROOT/etc/group";;
 esac
 `,
-	// STUB_SYSTEMCTL_FAILS 与 STUB_SYSTEMCTL_TERM 各是一条完整的参数串：参数与前者相同时这次调用失败；与后者相同时
-	// 给安装脚本（父进程）发 SIGTERM，模拟 SSH 断开，调用本身照常完成。
+	// STUB_SYSTEMCTL_FAILS 与 STUB_SYSTEMCTL_TERM 各是一条完整的参数串：参数与前者相同时这次调用失败（失败之前执行
+	// stubFailure）；与后者相同时给安装脚本（父进程）发 SIGTERM，模拟 SSH 断开，调用本身照常完成。
 	"systemctl": `#!/bin/sh
 cat > /dev/null
-echo "systemctl $*" >> "$STUB_STATE/calls"
-[ "$*" != "${STUB_SYSTEMCTL_FAILS-}" ] || { echo "systemctl $*: failed" >&2; exit 1; }
+` + stubSignalAfterFailure + `echo "systemctl $*" >> "$STUB_STATE/calls"
+if [ "$*" = "${STUB_SYSTEMCTL_FAILS-}" ]; then
+` + stubFailure + `  echo "systemctl $*: failed" >&2; exit 1
+fi
 [ "$*" != "${STUB_SYSTEMCTL_TERM-}" ] || kill -TERM "$PPID"
 case "$*" in
   "show heron-updater-agent -p ActiveState --value") echo "${STUB_UPDATER_STATE:-active}"; exit 0;;
   *heron-updater-agent*) exit 0;;
 esac
-P=$HERON_INSTALL_ROOT/proc
+` + agentProcessStub + `agent_process "$1"
+`,
+	"rc-service": `#!/bin/sh
+cat > /dev/null
+echo "rc-service $*" >> "$STUB_STATE/calls"
+[ -e "$HERON_INSTALL_ROOT/run/openrc/softlevel" ] || { echo " * ERROR: $1 stopped by something else" >&2; exit 1; }
+` + agentProcessStub + `agent_process "$2"
+`,
+	"rc-update": `#!/bin/sh
+cat > /dev/null
+echo "rc-update $*" >> "$STUB_STATE/calls"
+link=$HERON_INSTALL_ROOT/etc/runlevels/$3/$2
 case "$1" in
-  start)
-    # 包里带这个标记的 heron-agent 模拟"起不来的新二进制"：start 返回 0 但进程不在，
-    # 供回滚用例走 confirm_service_started 的失败分支。
-    if grep -q 'heron-test-broken' "$HERON_INSTALL_ROOT/usr/local/bin/heron-agent" 2>/dev/null; then exit 0; fi
-    uid=$(grep '^heron-agent:' "$HERON_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
-    mkdir -p "$P/4242"; printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"
-    rm -f "$P/4242/exe"; ln -s "$HERON_INSTALL_ROOT/usr/local/bin/heron-agent" "$P/4242/exe";;
-  stop) rm -rf "$P/4242";;
+  add) mkdir -p "${link%/*}"; ln -s "/etc/init.d/$2" "$link";;
+  del) rm -f "$link";;
 esac
+`,
+	"apt-get": `#!/bin/sh
+cat > /dev/null
+echo "apt-get $*" >> "$STUB_STATE/calls"
+if [ "$1" = install ]; then
+  mkdir -p "$HERON_INSTALL_ROOT/etc/ssl/certs"
+  : > "$HERON_INSTALL_ROOT/etc/ssl/certs/ca-certificates.crt"
+fi
 `,
 	"uname": `#!/bin/sh
 [ "$*" = -m ] || { echo "unexpected uname $*" >&2; exit 64; }
@@ -110,6 +127,23 @@ echo "sleep $*" >> "$STUB_STATE/calls"
 `,
 	"curl": fileCurl,
 }
+
+// agentProcessStub 是 systemctl 与 rc-service 两个替身共用的服务起停：agent_process start 在假 /proc 里放一个以服务用户
+// 运行、exe 指向装好的二进制的进程 4242，stop 把它拿走，其余动作不碰进程。
+const agentProcessStub = `agent_process() {
+  P=$HERON_INSTALL_ROOT/proc
+  case "$1" in
+    start)
+      # 包里带这个标记的 heron-agent 模拟"起不来的新二进制"：start 返回 0 但进程不在，
+      # 供回滚用例走 confirm_service_started 的失败分支。
+      if grep -q 'heron-test-broken' "$HERON_INSTALL_ROOT/usr/local/bin/heron-agent" 2>/dev/null; then return 0; fi
+      uid=$(grep '^heron-agent:' "$HERON_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
+      mkdir -p "$P/4242"; printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"
+      rm -f "$P/4242/exe"; ln -s "$HERON_INSTALL_ROOT/usr/local/bin/heron-agent" "$P/4242/exe";;
+    stop) rm -rf "$P/4242";;
+  esac
+}
+`
 
 // newLinuxHost 是一台 systemd 主机：服务用户不在本地账户文件里，由各用例按需加上；
 // /proc 下只有 self，没有以任何 uid 运行的进程目录。

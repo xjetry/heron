@@ -1,8 +1,11 @@
 package deploy
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -313,5 +316,177 @@ func TestMacOSFirstInstallHasNothingToRollBack(t *testing.T) {
 	out, code := e.install()
 	if code == 0 || strings.Contains(out, "rolling back") || e.exists("usr/local/bin/heron-agent.bak") {
 		t.Fatalf("a first install has nothing to roll back: exit %d:\n%s", code, out)
+	}
+}
+
+// 退出处理的打断用例共用的替身片段，拼进服务管理替身（systemctl、launchctl）。
+//
+// stubSignalAfterFailure 放在替身最前面：模拟的那次失败发生之后（stubFailure 留下 $STUB_STATE/failed），每次调用都先给
+// 安装脚本（父进程）发 STUB_SIGNAL_AFTER_FAILURE 指定的信号。失败之后的调用都在退出处理里（回滚的停、启与更新器的恢复），
+// 信号因而落在回滚进行中：SSH 断开时的挂断、回滚中再按一次 Ctrl-C 都是这个形态。
+const stubSignalAfterFailure = `if [ -n "${STUB_SIGNAL_AFTER_FAILURE-}" ] && [ -f "$STUB_STATE/failed" ]; then
+  kill -"$STUB_SIGNAL_AFTER_FAILURE" "$PPID"
+fi
+`
+
+// stubFailure 由模拟失败的那次调用在返回失败之前执行：留下 $STUB_STATE/failed；STUB_CLOSE_OUTPUT 设了时，在 stderr 写
+// 一行 closeOutputMarker，再一直写到写不进去为止。用例看到标记就关掉管道的读端（runClosingOutput），此后安装脚本写的
+// 就是一条读端已关的管道，与 tee 之类的读端先退出同形。替身自己忽略 SIGPIPE，写失败时结束循环，不被它杀掉。
+const stubFailure = `  : > "$STUB_STATE/failed"
+  if [ -n "${STUB_CLOSE_OUTPUT-}" ]; then
+    trap '' PIPE
+    echo ` + closeOutputMarker + ` >&2
+    while printf . >&2 2>/dev/null; do :; done
+  fi
+`
+
+const closeOutputMarker = "heron-test-close-output"
+
+// runClosingOutput 执行脚本，stdout 与 stderr 接同一条管道；读到 closeOutputMarker 就关掉读端。返回关掉之前读到的输出与
+// 退出码（被信号杀掉时为 -1）。
+func (e *env) runClosingOutput(args ...string) (string, int) {
+	e.t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	cmd := e.command(args...)
+	defer cmd.Stdin.(*os.File).Close()
+	cmd.Stdout, cmd.Stderr = w, w
+	if err := cmd.Start(); err != nil {
+		e.t.Fatal(err)
+	}
+	w.Close()
+	var out []byte
+	buf := make([]byte, 4096)
+	for !bytes.Contains(out, []byte(closeOutputMarker)) {
+		n, err := r.Read(buf)
+		out = append(out, buf[:n]...)
+		if err != nil {
+			break
+		}
+	}
+	r.Close()
+	return string(out), e.exitCode(cmd.Wait())
+}
+
+// runUnwritableStderr 执行脚本，stderr 是只读打开的 /dev/null：每一次写 stderr 都失败（EBADF），与 SSH 断开后写终端报
+// EIO 是同一种失败——写诊断的 echo 返回非零。返回 stdout 与退出码。
+func (e *env) runUnwritableStderr(args ...string) (string, int) {
+	e.t.Helper()
+	ro, err := os.Open(os.DevNull)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer ro.Close()
+	cmd := e.command(args...)
+	defer cmd.Stdin.(*os.File).Close()
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, ro
+	return out.String(), e.exitCode(cmd.Run())
+}
+
+// availableShells 是本机能跑的 POSIX shell：用例在每一个上各跑一遍，退出处理在 dash、bash、busybox ash 上的信号与 set -e
+// 语义各有不同。sh 是系统默认的那个（macOS 上是 bash，Debian 系上是 dash）。至少有 sh，缺的跳过。
+func availableShells(t *testing.T) [][]string {
+	t.Helper()
+	var shells [][]string
+	for _, sh := range [][]string{{"sh"}, {"dash"}, {"bash"}, {"busybox", "sh"}} {
+		if _, err := exec.LookPath(sh[0]); err != nil {
+			continue
+		}
+		if err := exec.Command(sh[0], append(slices.Clone(sh[1:]), "-c", "true")...).Run(); err != nil {
+			continue
+		}
+		shells = append(shells, sh)
+	}
+	if len(shells) == 0 {
+		t.Fatal("no POSIX shell on PATH")
+	}
+	return shells
+}
+
+// rollbackHost 是一个安装脚本在打断用例里的形态：failAfterStop 是让停服务之后的某一步失败的替身开关，running 判断
+// 上一版是否重新在跑，updaterRestart 是恢复更新器那一条调用（没有更新器的平台为空）。
+type rollbackHost struct {
+	in             installer
+	failAfterStop  func(e *env) string
+	running        func(e *env) bool
+	updaterRestart string
+}
+
+var rollbackHosts = []rollbackHost{
+	{
+		in:             installers[0],
+		failAfterStop:  func(*env) string { return "STUB_SYSTEMCTL_FAILS=daemon-reload" },
+		running:        func(e *env) bool { return e.exists("proc/4242/status") },
+		updaterRestart: "systemctl restart heron-updater-agent",
+	},
+	{
+		in: installers[1],
+		failAfterStop: func(e *env) string {
+			return "STUB_LAUNCHCTL_FAILS_ONCE=bootstrap system " + e.root + "/Library/LaunchDaemons/xyz.heron.agent.plist"
+		},
+		running: func(e *env) bool {
+			procs, err := os.ReadFile(filepath.Join(e.state, "procs"))
+			return err == nil && strings.Contains(string(procs), " /usr/local/bin/heron-agent")
+		},
+	},
+	{
+		in:             installers[2],
+		failAfterStop:  func(*env) string { return "STUB_SYSTEMCTL_FAILS=enable heron-hub" },
+		running:        func(e *env) bool { return e.exists("proc/4242/status") },
+		updaterRestart: "systemctl restart heron-updater-hub",
+	},
+}
+
+// 停服务之后某一步失败，退出处理在回滚途中遇到写不出诊断（stderr 写失败、读端已退出的管道）或再来一个信号（终端挂断、
+// Ctrl-C、Ctrl-\、外部 TERM）：回滚都要做完——换回上一版二进制、不留 .bak、上一版重新在跑、维护握手停掉的更新器被拉起。
+// 退出处理若仍让 set -e 生效，第一条写 stderr 的 echo 失败就结束脚本；若仍按 exit 1 处理信号、或对 SIGPIPE 不设防，
+// 回滚同样停在半路。每个脚本在本机每个能跑的 shell 上各跑一遍。
+func TestRollbackCompletesWhenTheExitHandlerIsInterrupted(t *testing.T) {
+	t.Parallel()
+	type scenario struct {
+		name string
+		vars []string
+		run  func(e *env, args ...string) (string, int)
+	}
+	scenarios := []scenario{
+		{"stderr unwritable", nil, (*env).runUnwritableStderr},
+		{"output reader gone", []string{"STUB_CLOSE_OUTPUT=1"}, (*env).runClosingOutput},
+	}
+	for _, sig := range []string{"HUP", "INT", "QUIT", "TERM"} {
+		scenarios = append(scenarios, scenario{"SIG" + sig + " during rollback", []string{"STUB_SIGNAL_AFTER_FAILURE=" + sig}, (*env).run})
+	}
+	for _, shell := range availableShells(t) {
+		for _, h := range rollbackHosts {
+			for _, sc := range scenarios {
+				t.Run(strings.Join(shell, " ")+"/"+h.in.script+"/"+sc.name, func(t *testing.T) {
+					t.Parallel()
+					e := h.in.installed(t)
+					e.shell = shell
+					e.vars = append([]string{h.failAfterStop(e)}, sc.vars...)
+					out, code := sc.run(e, append(slices.Clone(h.in.creds), "--base-url", "file://"+e.dist)...)
+					if code == 0 {
+						t.Fatalf("a failure after stopping must fail the install:\n%s", out)
+					}
+					if got := e.file(h.in.bin); !strings.Contains(got, "# v1 ") {
+						t.Fatalf("the previous binary must be back, got %q; exit %d, calls %q\n%s", got, code, e.calls(), out)
+					}
+					if e.exists(h.in.bin + ".bak") {
+						t.Errorf("the .bak must not survive a completed rollback; calls %q", e.calls())
+					}
+					if !h.running(e) {
+						t.Errorf("the previous version must be running again; calls %q\n%s", e.calls(), out)
+					}
+					if index(e.calls(), "sleep 3") < 0 {
+						t.Errorf("rollback must complete confirm_service_started (sleep 3); calls %q\n%s", e.calls(), out)
+					}
+					if h.updaterRestart != "" && index(e.calls(), h.updaterRestart) < 0 {
+						t.Errorf("the updater stopped for maintenance must be restarted; calls %q", e.calls())
+					}
+				})
+			}
+		}
 	}
 }
