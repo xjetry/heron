@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/hub/alert"
+	"github.com/xjetry/heron/internal/hub/store"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -71,6 +72,28 @@ func TestUpdateNodeRequiresExplicitGrace(t *testing.T) {
 	_, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1}))
 	if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: required; 0 clears it" {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// 重置日的范围由 store 的写入口裁决，协议层把越界原样翻译成点名字段的 InvalidArgument；缺省的 0 不是"不改"。
+// 被拒的请求不改节点，账本里的重置日也不动。
+func TestUpdateNodeRejectsResetDayOutOfRange(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	for _, day := range []uint32{0, 32} {
+		_, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "renamed", TrafficResetDay: day, OfflineGraceS: proto.Uint32(0)}))
+		if want := fmt.Sprintf("invalid_argument: traffic_reset_day must be between 1 and 31; got %d", day); codeOf(err) != connect.CodeInvalidArgument || err.Error() != want {
+			t.Fatalf("day %d: err=%v, want %q", day, err, want)
+		}
+	}
+	n, err := h.store.GetNode(t.Context(), id)
+	if err != nil || n.Name != "n" || n.TrafficResetDay != store.DefaultTrafficResetDay {
+		t.Fatalf("rejected updates changed the node: %+v err=%v", n, err)
+	}
+	if _, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 31, OfflineGraceS: proto.Uint32(0)})); err != nil {
+		t.Fatal(err)
 	}
 }
 

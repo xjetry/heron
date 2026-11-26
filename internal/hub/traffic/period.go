@@ -8,14 +8,8 @@ import "time"
 // 重置日大于当月天数时钳到当月最后一日，不顺延进次月一日，所以每年恒为 12 个周期，之后的大月仍按原日号对齐；
 // 钳位只在算边界时发生，配置里的日号不变（store 的 traffic_reset_day 存的是原值）。
 // PeriodStart 与 NextResetAfter 都只经 boundary 取边界，rolled 判断"落盘起点是不是边界"也靠这一点。
-// 账本、告警引擎、流量报告都把库里的日号原样传进来；夹取让三者对任何整数（含绕过准入写进库的值）得到同一边界。
-
-// MinResetDay、MaxResetDay 是重置日的准入范围，由管理接口（api.UpdateNode，ExecuteChange 也经它）裁决，越界值点名
-// 字段拒绝。上界取 31 是因为 boundary 把超出当月天数的日号钳到月末，任何日号每月都恰好有一个边界。
-const (
-	MinResetDay = 1
-	MaxResetDay = 31
-)
+// 账本、告警引擎、流量报告都把库里的日号原样传进来。日号的范围 [store.MinTrafficResetDay, store.MaxTrafficResetDay]
+// 由 store 的写入口与快照恢复预检保证；boundary 的夹取只让三者对任何整数得到同一边界，不是这个范围的防线。
 
 // PeriodStart 返回不晚于 now 的最近一个周期边界（tz 时区）。
 func PeriodStart(now time.Time, day int, tz *time.Location) time.Time {

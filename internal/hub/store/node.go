@@ -232,6 +232,32 @@ func NetworkDetection(ipv4Pin, ipv6Pin string) *heronv1.NetworkDetection {
 	return &heronv1.NetworkDetection{SkipIpv4: ipv4Pin != "", SkipIpv6: ipv6Pin != ""}
 }
 
+// node.traffic_reset_day 的取值范围与默认值，是这一列唯一的定义（traffic 的周期计算引用它们）。上界取 31：traffic 的
+// boundary 把超出当月天数的日号钳到月末，任何日号每月都恰好有一个边界；钳位只在算边界时发生，库里存原值。
+// 范围由 checkTrafficResetDay 在写入口（UpdateNodeTasks，UpdateNode 与 ExecuteChange 都经它）与快照恢复预检
+// （validateSnapshotNodes）裁决，库里不设 CHECK；建节点不写这一列，取 DDL 的列默认值，它必须等于 DefaultTrafficResetDay
+// （TestTrafficResetDayAdmission 从新建的节点读回核对）。0 没有"未设置"的含义：协议层的 UpdateNodeRequest 把缺省的 0
+// 当作越界拒绝，而不是沿用旧值。
+const (
+	MinTrafficResetDay     = 1
+	MaxTrafficResetDay     = 31
+	DefaultTrafficResetDay = 1
+)
+
+// TrafficResetDayError 是重置日越界，Got 是原值；文案点名协议字段，协议层原样作为 InvalidArgument 返回。
+type TrafficResetDayError struct{ Got int }
+
+func (e TrafficResetDayError) Error() string {
+	return fmt.Sprintf("traffic_reset_day must be between %d and %d; got %d", MinTrafficResetDay, MaxTrafficResetDay, e.Got)
+}
+
+func checkTrafficResetDay(day int) error {
+	if day < MinTrafficResetDay || day > MaxTrafficResetDay {
+		return TrafficResetDayError{Got: day}
+	}
+	return nil
+}
+
 // AddressPinError 是手填的出口地址不是该族的公网单播地址。IPv4 指出是哪一族，Got 是原文；字段路径与文案由协议层给出。
 type AddressPinError struct {
 	IPv4 bool
@@ -492,9 +518,12 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		e.TrafficQuotaMode = "sum"
 	}
 	err = s.writeChange(ctx, ChangeTarget{Action: ActionUpdateNode, ResourceID: id}, func(tx *sql.Tx) error {
-		// 节点名与手填出口地址同一个准入口径：写入口只有这一个（UpdateNode 与 ExecuteChange 都经它），
+		// 节点名、重置日与手填出口地址同一个准入口径：写入口只有这一个（UpdateNode 与 ExecuteChange 都经它），
 		// 检查放在这里，任何调用方都绕不开。
 		if err := checkShortName(e.Name); err != nil {
+			return err
+		}
+		if err := checkTrafficResetDay(e.TrafficResetDay); err != nil {
 			return err
 		}
 		v4, err := canonicalAddressPin(e.IPv4Pin, true)

@@ -122,7 +122,7 @@ func TestUpdateNodeRejectsUncleanNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range uncleanNameCases {
-		_, err := s.UpdateNode(t.Context(), id, NodeEdit{Name: tc.raw})
+		_, err := s.UpdateNode(t.Context(), id, NodeEdit{Name: tc.raw, TrafficResetDay: DefaultTrafficResetDay})
 		checkUncleanNameErr(t, tc, err)
 	}
 	n, err := s.GetNode(t.Context(), id)

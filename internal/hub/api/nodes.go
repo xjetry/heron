@@ -16,7 +16,6 @@ import (
 	"github.com/xjetry/heron/internal/hub/alert"
 	"github.com/xjetry/heron/internal/hub/sanitize"
 	"github.com/xjetry/heron/internal/hub/store"
-	"github.com/xjetry/heron/internal/hub/traffic"
 )
 
 const (
@@ -54,7 +53,7 @@ var (
 )
 
 // billingOf 是计费字段唯一的校验，CreateNode 与 UpdateNode 两个入口共用；UpdateNode 里它与
-// traffic_reset_day、offline_grace_s 同在入口裁决。m 为 nil
+// offline_grace_s 同在入口裁决。m 为 nil
 // （请求没带 billing）时各项取零值，即五项全清。days_left 由 hub 计算，请求里的值不读。到期日与到期扫描、days_left
 // 共用 alert.ParseDate，写进去的日期读侧一定读得懂。自动续期要求周期与到期日都非空：推后需要这两项。扫描对缺周期
 // 另有守卫（alert.cycleMonths），不依赖这里。
@@ -252,10 +251,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
+	// 重置日的范围由 store 的写入口裁决（与快照恢复同一判定），越界返回 TrafficResetDayError，在下面翻译。
 	day := int(req.Msg.GetTrafficResetDay())
-	if day < traffic.MinResetDay || day > traffic.MaxResetDay {
-		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", traffic.MinResetDay, traffic.MaxResetDay, day)
-	}
 	quota := req.Msg.GetTrafficQuotaBytes()
 	if quota >= 1<<62 {
 		return nil, invalid("traffic_quota_bytes: must be between 0 (inclusive) and 2^62 (exclusive); got %d", quota)
@@ -296,6 +293,10 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	var pinErr store.AddressPinError
 	if errors.As(err, &pinErr) {
 		return nil, addressPinInvalid(pinErr)
+	}
+	var dayErr store.TrafficResetDayError
+	if errors.As(err, &dayErr) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, dayErr)
 	}
 	if err != nil {
 		return nil, s.operationError(err, "tags", "updating node failed")

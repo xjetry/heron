@@ -19,9 +19,6 @@ import (
 // 刷出持续失败时丢的不止一个周期；Flush 保留脏状态，Run 记录日志并重试。
 const FlushPeriod = 10 * time.Second
 
-// DefaultResetDay 与 node.traffic_reset_day 的列默认值一致。
-const DefaultResetDay = 1
-
 type Storage interface {
 	LoadTraffic(ctx context.Context) ([]store.TrafficRecord, error)
 	WriteTraffic(ctx context.Context, recs []store.TrafficRecord) ([]int64, error)
@@ -158,13 +155,13 @@ func satAdd(a, d int64) int64 {
 	return a + d
 }
 
-// day 是节点配置的重置日原值；Load 之后新建、尚未 SetResetDay 的节点取列默认值。原值不在准入范围内时由 PeriodStart
-// 等夹取，与告警引擎、流量报告直接读库得到的边界相同。
+// day 是节点配置的重置日原值；Load 之后新建、尚未 SetResetDay 的节点取列默认值（store.DefaultTrafficResetDay），
+// 与告警引擎、流量报告直接读库得到的日号相同。
 func (b *Book) day(nodeID int64) int {
 	if d, ok := b.resetDay[nodeID]; ok {
 		return d
 	}
-	return DefaultResetDay
+	return store.DefaultTrafficResetDay
 }
 
 // backfillTimeout 限制周期起点移动时在 mu 下读分钟桶的时长：读挂住时所有入账跟着等，这个上界让它不无限期等下去。

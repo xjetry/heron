@@ -635,7 +635,7 @@ func TestListComparisonNodes(t *testing.T) {
 			t.Fatal(err)
 		}
 		// CreateNode 建的节点默认公开，这里显式写回期望的公开性。
-		if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: name, Public: public}); err != nil {
+		if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: name, Public: public, TrafficResetDay: DefaultTrafficResetDay}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.write(ctx, func(tx *sql.Tx) error {

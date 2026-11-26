@@ -636,7 +636,7 @@ func TestSetResetDayMovesTheNextBoundaryAndViewCoversUnknownNodes(t *testing.T) 
 		t.Fatalf("after changing the day: %+v", e)
 	}
 	v := b.View(2)
-	if v.ResetDay != DefaultResetDay || v.HasBaseline() || v.TotalRx != 0 || !v.PeriodStart.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)) {
+	if v.ResetDay != store.DefaultTrafficResetDay || v.HasBaseline() || v.TotalRx != 0 || !v.PeriodStart.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)) {
 		t.Fatalf("view of an unknown node: %+v", v)
 	}
 	if _, ok := b.Get(2); ok {
@@ -652,7 +652,7 @@ func TestForgetDropsTheEntry(t *testing.T) {
 	if _, ok := b.Get(1); ok {
 		t.Fatal("entry survived Forget")
 	}
-	if b.View(1).ResetDay != DefaultResetDay {
+	if b.View(1).ResetDay != store.DefaultTrafficResetDay {
 		t.Fatal("reset day survived Forget")
 	}
 }

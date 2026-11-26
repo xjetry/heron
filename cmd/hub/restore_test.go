@@ -889,3 +889,23 @@ func TestRestoreRequiresExplicitConfirmation(t *testing.T) {
 		t.Error("unconfirmed restore changed target database")
 	}
 }
+
+// 快照里越界的流量重置日被拒绝：快照整表搬运不经 UpdateNodeTasks，恢复预检 validateSnapshotNodes 用写入口同一个
+// 范围判定，越界值不进库。
+func TestRestoreRejectsNodeWithResetDayOutOfRange(t *testing.T) {
+	t.Parallel()
+	for _, day := range []int{0, 32} {
+		config, metrics := restoreSnapshots(t)
+		restoreExec(t, restoreDB(t, config), fmt.Sprintf("UPDATE node SET traffic_reset_day=%d WHERE id=1", day))
+		path := restoreTarget(t)
+		before := restoreDump(t, path)
+		err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{})
+		want := fmt.Sprintf("traffic_reset_day must be between 1 and 31; got %d", day)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("restore err = %v, want %q", err, want)
+		}
+		if after := restoreDump(t, path); after != before {
+			t.Error("invalid snapshot changed target database")
+		}
+	}
+}

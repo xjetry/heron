@@ -24,7 +24,7 @@ func TestMigrationFromV43AddsRentedColumn(t *testing.T) {
 	if rented {
 		t.Error("v43 的行迁到 44 后 rented 应为 0：既有节点都未出租")
 	}
-	res, err := s.UpdateNodeTasks(t.Context(), 7, NodeEdit{Name: "kept", Rented: true})
+	res, err := s.UpdateNodeTasks(t.Context(), 7, NodeEdit{Name: "kept", Rented: true, TrafficResetDay: DefaultTrafficResetDay})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +65,11 @@ func TestUpdateNodeRejectsRentedMaintenanceConflict(t *testing.T) {
 		t.Fatalf("CreateNode(Rented: true) 读回 Rented=%v, err=%v", n.Rented, err)
 	}
 	// 单独开维护合法。
-	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", Maintenance: true}); err != nil {
+	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", Maintenance: true, TrafficResetDay: DefaultTrafficResetDay}); err != nil {
 		t.Fatal(err)
 	}
 	// 一次编辑把两个开关同时打开：冲突，返回 RentedConflictError，一行都不改。
-	_, err = s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", Maintenance: true, Rented: true})
+	_, err = s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", Maintenance: true, Rented: true, TrafficResetDay: DefaultTrafficResetDay})
 	var conflict RentedConflictError
 	if !errors.As(err, &conflict) || !conflict.Maintenance {
 		t.Fatalf("UpdateNodeTasks err = %v，要 RentedConflictError{Maintenance: true}", err)
@@ -82,7 +82,7 @@ func TestUpdateNodeRejectsRentedMaintenanceConflict(t *testing.T) {
 		t.Errorf("冲突须什么都不写：maintenance=%v rented=%v，要 true/false", maintenance, rented)
 	}
 	// 同一次更新里关掉维护并标出租（NodeEdit 是整体替换，结果对只有一面为真）：合法。
-	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", Maintenance: false, Rented: true}); err != nil {
+	if _, err := s.UpdateNodeTasks(ctx, id, NodeEdit{Name: "n", Maintenance: false, Rented: true, TrafficResetDay: DefaultTrafficResetDay}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.r.QueryRow("SELECT maintenance, rented FROM node WHERE id = ?", id).Scan(&maintenance, &rented); err != nil {

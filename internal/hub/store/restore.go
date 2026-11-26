@@ -835,11 +835,11 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 	return rows.Err()
 }
 
-// validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkShortName，与 insertNode、UpdateNodeTasks 共用）
-// 和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
+// validateSnapshotNodes 与写入口同一组节点行判定：名字准入（checkShortName，与 insertNode、UpdateNodeTasks 共用）、
+// 重置日范围（checkTrafficResetDay，与 UpdateNodeTasks 共用）和维护/出租互斥（checkNodeFlags）。快照不经写入口，这里是它进库前唯一的检查；旧版快照的名字先经 migrateSnapshot
 // 规范化（迁移 48 的 AgentNodeName），所以被名字拒绝的只能是当前版本快照里就没清洗的值。
 func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,maintenance,rented FROM config.node")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,traffic_reset_day,maintenance,rented FROM config.node")
 	if err != nil {
 		return err
 	}
@@ -847,11 +847,15 @@ func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
 	for rows.Next() {
 		var id int64
 		var name string
+		var day int
 		var maintenance, rented bool
-		if err := rows.Scan(&id, &name, &maintenance, &rented); err != nil {
+		if err := rows.Scan(&id, &name, &day, &maintenance, &rented); err != nil {
 			return err
 		}
 		if err := checkShortName(name); err != nil {
+			return fmt.Errorf("config node %d (%q): %w", id, name, err)
+		}
+		if err := checkTrafficResetDay(day); err != nil {
 			return fmt.Errorf("config node %d (%q): %w", id, name, err)
 		}
 		if err := checkNodeFlags(maintenance, rented); err != nil {

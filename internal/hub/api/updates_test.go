@@ -267,7 +267,7 @@ func TestExecuteChangeStartUpdateRejectsRentedNode(t *testing.T) {
 	req := &heronv1.ExecuteChangeRequest{RequestId: "update-rented", Change: &heronv1.ExecuteChangeRequest_StartUpdate{StartUpdate: &heronv1.StartUpdateRequest{NodeId: node, Version: "v1.2.3"}}}
 	// 标为已出租之前预览通过，换来 expected_version：start_update 的版本只覆盖 node_update 行，改开关不动它。
 	previewChange(t, client, req)
-	if _, err := h.store.UpdateNodeTasks(t.Context(), node, store.NodeEdit{Name: "leased", Rented: true}); err != nil {
+	if _, err := h.store.UpdateNodeTasks(t.Context(), node, store.NodeEdit{Name: "leased", Rented: true, TrafficResetDay: store.DefaultTrafficResetDay}); err != nil {
 		t.Fatal(err)
 	}
 	p := proto.Clone(req).(*heronv1.ExecuteChangeRequest)
