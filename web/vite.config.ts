@@ -1,6 +1,8 @@
 import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
+import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import { defineConfig, type Plugin } from "vitest/config";
 
 import { asyncUtilTimeout } from "./src/test/async-timeout.ts";
@@ -40,6 +42,53 @@ function fontLicenses(): Plugin {
   };
 }
 
+// 构建期只对白名单里的文本与结构化资源生成 .gz 与 .br 副本；woff2、png 等已压缩格式跳过，
+// 小于 1 KiB 或压缩后体积仍超过原文 90% 的文件同样不生成，避免嵌入无收益的冗余字节。
+// 产物随 go:embed 进 hub 二进制，由 scripts/web-assets-check.sh 逐个解压核对与原文字节一致。
+const COMPRESSIBLE_EXTENSIONS = new Set([".js", ".mjs", ".css", ".html", ".svg", ".json", ".txt", ".xml"]);
+const MIN_COMPRESS_BYTES = 1024;
+const hasCompressionGain = (rawLen: number, compressedLen: number): boolean =>
+  compressedLen < rawLen && compressedLen * 10 <= rawLen * 9;
+
+function precompressAssets(): Plugin {
+  return {
+    name: "precompress-assets",
+    apply: "build",
+    // 必须排在 Vite 内置 post 插件之后，等 chunk 与 CSS 里的资源占位符全部改写为最终字节再压缩；
+    // 否则压缩副本里的内容会滞后于落盘的原文。
+    enforce: "post",
+    generateBundle: {
+      order: "post",
+      handler(_options, bundle) {
+        for (const item of Object.values(bundle)) {
+          if (!COMPRESSIBLE_EXTENSIONS.has(extname(item.fileName).toLowerCase())) continue;
+          const raw =
+            item.type === "chunk"
+              ? Buffer.from(item.code, "utf8")
+              : typeof item.source === "string"
+                ? Buffer.from(item.source, "utf8")
+                : Buffer.from(item.source);
+          if (raw.length < MIN_COMPRESS_BYTES) continue;
+          const gz = gzipSync(raw, { level: 9 });
+          if (hasCompressionGain(raw.length, gz.length)) {
+            this.emitFile({ type: "asset", fileName: `${item.fileName}.gz`, source: gz });
+          }
+          const br = brotliCompressSync(raw, {
+            params: {
+              [zlibConstants.BROTLI_PARAM_QUALITY]: 11,
+              [zlibConstants.BROTLI_PARAM_MODE]: zlibConstants.BROTLI_MODE_TEXT,
+              [zlibConstants.BROTLI_PARAM_SIZE_HINT]: raw.length,
+            },
+          });
+          if (hasCompressionGain(raw.length, br.length)) {
+            this.emitFile({ type: "asset", fileName: `${item.fileName}.br`, source: br });
+          }
+        }
+      },
+    },
+  };
+}
+
 // 内置配色只写在 styles.css 的 --accent: light-dark(浅色, 深色) 里。外观页的取色器在主色为空时显示浅色那一个值，
 // 这里在构建与测试时读出它、经 define 编成常量（lib/palette.ts），不另存一份；写法变了读不出即构建失败。
 // 不在运行时用 ?raw 读 styles.css：vitest 默认把 CSS 文件换成空内容，测试里读不到。
@@ -56,7 +105,7 @@ export default defineConfig(({ mode }) => {
   return {
     root: isPublic ? fileURLToPath(new URL("./src/public", import.meta.url)) : undefined,
     base: isPublic ? "/" : "/admin/",
-    plugins: [react(), keepEmbedDirectory(outDir), fontLicenses()],
+    plugins: [react(), keepEmbedDirectory(outDir), fontLicenses(), precompressAssets()],
     define: { __BUILT_IN_ACCENT__: JSON.stringify(builtInLightAccent()) },
     // 字体必须以文件形式同源加载：hub 的 CSP 是 default-src 'self'（internal/hub/web/web.go），没有放行 data:，
     // 而 Vite 默认把小于 4 KiB 的资源内联成 data: URL——被内联的字体子集会被浏览器按 CSP 拒绝加载（JetBrains Mono

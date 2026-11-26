@@ -22,6 +22,9 @@ const FlushPeriod = 10 * time.Second
 type Storage interface {
 	LoadTraffic(ctx context.Context) ([]store.TrafficRecord, error)
 	WriteTraffic(ctx context.Context, recs []store.TrafficRecord) ([]int64, error)
+	// AdjustTraffic 写入面板校正的一条记录并留操作记录（store.Store.AdjustTraffic）；节点不存在返回 store.ErrNotFound。
+	// 账本的周期刷出不是谁的操作，走 WriteTraffic。
+	AdjustTraffic(ctx context.Context, r store.TrafficRecord) error
 	TrafficResetDays(ctx context.Context) (map[int64]int, error)
 	// NetBytesBetween 是节点在 [from, to) 内分钟桶里的收发字节和（store.Store.NetBytesBetween）：只含 ingest 能归到
 	// 某一分钟的增量，不含 hub 重启后首报、跨过离线 TTL 的增量与校正，所以不大于账本在同一区间的入账。
@@ -433,12 +436,8 @@ func (b *Book) Adjust(ctx context.Context, nodeID int64, periodRx, periodTx uint
 	next.TotalRx = satAdd(max(next.TotalRx-next.PeriodRx, 0), rx)
 	next.TotalTx = satAdd(max(next.TotalTx-next.PeriodTx, 0), tx)
 	next.PeriodRx, next.PeriodTx = rx, tx
-	written, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
-	if err != nil {
+	if err := b.st.AdjustTraffic(ctx, record(nodeID, next)); err != nil {
 		return Entry{}, err
-	}
-	if len(written) == 0 {
-		return Entry{}, store.ErrNotFound
 	}
 	e.State, e.dirty = next, false
 	e.committed = &next

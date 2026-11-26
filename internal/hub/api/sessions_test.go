@@ -146,7 +146,7 @@ func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
 				expires = now.Add(time.Hour)
 			}
 			// 种会话与登录签发同一条写路径；来源列为空串，等价于没有请求的签发路径。
-			if err := h.store.CommitAdminSecurity(t.Context(), before, before.Data, false, &hash, created, expires, ""); err != nil {
+			if err := h.store.CommitAdminSecurity(t.Context(), 0, before, before.Data, false, &hash, created, expires, ""); err != nil {
 				t.Fatal(err)
 			}
 			// 绝对过期独立于空闲过期：保持旧会话的最近使用时刻为现在。
@@ -185,7 +185,7 @@ func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := h.store.CommitAdminSecurity(t.Context(), before, before.Data, false, &hash, created, expires, ""); err != nil {
+			if err := h.store.CommitAdminSecurity(t.Context(), 0, before, before.Data, false, &hash, created, expires, ""); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := client.RevokeSession(t.Context(), sessionRequest(&heronv1.RevokeSessionRequest{Id: sessionID(old)}, active)); err != nil {

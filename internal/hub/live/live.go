@@ -191,8 +191,12 @@ func (l *Live) Get(nodeID int64) (Entry, bool) {
 	return Entry{Metrics: e.metrics, LastSeen: e.lastSeen, LastSeenWall: e.lastSeenWall, Source: e.source, Online: l.online(e, now)}, true
 }
 
-// Flush 取走所有已闭合的桶：起始早于当前分钟的。取走即从 live 删除——每个
+// Flush 取走所有已闭合的桶（起始早于当前分钟的），以及起始晚于 metric.LatestMinute 的桶。取走即从 live 删除——每个
 // 桶至多被交给写协程一次，写库的加法合并才不会重复计入。
+//
+// 晚于上界的桶是墙钟超前时打的点（见 metric.LatestMinute）。留着它们，墙钟校回之后要等它标的那一分钟过去才闭合刷出，
+// 而那一分钟的真实上报会落进同一个桶、与它相加；所以立即交出，由 store 的写入口按同一个上界拒绝并计数。仍开着的
+// 只有当前分钟与上界那一分钟：后者只在不足一分钟的向后校时里出现，按上界的约定是真实数据。
 func (l *Live) Flush() metric.Batch {
 	return l.take(false)
 }
@@ -206,11 +210,10 @@ func (l *Live) take(all bool) metric.Batch {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	seal := l.readClock()
-	before := minuteOf(seal.wall)
+	before, latest := minuteOf(seal.wall), metric.LatestMinute(seal.wall)
 	observed := l.sealObservations(seal)
-	if all {
-		before = 1<<62 - 1
-	}
+	// open 是 Flush 时仍留在内存里的桶：当前分钟及上界以内（见 Flush）。Drain 不留任何桶。
+	open := func(ts int64) bool { return !all && ts >= before && ts <= latest }
 	var batch metric.Batch
 	for id, start := range l.coverage {
 		for ts := range observed {
@@ -225,7 +228,7 @@ func (l *Live) take(all bool) metric.Batch {
 	}
 	for id, e := range l.nodes {
 		for ts, b := range e.buckets {
-			if ts >= before {
+			if open(ts) {
 				continue
 			}
 			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall, Source: e.source,
@@ -233,7 +236,7 @@ func (l *Live) take(all bool) metric.Batch {
 			delete(e.buckets, ts)
 		}
 		for k, b := range e.probes {
-			if k.ts >= before {
+			if open(k.ts) {
 				continue
 			}
 			batch.Probes = append(batch.Probes, metric.ProbeRow{NodeID: id, TS: k.ts, TaskID: k.task, Bucket: b})

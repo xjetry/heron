@@ -189,7 +189,7 @@ func (s *Store) SaveSilence(ctx context.Context, si Silence) (Silence, error) {
 	if si.AllNodes {
 		si.NodeIDs = nil
 	}
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionSaveSilence, ResourceID: si.ID}, func(tx *sql.Tx) error {
 		for _, id := range si.RuleIDs {
 			var kind AlertKind
 			err := tx.QueryRowContext(ctx, "SELECT kind FROM alert_rule WHERE id = ?", id).Scan(&kind)
@@ -279,7 +279,7 @@ func (s *Store) SaveSilence(ctx context.Context, si Silence) (Silence, error) {
 }
 
 func (s *Store) DeleteSilence(ctx context.Context, id int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionDeleteSilence, ResourceID: id}, func(tx *sql.Tx) error {
 		if err := deleteAlertEntity(tx, "silence", ObjectSilence, id); err != nil {
 			return err
 		}

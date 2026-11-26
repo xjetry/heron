@@ -88,7 +88,7 @@ func TestTransitionalReportLedgerAndSnapshot(t *testing.T) {
 	client := outbound.NewClient(alert.NotifyTimeout)
 	notifier := alert.NewQueue(alert.QueueConfig{}, alert.QueueDeps{Store: h.store, Channels: alerts.Channels, Client: client, Clock: h.clk, Log: log})
 	ops := nodeops.New(nodeops.Deps{Credentials: h.auth, Nodes: h.reg, Alerts: alerts, Traffic: h.book, State: h.svc, Log: log})
-	svc := api.New(api.Config{TTL: 30 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Backups: backup.New(h.store, notifier, h.clk, log), Heartbeat: snapshotHeartbeat{}, Geo: geo.NewHTTP(client)}, api.Deps{Store: h.store, Auth: h.auth, Live: h.live, Nodes: ops, Traffic: h.book, Probes: h.reg, Alerts: alerts, Notifier: notifier, Clock: h.clk, Log: log})
+	svc := api.New(api.Config{TTL: 30 * time.Second, Location: time.UTC, Backups: backup.New(h.store, notifier, h.clk, log), Heartbeat: snapshotHeartbeat{}, Geo: geo.NewHTTP(client)}, api.Deps{Store: h.store, Auth: h.auth, Live: h.live, Nodes: ops, Traffic: h.book, Probes: h.reg, Alerts: alerts, Notifier: notifier, Clock: h.clk, Log: log})
 	resp, err := svc.GetSnapshot(t.Context(), connect.NewRequest(&heronv1.GetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)

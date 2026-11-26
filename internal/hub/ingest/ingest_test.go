@@ -196,18 +196,21 @@ func TestInvalidMetricsRejectedWholeWithoutSideEffect(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	cases := map[string]*heronv1.Metrics{
-		"nan":             {CpuPct: proto.Float64(math.NaN())},
-		"inf":             {Load1: proto.Float64(math.Inf(1)), Load5: proto.Float64(0), Load15: proto.Float64(0)},
-		"negative":        {CpuPct: proto.Float64(-1)},
-		"pct over 100":    {CpuPct: proto.Float64(100.5)},
-		"steal nan":       {CpuStealPct: proto.Float64(math.NaN())},
-		"steal negative":  {CpuStealPct: proto.Float64(-1)},
-		"steal over 100":  {CpuStealPct: proto.Float64(101)},
-		"iowait inf":      {CpuIowaitPct: proto.Float64(math.Inf(1))},
-		"iowait negative": {CpuIowaitPct: proto.Float64(-0.5)},
-		"iowait over 100": {CpuIowaitPct: proto.Float64(100.5)},
-		"partial load":    {Load1: proto.Float64(1)},
-		"nil metrics":     nil,
+		"nan":              {CpuPct: proto.Float64(math.NaN())},
+		"inf":              {Load1: proto.Float64(math.Inf(1)), Load5: proto.Float64(0), Load15: proto.Float64(0)},
+		"negative":         {CpuPct: proto.Float64(-1)},
+		"pct over 100":     {CpuPct: proto.Float64(100.5)},
+		"steal nan":        {CpuStealPct: proto.Float64(math.NaN())},
+		"steal negative":   {CpuStealPct: proto.Float64(-1)},
+		"steal over 100":   {CpuStealPct: proto.Float64(101)},
+		"iowait inf":       {CpuIowaitPct: proto.Float64(math.Inf(1))},
+		"iowait negative":  {CpuIowaitPct: proto.Float64(-0.5)},
+		"iowait over 100":  {CpuIowaitPct: proto.Float64(100.5)},
+		"softirq nan":      {CpuSoftirqPct: proto.Float64(math.NaN())},
+		"softirq negative": {CpuSoftirqPct: proto.Float64(-0.1)},
+		"softirq over 100": {CpuSoftirqPct: proto.Float64(100.01)},
+		"partial load":     {Load1: proto.Float64(1)},
+		"nil metrics":      nil,
 	}
 	for name, m := range cases {
 		h.clk.Advance(h.svc.Interval())
@@ -1114,7 +1117,7 @@ func TestMalformedResultLeavesExistingStateUnchanged(t *testing.T) {
 func readProbeMinutes(t *testing.T, h *hub, id int64) []metric.ProbeRow {
 	t.Helper()
 	from, to := h.clk.Now().Add(-5*time.Minute).Unix(), h.clk.Now().Add(time.Minute).Unix()
-	lv, step := store.ChooseLevel(from, to, 1000)
+	lv, step := h.store.ChooseLevel(from, to, 1000)
 	rows, err := h.store.QueryProbes(t.Context(), id, from, to, lv, step, 0)
 	if err != nil {
 		t.Fatal(err)

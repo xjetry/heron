@@ -1,0 +1,47 @@
+name: vulncheck
+# 漏洞库收录新条目时本仓库不会有任何提交：ci.yml 的 make lint 与 release.yml 只在 push、发布时刻跑 govulncheck，
+# 两次 push 之间新收录的、影响已发布版本的漏洞要等到下一次 push 才显形。这里每天对主干与最新发布各审一次。
+# 定时运行失败时，GitHub 通知最后修改这条 schedule 的人。
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+# 只读检出与查询 release；不向本仓库写任何东西（与 ci.yml、release.yml 同一理由）。
+permissions:
+  contents: read
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # main：下一次发布会带出去的代码。latest-release：用户正在运行的版本——修复合进 main 不保护任何人，
+        # 直到带着它的发布出去，所以这一项在那之前一直红。
+        target: [main, latest-release]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # 最新发布的 tag 由 gh 按仓库的 latest 标记给出。只发 hub 的发布里，agent 与它的更新器取自绑定版本，但
+      # release-hub-only 先经 scripts/agentinputs 核对 agent 组的全部构建输入（含第三方模块与 go.mod 的 go 指令）
+      # 自绑定版本以来没变，所以审这个 tag 的整棵树即覆盖它实际发出的每个二进制。
+      - if: matrix.target == 'latest-release'
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          case "$tag" in
+            v*) ;;
+            *) echo "gh release view printed '$tag'" >&2; exit 1 ;;
+          esac
+          git checkout --detach "refs/tags/$tag"
+          echo "auditing release $tag ($(git rev-parse HEAD))"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # 标准库的漏洞按运行 govulncheck 的工具链版本判定；go-version-file 取被审那棵树的 go.mod，与 release.yml
+      # 构建它时的工具链一致。
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      # 与 make lint 同一个入口与版本（go.mod 的 tool 指令）。默认只报调用链可达的漏洞。
+      - run: go tool govulncheck ./...

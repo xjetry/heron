@@ -157,6 +157,7 @@ describe("eventValueText", () => {
   const rule = (init: Parameters<typeof create<typeof AlertRuleSchema>>[1]) => create(AlertRuleSchema, { id: 1n, ...init });
   it.each([
     ["离线不足一分钟写秒", rule({ kind: AlertKind.OFFLINE }), ev(39.226), "39 s"],
+    ["离线舍入到整分钟切到分钟", rule({ kind: AlertKind.OFFLINE }), ev(59.6), "1m"],
     ["离线超过一分钟写时长", rule({ kind: AlertKind.OFFLINE }), ev(3725), "1h 2m"],
     ["探测丢包是百分比", rule({ kind: AlertKind.PROBE, metric: ProbeMetric.LOSS_PCT }), ev(22.5), "23%"],
     ["探测往返是毫秒", rule({ kind: AlertKind.PROBE, metric: ProbeMetric.RTT_MS }), ev(182.44), "182 ms"],

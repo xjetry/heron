@@ -16,13 +16,29 @@ var (
 // WriteMinuteBatch 是两族 1m 行的唯一写入口：同一事务里写指标行与探测行，节点存在性与探测行的任务存在性
 // 在事务内检查（与 DeleteNode、DeleteProbeTask 串行）。删除事务提交之后到达的行——ingest 的待重试批次、删除前已累积
 // 的分钟桶——因此一律被拒，已删主体的时序行在删除提交后不再增加，清理作业的复扫（cleanup.go）不会被之后落库的行
-// 推翻。各族按自己的 5m 水位做冻结检查——两族各自上卷，
-// 一族的水位不能替另一族决定是否接受写入。被拒绝的行计数返回并记日志，其余行照常写入。
-// 比较的是已持久化的水位而不是时钟，墙钟回拨或重试旧桶都不能改写已冻结的历史。
-// 按行拒绝的判定都是确定性的（重试同一行必得同一结果）；只有 SQL 错误作为整批错误返回，留给调用方重试。
+// 推翻。被拒绝的行计数返回并记日志，其余行照常写入。
+//
+// 时间上的准入是一个两端都封住的区间 [本族 5m 水位, metric.LatestMinute(now)]：
+//   - 下端是冻结检查。各族按自己的 5m 水位判定——两族各自上卷，一族的水位不能替另一族决定是否接受写入。比较的是
+//     已持久化的水位而不是时钟：重试旧桶、墙钟回拨到水位之前都不能改写已冻结的历史。这只在水位本身不超前于墙钟时成立
+//     ——墙钟快过的时候 Rollup 会把水位推进到真实时刻之后，墙钟校回后真实时刻的行全落在水位之前、一律被拒。所以读水位
+//     之前先在同一事务里做时钟超前检查（repairClockAhead），超前的水位退回按现在算的上界，再拿它做冻结检查。
+//   - 上端拒绝起点晚于 LatestMinute 的行：它们只可能是墙钟超前时打的点（含墙钟校回之后才从 live 交出的那些），写进去会
+//     落在未来、与那一分钟到来后的真实数据相加。上端与 repairClockAhead 删除 1m 行的界取同一个值，所以这里接受的行
+//     不会被那个检查删掉。
+//
+// 这些拒绝按行计数而不作为整批错误返回：整批错误会让 ingest 把这一批留在待重试队首（见 coverageRowError）。被拒的行
+// 也不该再写：节点已删、覆盖事实矛盾的行重试必得同一结果；早于水位的行所在的桶已冻结——拒绝发生在本事务的时钟超前
+// 检查之后，比较的水位不超前；晚于上界的行若等到它标的那一分钟到来再写，正是上端要避免的与真实数据相加。只有 SQL
+// 错误作为整批错误返回，留给调用方重试。
 func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error) {
 	rejected := 0
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		now := s.clk.Now()
+		if err := s.repairClockAhead(tx, now); err != nil {
+			return err
+		}
+		latest := metric.LatestMinute(now)
 		var metricUpto, probeUpto int64
 		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", metricFamily.states[1]).Scan(&metricUpto); err != nil {
 			return err
@@ -66,6 +82,11 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 			if r.TS < metricUpto {
 				rejected++
 				s.log.Warn("minute row before rollup watermark dropped", "node", r.NodeID, "ts", r.TS, "watermark", metricUpto)
+				continue
+			}
+			if r.TS > latest {
+				rejected++
+				s.log.Warn("minute row after the current minute dropped", "node", r.NodeID, "ts", r.TS, "latest_allowed", latest)
 				continue
 			}
 			args := append([]any{r.NodeID, r.TS}, bucketArgs(r.Bucket)...)
@@ -119,6 +140,11 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 			if r.TS < probeUpto {
 				rejected++
 				s.log.Warn("probe row before rollup watermark dropped", "node", r.NodeID, "task", r.TaskID, "ts", r.TS, "watermark", probeUpto)
+				continue
+			}
+			if r.TS > latest {
+				rejected++
+				s.log.Warn("probe row after the current minute dropped", "node", r.NodeID, "task", r.TaskID, "ts", r.TS, "latest_allowed", latest)
 				continue
 			}
 			if _, err := tx.Exec(upsertProbeMinute, probeArgs(r)...); err != nil {

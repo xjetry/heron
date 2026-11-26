@@ -262,6 +262,7 @@ func (a *Auth) AuthenticateSession(ctx context.Context, candidates []string) (st
 	return tokens[chosen], true, nil
 }
 
+// Logout 结束当前会话，留一条 logout 记录（store.EndSession）。
 func (a *Auth) Logout(ctx context.Context, token string) error {
-	return a.store.DeleteSession(ctx, HashToken(token))
+	return a.store.EndSession(ctx, store.ActionLogout, HashToken(token))
 }

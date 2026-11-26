@@ -91,6 +91,11 @@ func (s *Service) StartUpdate(ctx context.Context, req *connect.Request[heronv1.
 		if err != nil {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		}
+		// hub 自身更新交给本机更新器，不在库里；记录跟在提交之后，对象是 hub（0），写失败回答 Internal。
+		if err := s.store.RecordOperation(ctx, store.ChangeTarget{Action: store.ActionStartUpdate}); err != nil {
+			s.log.Error("recording hub update failed", "err", err)
+			return nil, internalError("recording hub update failed")
+		}
 		task = update.TaskProto(&job)
 	} else {
 		if s.cfg.Updates == nil {

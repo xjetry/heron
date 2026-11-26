@@ -39,6 +39,7 @@ const queryMetrics = async (req: QueryMetricsRequest) => {
       { name: "disk_write_bps", unit: "bytes/s", samples: [{ n: 3, mean: 256, max: 1024 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 768 }, { n: 0, mean: 99, max: 999 }] },
       { name: "cpu_steal_pct", unit: "percent", samples: [{ n: 3, mean: 1.5, max: 4 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 2.5 }, { n: 0, mean: 9, max: 9 }] },
       { name: "cpu_iowait_pct", unit: "percent", samples: [{ n: 3, mean: 3.5, max: 8 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 4.5 }, { n: 0, mean: 9, max: 9 }] },
+      { name: "cpu_softirq_pct", unit: "percent", samples: [{ n: 3, mean: 6.5, max: 14 }, { n: 1, mean: 0, max: 0 }, { n: 0, mean: 9, max: 9 }, { n: 1, mean: 7.5 }] },
       { name: "tcp_active_opens_ps", unit: "count/s", samples: [{ n: 3, mean: 2, max: 6 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 1 }, { n: 0, mean: 9, max: 9 }] },
       { name: "tcp_passive_opens_ps", unit: "count/s", samples: [{ n: 3, mean: 4, max: 10 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 3 }, { n: 0, mean: 9, max: 9 }] },
       { name: "tcp_out_segs_ps", unit: "count/s", samples: [{ n: 3, mean: 200 }, { n: 1, mean: 0 }, { n: 1, mean: 50 }, { n: 0, mean: 9 }] },
@@ -87,8 +88,9 @@ it.each([
     { title: "磁盘速率", labels: "读均值,写均值", unit: "bytes/s", soft: [false, false], points: [
       [512, 0, 1536, null, null], [256, 0, 768, null, null],
     ] },
-    { title: "CPU steal / iowait", labels: "steal 均值,iowait 均值", unit: "percent", soft: [false, false], points: [
-      [1.5, 0, 2.5, null, null], [3.5, 0, 4.5, null, null],
+    // softirq 第三个点 n=0：留空洞，不拿 mean 补；第四个点有读数照画。
+    { title: "CPU steal / iowait / softirq", labels: "steal 均值,iowait 均值,softirq 均值", unit: "percent", soft: [false, false, false], points: [
+      [1.5, 0, 2.5, null, null], [3.5, 0, 4.5, null, null], [6.5, 0, null, 7.5, null],
     ] },
     // 最满盘与根盘是两条线：最满盘缺读数的点留空洞，不拿根盘补。
     { title: "磁盘使用率", labels: "最满盘均值,根盘均值", unit: "percent", soft: [false, false], points: [[88, 0, null, null, null], [20, 0, 21, null, null]] },

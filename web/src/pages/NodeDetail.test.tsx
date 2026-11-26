@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
-import { CollectionComponent, ProbeKind } from "../gen/heron/v1/types_pb";
+import { CollectionComponent, ProbeKind, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -340,6 +340,7 @@ describe("NodeDetail", () => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [], coverageSummary: { eligibleMinutes: 0n, observedMinutes: 0n, observedReportedMinutes: 0n } }), getTraffic: traffic, adjustTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     expect(await screen.findByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
+    expect(screen.getByText("本周期上下行").nextElementSibling).toHaveTextContent("↓ 1.0 GiB 下行 · ↑ 512 MiB 上行 （两向合计）");
     expect(screen.getByText("↓ 10 GiB ↑ 5.0 GiB")).toBeInTheDocument();
     expect(screen.getByText(/每月 1 日/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "2.5" } });
@@ -347,6 +348,48 @@ describe("NodeDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "校正本周期" }));
     await waitFor(() => expect(adjustTraffic).toHaveBeenCalledWith(expect.objectContaining({ nodeId: 7n, periodRx: 2_684_354_560n, periodTx: 0n }), expect.anything()));
     await waitFor(() => expect(traffic.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
+  it.each([
+    { name: "SUM", mode: TrafficQuotaMode.SUM, quotaBytes: 4n * 1024n ** 3n, periodRx: 2n * 1024n ** 3n, periodTx: 1024n ** 3n, quotaUsedBytes: 3n * 1024n ** 3n, quotaUsedPct: 75,
+      quotaText: "3.0 GiB / 4.0 GiB (75.0%)", detailText: "下载 + 上传", breakdownText: "↓ 2.0 GiB 下行 · ↑ 1.0 GiB 上行 （两向合计）" },
+    { name: "RX", mode: TrafficQuotaMode.RX, quotaBytes: 4n * 1024n ** 3n, periodRx: 2n * 1024n ** 3n, periodTx: 1024n ** 3n, quotaUsedBytes: 2n * 1024n ** 3n, quotaUsedPct: 50,
+      quotaText: "2.0 GiB / 4.0 GiB (50.0%)", detailText: "仅下载", breakdownText: "↓ 2.0 GiB 下行（计入配额） · ↑ 1.0 GiB 上行（不计入配额）" },
+    { name: "TX", mode: TrafficQuotaMode.TX, quotaBytes: 4n * 1024n ** 3n, periodRx: 2n * 1024n ** 3n, periodTx: 1024n ** 3n, quotaUsedBytes: 1024n ** 3n, quotaUsedPct: 25,
+      quotaText: "1.0 GiB / 4.0 GiB (25.0%)", detailText: "仅上传", breakdownText: "↓ 2.0 GiB 下行（不计入配额） · ↑ 1.0 GiB 上行（计入配额）" },
+    { name: "MAX 下行大", mode: TrafficQuotaMode.MAX, quotaBytes: 4n * 1024n ** 3n, periodRx: 2n * 1024n ** 3n, periodTx: 1024n ** 3n, quotaUsedBytes: 2n * 1024n ** 3n, quotaUsedPct: 50,
+      quotaText: "2.0 GiB / 4.0 GiB (50.0%)", detailText: "下载与上传取大者", breakdownText: "↓ 2.0 GiB 下行（当前取大） · ↑ 1.0 GiB 上行" },
+    { name: "MAX 上行大", mode: TrafficQuotaMode.MAX, quotaBytes: 4n * 1024n ** 3n, periodRx: 1024n ** 3n, periodTx: 3n * 1024n ** 3n, quotaUsedBytes: 3n * 1024n ** 3n, quotaUsedPct: 75,
+      quotaText: "3.0 GiB / 4.0 GiB (75.0%)", detailText: "下载与上传取大者", breakdownText: "↓ 1.0 GiB 下行 · ↑ 3.0 GiB 上行（当前取大）" },
+    { name: "MAX 两向相等", mode: TrafficQuotaMode.MAX, quotaBytes: 4n * 1024n ** 3n, periodRx: 2n * 1024n ** 3n, periodTx: 2n * 1024n ** 3n, quotaUsedBytes: 2n * 1024n ** 3n, quotaUsedPct: 50,
+      quotaText: "2.0 GiB / 4.0 GiB (50.0%)", detailText: "下载与上传取大者", breakdownText: "↓ 2.0 GiB 下行 · ↑ 2.0 GiB 上行 （两向相等）" },
+    { name: "未设配额", mode: TrafficQuotaMode.TX, quotaBytes: 0n, periodRx: 2n * 1024n ** 3n, periodTx: 1024n ** 3n, quotaUsedBytes: 3n * 1024n ** 3n, quotaUsedPct: undefined,
+      quotaText: "3.0 GiB", detailText: "下载 + 上传 · 未设配额", breakdownText: "↓ 2.0 GiB 下行 · ↑ 1.0 GiB 上行 （两向合计）" },
+  ])("流量卡本周期按配额口径（$name）同时展示口径值与上下行分量", async ({ mode, quotaBytes, periodRx, periodTx, quotaUsedBytes, quotaUsedPct, quotaText, detailText, breakdownText }) => {
+    renderWithAdmin({
+      ...defaultImpl, listNodes,
+      getTraffic: async () => ({
+        timezone: "UTC", now: 1_757_000_000n,
+        nodes: [{ ...trafficOf(7n), traffic: { ...trafficOf(7n).traffic, quotaMode: mode, quotaBytes, periodRx, periodTx, quotaUsedBytes, quotaUsedPct } }],
+      }),
+    }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
+    expect(await screen.findByText(quotaText)).toBeInTheDocument();
+    expect(screen.getByText(detailText)).toBeInTheDocument();
+    expect(screen.getByText("本周期上下行").nextElementSibling).toHaveTextContent(breakdownText);
+  });
+
+  it("流量响应缺少该节点读数时，本周期、上下行与总量均显示无读数且不渲染校正表单", async () => {
+    renderWithAdmin({
+      ...defaultImpl, listNodes,
+      getTraffic: async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [{ nodeId: 7n, name: "db-01" }] }),
+    }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
+    const heading = await screen.findByRole("heading", { name: "流量" });
+    const card = within(heading.closest(".card") as HTMLElement);
+    expect(card.getByText("本周期").nextElementSibling).toHaveTextContent("–");
+    expect(card.getByText("本周期上下行").nextElementSibling).toHaveTextContent("–");
+    expect(card.getByText("总量").nextElementSibling).toHaveTextContent("–");
+    expect(card.getAllByLabelText("无读数")).toHaveLength(3);
+    expect(card.queryByRole("button", { name: "校正本周期" })).toBeNull();
   });
 
   it("校正输入不是非负数时按钮禁用", async () => {
@@ -464,7 +507,7 @@ describe("NodeDetail", () => {
     expect(charts[5]).toHaveAttribute("data-labels", "按核负载均值");
     expect(charts[9]).toHaveAttribute("data-labels", "读均值,写均值");
     expect(charts[9]).toHaveAttribute("data-unit", "bytes/s");
-    expect(charts[10]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
+    expect(charts[10]).toHaveAttribute("data-labels", "steal 均值,iowait 均值,softirq 均值");
     expect(charts[10]).toHaveAttribute("data-unit", "percent");
     expect(screen.getByText(/db-01\.internal/)).toBeInTheDocument();
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };

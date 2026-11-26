@@ -122,6 +122,41 @@ func parseFlag(key, v string) (bool, error) {
 	return v == "1", nil
 }
 
+// settingSnapshotKeys 是操作记录里设置快照（update_settings 的写前写后）读出的键，逐个列出的白名单：新增的设置键
+// 不在这里就不进快照，默认不泄露。只写不读的键（凭据或本身就是凭据的地址）不在这里，列在 settingWriteOnlyKeys，
+// 快照只记它们是否已设置。TestSettingSnapshotClassifiesEveryKey 要求 SaveSettings 能写出的每个键恰在两张表之一。
+var settingSnapshotKeys = []string{
+	"site.title", "site.theme", "site.accent_color", "site.logo", "site.custom_css", publicEnabledKey,
+	geoEnabledKey, geoURLKey,
+	"backup.endpoint", "backup.bucket", "backup.region", "backup.access_key", "backup.prefix",
+	configInterval.key, metricsInterval.key, configKeep.key, metricsKeep.key,
+	heartbeatIntervalKey, heartbeatMethodKey,
+	trafficReportEnabledKey, trafficReportDailyKey, trafficReportWeeklyKey, trafficReportMonthlyKey, trafficReportHourKey,
+	string(BackupNotifyList), string(LoginNotifyList), string(TrafficReportNotifyList),
+}
+
+// settingWriteOnlyKeys 是只写不读的设置：备份的 S3 secret 与心跳的 ping 地址（地址本身就是密钥）。GetSettings 不回显
+// 它们，快照也只记是否已设置。
+var settingWriteOnlyKeys = []string{"backup.secret", heartbeatURLKey}
+
+var (
+	settingSnapshotSQL  = "SELECT key,value FROM setting WHERE key IN (" + sqlStringList(settingSnapshotKeys) + ") ORDER BY key"
+	settingWriteOnlySQL = "SELECT key,value!='' AS is_set FROM setting WHERE key IN (" + sqlStringList(settingWriteOnlyKeys) + ") ORDER BY key"
+)
+
+// sqlStringList 把本包的常量键名写成 SQL 字符串常量列表；键名只含小写字母、数字、点与下划线，不需要转义，含单引号
+// 的键名在这里 panic，不会拼出错的语句。
+func sqlStringList(keys []string) string {
+	quoted := make([]string, len(keys))
+	for i, k := range keys {
+		if strings.ContainsRune(k, '\'') {
+			panic("setting key with a quote: " + k)
+		}
+		quoted[i] = "'" + k + "'"
+	}
+	return strings.Join(quoted, ",")
+}
+
 // putSetting 更新设置值：外观、开关、国家查询、备份配置与渠道列表都经它，写事务由调用方给。
 func putSetting(tx *sql.Tx, key, value string) error {
 	_, err := tx.Exec("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value)
@@ -276,7 +311,7 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, 
 		puts = append(puts, settingField{geoURLKey, in.Geo.URL})
 	}
 	var out Settings
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionUpdateSettings}, func(tx *sql.Tx) error {
 		for _, f := range puts {
 			if err := putSetting(tx, f.key, *f.value); err != nil {
 				return err
