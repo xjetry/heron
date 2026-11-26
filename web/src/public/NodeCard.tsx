@@ -10,7 +10,7 @@ import type { PublicNode } from "../gen/heron/v1/public_pb";
 import { priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { nodeStatus } from "../lib/status";
-import { trafficDetail, trafficText } from "../lib/traffic";
+import { trafficBreakdownText, trafficDetail, trafficText } from "../lib/traffic";
 import { hasHostFacts } from "./facts";
 
 export function NodeCard({ node }: { node: PublicNode; now: number }) {
@@ -55,7 +55,7 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
       </p>
       <dl className="node-card-foot">
         <dt>本周期</dt>
-        <dd>{node.traffic ? <><span className="num">{trafficText(node.traffic)}</span><span className="muted">{trafficDetail(node.traffic)}</span></> : "–"}</dd>
+        <dd title={node.traffic ? trafficBreakdownText(node.traffic) : undefined}>{node.traffic ? <><span className="num">{trafficText(node.traffic)}</span><span className="muted">{trafficDetail(node.traffic)}</span></> : "–"}</dd>
         {/* total_rx / total_tx 是 Traffic 里不带 optional 的计数，0 就是没有流量而不是没取到；
             只有整个 traffic 缺失才是没有数据，此时不出这一行，而不是写成 ↓ 0 B ↑ 0 B。 */}
         {node.traffic && <>

@@ -39,7 +39,7 @@ import { applyScope, applySort, facetsFromParams, isFaceted, isScoped, NO_FACETS
 import type { TagMatch } from "../lib/tags";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
-import { trafficParts } from "../lib/traffic";
+import { trafficBreakdownText, trafficParts } from "../lib/traffic";
 import { EmptyState } from "../components/EmptyState";
 
 // 空串表示不按状态筛选（URL 里没有 status）。
@@ -347,7 +347,7 @@ function NodeRow({ node, live, boundAgentVersion, detailState, selection, orderC
     <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.network} reported={node.facts?.network} /></td>
     <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
     <td data-column="uptime" data-label="运行时长">{live?.metrics?.uptimeS !== undefined ? <span className="num cell-main">{duration(live.metrics.uptimeS)}</span> : <Missing />}</td>
-    <td data-column="traffic" data-label="本周期">{live?.traffic ? <TwoLine main={trafficParts(live.traffic).amount} note={trafficParts(live.traffic).percent} mono /> : <Missing />}</td>
+    <td data-column="traffic" data-label="本周期" title={live?.traffic ? trafficBreakdownText(live.traffic) : undefined}>{live?.traffic ? <TwoLine main={trafficParts(live.traffic).amount} note={trafficParts(live.traffic).percent} mono /> : <Missing />}</td>
     <td data-column="billing" data-label="费用"><TwoLine main={priceText(node.billing) || "—"} note={node.billing?.autoRenew ? "自动续期" : undefined} /></td>
     <td data-column="expiry" data-label="到期">{node.billing?.expiresOn ? <Expiry billing={node.billing} rented={node.rented} /> : "—"}</td>
     <td data-column="actions">{menu}</td>

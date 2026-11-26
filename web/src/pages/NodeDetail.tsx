@@ -5,6 +5,7 @@ import { Link, useLocation, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
+import { Missing } from "../components/Bar";
 import { CountryBadge } from "../components/CountryBadge";
 import { DailyTraffic, useDailyTraffic } from "../components/DailyTraffic";
 import { DiskMounts } from "../components/DiskMounts";
@@ -24,7 +25,7 @@ import { nodeListReturnPath } from "../lib/nodeFilters";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { ago, bytes, dateTime } from "../lib/format";
 import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
-import { resetDayClamps, trafficDetail, trafficText } from "../lib/traffic";
+import { periodBreakdown, resetDayClamps, trafficDetail, trafficText } from "../lib/traffic";
 import { laggingNode } from "../lib/lagging";
 import { NodeEditor } from "./NodeEditor";
 
@@ -163,7 +164,21 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
   });
   const t = data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
   const timeZone = data?.timezone;
-  if (!t) return null;
+  if (!data) return null;
+  // GetTraffic 已到达但响应里没有该节点的流量记录时显式标出无读数，不隐藏整张卡，也不开放无法提交基线的校正表单。
+  if (!t) {
+    return (
+      <div className="card">
+        <h2>流量</h2>
+        <dl className="facts">
+          <dt>本周期</dt><dd><Missing /></dd>
+          <dt>本周期上下行</dt><dd><Missing /></dd>
+          <dt>总量</dt><dd><Missing /></dd>
+        </dl>
+      </div>
+    );
+  }
+  const breakdown = periodBreakdown(t);
   // 编辑框首次出现时预填当前值；之后由用户输入驱动。
   const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
   const rx = toBytes(form.rx);
@@ -177,7 +192,14 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
       <h2>流量</h2>
       <dl className="facts">
         <dt>本周期</dt><dd><span className="num">{trafficText(t)}</span> <span className="muted">{trafficDetail(t)}</span></dd>
-        <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
+        <dt>本周期上下行</dt>
+        <dd>
+          <span className="num">↓ {breakdown.rx}</span> <span className="muted">下行{breakdown.rxNote ? `（${breakdown.rxNote}）` : ""}</span>
+          {" · "}
+          <span className="num">↑ {breakdown.tx}</span> <span className="muted">上行{breakdown.txNote ? `（${breakdown.txNote}）` : ""}</span>
+          {breakdown.note && <> <span className="muted">（{breakdown.note}）</span></>}
+        </dd>
+        <dt>总量</dt><dd className="num">↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
         <dt>周期起点</dt><dd>{dateTime(t.periodStart, timeZone)}</dd>
         <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, timeZone)}（每月 {t.resetDay} 日{resetDayClamps(t.resetDay) ? "，不足该日的月份取最后一日" : ""}，{timeZone}）</dd>
       </dl>
