@@ -12,7 +12,7 @@ import { priceText } from "../lib/billing";
 import { ago, bytes, duration, formatUnit, percent } from "../lib/format";
 import { toAligned } from "../lib/series";
 import { nodeStatus } from "../lib/status";
-import { trafficDetail, trafficText } from "../lib/traffic";
+import { trafficBreakdownText, trafficDetail, trafficText } from "../lib/traffic";
 import { hasHostFacts } from "./facts";
 
 const HOUR_S = 3600;
@@ -77,7 +77,7 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
           {m?.netRxBps !== undefined && m.netTxBps !== undefined ? <span className="num">↓ {bytes(m.netRxBps)}/s ↑ {bytes(m.netTxBps)}/s</span> : <Missing />}
           {rate && <Sparkline values={rate} label="最近 1 小时网络速率" />}
         </Row>
-        <Row label="本周期">{node.traffic ? <><span className="num">{trafficText(node.traffic)}</span> <span className="muted">{trafficDetail(node.traffic)}</span></> : <Missing />}</Row>
+        <Row label="本周期">{node.traffic ? <span title={trafficBreakdownText(node.traffic)}><span className="num">{trafficText(node.traffic)}</span> <span className="muted">{trafficDetail(node.traffic)}</span></span> : <Missing />}</Row>
         <Row label="磁盘读写">{m?.diskReadBps !== undefined && m.diskWriteBps !== undefined ? <span className="num">读 {bytes(m.diskReadBps)}/s 写 {bytes(m.diskWriteBps)}/s</span> : <Missing />}</Row>
         <Row label="连接">{m?.tcpConns !== undefined && m.udpConns !== undefined && m.procs !== undefined ? <span className="num">TCP {m.tcpConns} · UDP {m.udpConns} · 进程 {m.procs}</span> : <Missing />}</Row>
         {/* 四项来自同一次采样、同时出现或同时缺失；发出段为 0 时重传率没有定义，写破折号而不是 0%。 */}

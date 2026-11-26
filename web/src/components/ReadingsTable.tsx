@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { Traffic } from "../gen/heron/v1/types_pb";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { STATUS_LABEL, type NodeStatus } from "../lib/status";
-import { trafficText } from "../lib/traffic";
+import { trafficBreakdownText, trafficText } from "../lib/traffic";
 import { Bar, Missing, usage } from "./Bar";
 
 // 管理端 Metrics 与公开页 PublicMetrics 共有的读数字段；两边的消息按结构满足它，表格不区分来源。
@@ -56,7 +56,7 @@ export function ReadingsTable<T>({ label, items, row, extra = [], now, className
                 <td data-label="磁盘"><Meter label="磁盘" value={m?.diskMaxUsedPct} /></td>
                 <td data-label="负载" className="num">{m?.load1 !== undefined && m.load5 !== undefined && m.load15 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5.toFixed(2)} / ${m.load15.toFixed(2)}` : <Missing />}</td>
                 <td data-label="网络" className="num">{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
-                <td data-label="本周期" className="num">{r.traffic ? trafficText(r.traffic) : <Missing />}</td>
+                <td data-label="本周期" className="num" title={r.traffic ? trafficBreakdownText(r.traffic) : undefined}>{r.traffic ? trafficText(r.traffic) : <Missing />}</td>
                 <td data-label="运行时长" className="num">{m?.uptimeS !== undefined ? duration(m.uptimeS) : <Missing />}</td>
                 {extra.map((column) => <td key={column.label} data-label={column.label}>{column.cell(item)}</td>)}
                 <td data-label="最近上报" className="muted">{r.lastSeenAt !== undefined ? ago(r.lastSeenAt, now) : STATUS_LABEL.never}</td>

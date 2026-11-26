@@ -54,3 +54,39 @@ export const QUOTA_MODE_LABELS: Record<TrafficQuotaMode, string> = {
 export function trafficDetail(t: Traffic): string {
   return t.quotaBytes > 0n ? QUOTA_MODE_LABELS[t.quotaMode] : `${QUOTA_MODE_LABELS[TrafficQuotaMode.SUM]} · 未设配额`;
 }
+
+export type PeriodBreakdown = {
+  rx: string;
+  tx: string;
+  rxNote?: string;
+  txNote?: string;
+  note?: string;
+};
+
+// 本周期下行、上行分量及各方向相对当前配额口径的归属标注。
+// 未设配额时与 hub 的 traffic.Quota 一致落回下载 + 上传（SUM），不沿用配置表里残留的 quotaMode。
+export function periodBreakdown(t: Traffic): PeriodBreakdown {
+  const rx = bytes(t.periodRx);
+  const tx = bytes(t.periodTx);
+  const mode = t.quotaBytes > 0n ? t.quotaMode : TrafficQuotaMode.SUM;
+  switch (mode) {
+    case TrafficQuotaMode.RX:
+      return { rx, tx, rxNote: "计入配额", txNote: "不计入配额" };
+    case TrafficQuotaMode.TX:
+      return { rx, tx, rxNote: "不计入配额", txNote: "计入配额" };
+    case TrafficQuotaMode.MAX:
+      if (t.periodRx > t.periodTx) return { rx, tx, rxNote: "当前取大" };
+      if (t.periodTx > t.periodRx) return { rx, tx, txNote: "当前取大" };
+      return { rx, tx, note: "两向相等" };
+    default:
+      return { rx, tx, note: "两向合计" };
+  }
+}
+
+// 紧凑表格与摘要卡片的悬停提示文本，在不撑宽列的前提下给出上下行分量与口径归属。
+export function trafficBreakdownText(t: Traffic): string {
+  const b = periodBreakdown(t);
+  const rx = `↓ ${b.rx}${b.rxNote ? `（${b.rxNote}）` : ""}`;
+  const tx = `↑ ${b.tx}${b.txNote ? `（${b.txNote}）` : ""}`;
+  return b.note ? `${rx} ${tx}（${b.note}）` : `${rx} ${tx}`;
+}
