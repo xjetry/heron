@@ -86,9 +86,6 @@ type Config struct {
 	// Location 是 hub 的 --timezone，days_left 按它的日历日算，GetSettings.timezone 下发它的名字；New 要求非 nil，
 	// 且与 Deps.Traffic 的时区是同一个对象。
 	Location *time.Location
-	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
-	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
-	Retention store.Retention
 	// PublicDir 为真时可信目录接管公开页，禁止启用托管主题。
 	PublicDir bool
 	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
@@ -180,9 +177,6 @@ func New(cfg Config, deps Deps) *Service {
 	}
 	if cfg.Heartbeat == nil {
 		panic("api.Config.Heartbeat must be set")
-	}
-	if err := cfg.Retention.Validate(); err != nil {
-		panic("api.Config.Retention: " + err.Error())
 	}
 	if cfg.Geo == nil {
 		panic("api.Config.Geo must be set")

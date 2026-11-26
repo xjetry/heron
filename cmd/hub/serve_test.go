@@ -419,7 +419,7 @@ pruned:
 		t.Errorf("maintenance lost retained control row: %v %v", rows, err)
 	}
 	// retention_s 只取决于装配的配置，与数据和时序无关，不必抢在维护之前查：这条只钉住 serve
-	// 把 --retention-* 传给了 api.Config.Retention 的那份值。标红结论是否也用这份配置由
+	// 把 --retention-* 经 store.WithRetention 交给了 Store（Store.Retention 是清理、选级与存储健康共用的唯一一份）。标红结论是否也用这份配置由
 	// internal/hub/api 的 TestGetStorageStatsUsesTheConfiguredRetention 钉住——那边的夹具不跑
 	// RunMaintenance，判定不依赖任何真实时间窗。
 	client := heronv1connect.NewAdminServiceClient(ownedClient(t), url)

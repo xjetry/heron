@@ -300,7 +300,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 			"geo_mmdb_built", md.BuildTime().UTC().Format(time.RFC3339)}
 	}
 
-	st, err := store.Open(opts.db, clk, log, store.MigrateSchema)
+	st, err := store.Open(opts.db, clk, log, store.MigrateSchema, store.WithRetention(opts.retention))
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +370,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
 	nodes := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: log})
 	reload := nodeops.NewReloader(nodes, nodeops.ReloadDeps{Generation: st, Tokens: a, Tasks: reg, Log: log}, offlineGen, opts.offlineReload)
-	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, HubVersion: version, Location: loc, Retention: opts.retention, PublicDir: opts.publicDir != "", Geo: geoBackend},
+	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, HubVersion: version, Location: loc, PublicDir: opts.publicDir != "", Geo: geoBackend},
 		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodes,
 			Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: log})
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, Location: loc},
@@ -446,12 +446,12 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 		servers = append(servers, publicSrv)
 	}
 
-	retention := h.opts.retention
+	retention := h.st.Retention()
 	defer startLoop(h.ingest.RunFlusher)()
 	defer startLoop(l.RunObservation)()
 	defer startLoop(h.updates.Run)()
 	defer startLoop(h.relay.Run)()
-	defer startLoop(func(ctx context.Context) { h.st.RunMaintenance(ctx, retention) })()
+	defer startLoop(h.st.RunMaintenance)()
 	defer startLoop(h.book.Run)()
 	stopSweep := startLoop(h.alerts.RunOfflineSweep)
 	defer startLoop(h.alerts.RunProbeEvaluation)()

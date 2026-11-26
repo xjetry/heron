@@ -24,7 +24,7 @@ import (
 )
 
 // 面板的历史查询参数（web/src/components/History.tsx）：maxPoints 恒为 HISTORY_MAX_POINTS = 1000；窗口右端
-// to = (⌊now/60⌋ + 1) × 60（useTimeWindow），左端 from = to − 跨度；api 层按 store.ChooseLevel(from, to, maxPoints) 选级与步长
+// to = (⌊now/60⌋ + 1) × 60（useTimeWindow），左端 from = to − 跨度；api 层按 Store.ChooseLevel(from, to, maxPoints) 选级与步长
 // （internal/hub/api/history.go）。面板的跨度是 1h / 6h / 24h / 7d / 30d，这里取其中 6h、7d、30d 三档；365d 不是面板的档位，
 // 是 API 允许的最长窗口（400 天）以内的一年历史，同用 maxPoints 1000，使四档可比。
 const panelMaxPoints = 1000
@@ -469,7 +469,7 @@ func (b *bench) query(ctx context.Context, cond string) error {
 	for rep := range b.cfg.reps {
 		for _, w := range queryWindows {
 			from := to - w.Span
-			lv, step := store.ChooseLevel(from, to, panelMaxPoints)
+			lv, step := s.st.ChooseLevel(from, to, panelMaxPoints)
 			for _, fam := range families {
 				key := fam + "/" + w.Name
 				r := results[key]
@@ -531,7 +531,7 @@ func (b *bench) prune(ctx context.Context, cond string, hooks bool) error {
 		var deleted int64
 		sample, w, err := s.measure(ctx, func() error {
 			var err error
-			deleted, err = s.st.Prune(ctx, store.DefaultRetention)
+			deleted, err = s.st.Prune(ctx)
 			return err
 		})
 		if err == nil {
