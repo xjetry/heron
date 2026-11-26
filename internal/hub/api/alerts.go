@@ -235,6 +235,10 @@ func (s *Service) TestAlertNotification(ctx context.Context, req *connect.Reques
 		}
 		out.Results = append(out.Results, result)
 	}
+	// 各渠道的发送都已发出（成败逐个在结果里），记录跟在发送之后：对象是样例里的规则（未保存的规则为 0）。
+	if err := s.store.RecordOperation(ctx, store.ChangeTarget{Action: store.ActionTestAlertNotification, ResourceID: req.Msg.GetSample().GetRule().GetId()}); err != nil {
+		return nil, s.operationError(err, "", "recording test alert notification failed")
+	}
 	return connect.NewResponse(out), nil
 }
 
@@ -337,6 +341,10 @@ func (s *Service) TestNotifyChannel(ctx context.Context, req *connect.Request[he
 					code = connect.CodeUnavailable
 				}
 				return nil, connect.NewError(code, err)
+			}
+			// 发送在库之外，记录只能跟在它之后：发出了而记录没写成时回答 Internal，不把它报告为成功。
+			if err := s.store.RecordOperation(ctx, store.ChangeTarget{Action: store.ActionTestNotifyChannel, ResourceID: c.ID}); err != nil {
+				return nil, s.operationError(err, "", "recording test notification failed")
 			}
 			return connect.NewResponse(&heronv1.TestNotifyChannelResponse{}), nil
 		}

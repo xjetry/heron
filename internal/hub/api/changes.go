@@ -31,8 +31,17 @@ func invokeChange[Q any, R any](fn func(context.Context, *connect.Request[Q]) (*
 	}
 }
 
+// operationPrincipals 是记录主体在 store 与 proto 之间的唯一对照；读库读到表外的值（只可能来自 hub 之外改库）回答
+// UNSPECIFIED，不猜成某个主体。
+var operationPrincipals = map[store.PrincipalKind]heronv1.OperationPrincipal{
+	store.PrincipalSession:  heronv1.OperationPrincipal_OPERATION_PRINCIPAL_SESSION,
+	store.PrincipalAPIToken: heronv1.OperationPrincipal_OPERATION_PRINCIPAL_API_TOKEN,
+	store.PrincipalSystem:   heronv1.OperationPrincipal_OPERATION_PRINCIPAL_SYSTEM,
+}
+
 func operationProto(o store.Operation) *heronv1.Operation {
-	return &heronv1.Operation{Id: o.ID, OwnerId: o.OwnerID, RequestId: o.RequestID, Action: o.Action, ResourceId: o.ResourceID, BeforeJson: o.BeforeJSON, AfterJson: o.AfterJSON, CommittedAt: o.CommittedAt}
+	return &heronv1.Operation{Id: o.ID, OwnerId: o.OwnerID, RequestId: o.RequestID, Action: o.Action, ResourceId: o.ResourceID, BeforeJson: o.BeforeJSON, AfterJson: o.AfterJSON, CommittedAt: o.CommittedAt,
+		Principal: operationPrincipals[o.Principal], SessionId: o.SessionID, Source: o.Source, Method: o.Method, ResourceKey: o.ResourceKey}
 }
 
 func changeError(err error) error {
@@ -333,19 +342,30 @@ func copyChangeField(dst, src protoreflect.Message, path []string) error {
 	return nil
 }
 
+// ListOperations 的可见性由 store 按 ctx 的主体裁决（API token 只看自己的）；这里只把"指定了别人"答成
+// PermissionDenied，而不是静默改成自己的、让调用方误以为别人没有记录。
 func (s *Service) ListOperations(ctx context.Context, req *connect.Request[heronv1.ListOperationsRequest]) (*connect.Response[heronv1.ListOperationsResponse], error) {
-	owner := req.Msg.OwnerId
-	if p, ok := store.Principal(ctx); ok {
-		if owner != 0 && owner != p.ID {
-			return nil, permissionDenied("only your own operations are visible")
+	f := store.OperationFilter{OwnerID: req.Msg.OwnerId, Action: req.Msg.Action, RequestID: req.Msg.RequestId}
+	if p, ok := store.Principal(ctx); ok && f.OwnerID != 0 && f.OwnerID != p.ID {
+		return nil, permissionDenied("only your own operations are visible")
+	}
+	if req.Msg.Principal != heronv1.OperationPrincipal_OPERATION_PRINCIPAL_UNSPECIFIED {
+		found := false
+		for kind, p := range operationPrincipals {
+			if p == req.Msg.Principal {
+				f.Principal, found = kind, true
+			}
 		}
-		owner = p.ID
+		if !found {
+			return nil, invalid("principal: unknown value %d", req.Msg.Principal)
+		}
 	}
 	limit, err := listLimit(req.Msg.Limit, 100, 500)
 	if err != nil {
 		return nil, err
 	}
-	list, err := s.store.ListOperations(ctx, owner, req.Msg.RequestId, limit)
+	f.Limit = limit
+	list, err := s.store.ListOperations(ctx, f)
 	if err != nil {
 		return nil, internalError("list operations")
 	}

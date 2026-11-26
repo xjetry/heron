@@ -126,6 +126,15 @@ docker exec -it heron heron-hub passwd --db /data/heron.db
 docker exec heron heron-hub security-reset --db /data/heron.db --yes
 ```
 
+## 操作记录
+
+面板「操作记录」页列出每一次成功写入：面板会话的直接操作、API token 经 `ExecuteChange` 的写入，以及 hub 自己发起的写入（目前只有到期节点的自动续期，主体显示为「hub 自身」）。每条记录有时间、主体（会话以会话 id 的前 8 位区分）、来源地址、方法、动作、对象，以及改动前后的对象快照，展开后按字段列出差异。
+
+- 快照不含任何密钥：密码与其哈希、节点与 API 凭据、Webhook 地址与模板、Telegram token、S3 secret、心跳地址、TOTP 秘密与恢复码、Passkey 材料都不进快照，只写不读的设置只记是否已设置。
+- 失败的调用（参数无效、版本过时、权限不足、测试通知发送失败）与只读调用不留记录。测试通知、hub 在线更新这类不改库的操作在动作发出之后留记录。
+- 不经面板与 API 的写入不留记录：agent 的上报与注册、指标归并与清理、告警状态推进、登录签发会话，以及在 hub 主机上执行的 `passwd`、`security-reset`、`token revoke`、`restore`。
+- 快照在 90 天后由之后的写入清空，其余字段一直保留。配置备份带着全部记录，恢复时与目标库已有的记录合并。
+
 ## 环境变量
 
 `serve` 的每个 flag 都可以用环境变量 `HERON_<FLAG>` 给出：flag 名的横线换成下划线、转大写，例如 `--offline-after` ↔ `HERON_OFFLINE_AFTER`、`--trusted-proxies` ↔ `HERON_TRUSTED_PROXIES`。同一项两处都给时以显式 flag 为准。环境变量设为空串等于显式给出空值，空值的含义与该 flag 写成空值时相同（`HERON_OFFLINE_AFTER=` 取默认值）。
