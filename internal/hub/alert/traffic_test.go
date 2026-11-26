@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/hub/traffic"
 )
@@ -85,8 +86,8 @@ func TestTrafficCommittedEvaluationAndPartialScope(t *testing.T) {
 		must(t, err)
 	}
 	r := f.rule(t, store.AlertRule{Name: "流量", Kind: store.KindTraffic, Enabled: true, AllNodes: true, Threshold: 80})
-	if len(f.events(t)) != 2 {
-		t.Fatalf("save rule events=%v", f.events(t))
+	if evs := f.events(t); len(evs) != 2 || evs[0].ValueUnit != metric.UnitPercent || evs[1].ValueUnit != metric.UnitPercent {
+		t.Fatalf("save rule events=%+v", evs)
 	}
 	queries = 0
 	f.sweep(t)
@@ -100,8 +101,8 @@ func TestTrafficCommittedEvaluationAndPartialScope(t *testing.T) {
 	if got := f.e.entry(stateKey{r.ID, f.ids[1]}); !reflect.DeepEqual(got, before) || len(f.events(t)) != 3 {
 		t.Fatalf("partial evaluation altered peer: %+v, events=%d", got, len(f.events(t)))
 	}
-	if events := f.events(t); !strings.Contains(events[0].Summary, "20.00% 已低于阈值") {
-		t.Fatalf("recovery=%s", events[0].Summary)
+	if events := f.events(t); !strings.Contains(events[0].Summary, "20.00% 已低于阈值") || events[0].ValueUnit != metric.UnitPercent {
+		t.Fatalf("recovery=%+v", events[0])
 	}
 	f.restart(t)
 	f.e.SetTraffic(b)
@@ -116,8 +117,18 @@ func TestTrafficCommittedEvaluationAndPartialScope(t *testing.T) {
 	}
 	must(t, b.Flush(t.Context()))
 	f.sweep(t)
-	if len(f.events(t)) != 4 {
-		t.Fatal("committed rollover did not recover")
+	if evs := f.events(t); len(evs) != 4 || evs[0].Value != 0 || evs[0].ValueUnit != metric.UnitPercent {
+		t.Fatalf("committed rollover recovery=%+v", evs)
+	}
+	// 清除流量配额触发的恢复没有配额占比可读，落 0 与 n/a（与周期重置的 0% 区分）。
+	_, err = b.Adjust(t.Context(), f.ids[0], 90, 0)
+	must(t, err)
+	must(t, f.e.EvaluateTrafficNode(t.Context(), f.ids[0]))
+	_, err = f.st.UpdateNode(t.Context(), f.ids[0], store.NodeEdit{Name: "quota", TrafficResetDay: 1})
+	must(t, err)
+	must(t, f.e.EvaluateTrafficNode(t.Context(), f.ids[0]))
+	if evs := f.events(t); len(evs) != 6 || evs[0].Transition != store.TransitionRecovered || evs[0].Value != 0 || evs[0].ValueUnit != store.ValueUnitNotApplicable {
+		t.Fatalf("cleared quota recovery=%+v", evs)
 	}
 	r.AllNodes = false
 	r.NodeIDs = []int64{f.ids[0]}
@@ -133,17 +144,17 @@ func TestTrafficSummaryFacts(t *testing.T) {
 	firing, recovery := store.TransitionFiring, store.TransitionRecovered
 	o := TrafficObservation{QuotaBytes: 1 << 30, UsedBytes: 900 << 20, Percent: 87.89}
 	for _, part := range []string{"87.89%", "900 MiB", "1 GiB", "只收", "rule"} {
-		if got := trafficSummary(n, r, o, &firing); !strings.Contains(got, part) {
-			t.Fatalf("missing %q in %s", part, got)
+		if got, rd := trafficSummary(n, r, o, &firing); !strings.Contains(got, part) || rd != observedValue(87.89) {
+			t.Fatalf("missing %q in %s (rd=%+v)", part, got, rd)
 		}
 	}
 	o.Percent = 3
-	if got := trafficSummary(n, r, o, &recovery); !strings.Contains(got, "3.00% 已低于阈值 80.00%") || strings.Contains(got, "重置") {
-		t.Fatal(got)
+	if got, rd := trafficSummary(n, r, o, &recovery); !strings.Contains(got, "3.00% 已低于阈值 80.00%") || strings.Contains(got, "重置") || rd != observedValue(3) {
+		t.Fatalf("got=%q rd=%+v", got, rd)
 	}
 	o.QuotaBytes = 0
-	if got := trafficSummary(n, r, o, &recovery); !strings.Contains(got, "已清除流量配额") {
-		t.Fatal(got)
+	if got, rd := trafficSummary(n, r, o, &recovery); !strings.Contains(got, "已清除流量配额") || rd != noReading {
+		t.Fatalf("got=%q rd=%+v", got, rd)
 	}
 }
 

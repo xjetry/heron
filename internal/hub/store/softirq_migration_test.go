@@ -178,6 +178,7 @@ func TestRestoreV54MetricsSnapshotAddsSoftirqColumns(t *testing.T) {
 		if layer == "metrics" {
 			dropSoftirqColumns(t, db)
 		} else {
+			removeV59Config(t, db)
 			removeV58Config(t, db)
 			removeV57Config(t, db)
 			removeV56Config(t, db)

@@ -64,7 +64,7 @@ func (e BillingAnchorDayError) Error() string {
 	return fmt.Sprintf("billing_anchor_day must be between %d and %d; got %d", MinBillingAnchorDay, MaxBillingAnchorDay, e.Got)
 }
 
-// ParseBillingDate 解析 YYYY-MM-DD，写入口、迁移 58 与快照恢复预检共用这一个口径（与 alert.ParseDate 相同）。
+// ParseBillingDate 解析 YYYY-MM-DD，写入口、迁移 59 与快照恢复预检共用这一个口径（与 alert.ParseDate 相同）。
 func ParseBillingDate(s string) (time.Time, error) {
 	return time.Parse(time.DateOnly, s)
 }

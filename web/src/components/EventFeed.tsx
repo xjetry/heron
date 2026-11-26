@@ -45,7 +45,7 @@ function EventList({ data, nodeName, channelName, rules, visible, hasNextPage, f
           <thead><tr><th>时间</th><th>节点</th><th>规则</th><th>变化</th><th>观测值</th><th>投递</th></tr></thead>
           <tbody>
             {shown.map((ev) => {
-              const value = eventValueText(ev, rules?.find((r) => r.id === ev.ruleId));
+              const value = eventValueText(ev);
               return <tr key={String(ev.id)}>
                 <td data-label="时间" className="num">{dateTime(ev.at)}</td>
                 <td data-label="节点">{ev.nodeId === 0n ? <span className="muted">—</span> : nodeName(ev.nodeId)}</td>

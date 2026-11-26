@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { AlertDeliverySchema, AlertEventSchema, AlertKind, AlertKindSchema, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema, ResourceMetric } from "../gen/heron/v1/admin_pb";
+import { AlertDeliverySchema, AlertEventSchema, AlertKind, AlertKindSchema, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema } from "../gen/heron/v1/admin_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { ALERT_KINDS, CHANNEL_KINDS, channelTarget, deliveryText, eventValueText, ruleLabel, failureText, graceText, labelOf, rateLabel, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
 import { PROBE_KINDS } from "./probes";
@@ -153,29 +153,32 @@ it("graceText 缺失即默认", () => {
 });
 
 describe("eventValueText", () => {
-  const ev = (value: number, transition = "firing") => create(AlertEventSchema, { ruleId: 1n, transition, value });
+  const ev = (value: number, valueUnit: string, transition = "firing") => create(AlertEventSchema, { ruleId: 1n, transition, value, valueUnit });
   const rule = (init: Parameters<typeof create<typeof AlertRuleSchema>>[1]) => create(AlertRuleSchema, { id: 1n, ...init });
+  // 每个单位一条：写法只看事件自带的单位，不看规则。
   it.each([
-    ["离线不足一分钟写秒", rule({ kind: AlertKind.OFFLINE }), ev(39.226), "39 s"],
-    ["离线舍入到整分钟切到分钟", rule({ kind: AlertKind.OFFLINE }), ev(59.6), "1m"],
-    ["离线超过一分钟写时长", rule({ kind: AlertKind.OFFLINE }), ev(3725), "1h 2m"],
-    ["探测丢包是百分比", rule({ kind: AlertKind.PROBE, metric: ProbeMetric.LOSS_PCT }), ev(22.5), "23%"],
-    ["探测往返是毫秒", rule({ kind: AlertKind.PROBE, metric: ProbeMetric.RTT_MS }), ev(182.44), "182 ms"],
-    ["到期是剩余天数", rule({ kind: AlertKind.EXPIRY }), ev(12), "剩 12 天"],
-    ["已过期写过期天数", rule({ kind: AlertKind.EXPIRY }), ev(-3), "已过期 3 天"],
-    ["证书到期同到期", rule({ kind: AlertKind.CERT_EXPIRY }), ev(5, "recovered"), "剩 5 天"],
-    ["流量是配额百分比", rule({ kind: AlertKind.TRAFFIC }), ev(90), "90%"],
-    ["资源百分比", rule({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.CPU_PCT }), ev(91.24), "91%"],
-    ["资源每核负载两位小数", rule({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.LOAD1_PER_CORE }), ev(1.5), "1.50"],
-    ["资源速率按 Mbps", rule({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.NET_RX_BPS }), ev(1250000), "10.0 Mbps"],
-    ["规则未知只写数字", undefined, ev(39.226), "39.23"],
-  ])("%s", (_, r, e, want) => {
-    expect(eventValueText(e, r)).toBe(want);
+    ["秒不足一分钟写秒", ev(39.226, "seconds"), "39 s"],
+    ["秒舍入到整分钟切到分钟", ev(59.6, "seconds"), "1m"],
+    ["秒超过一分钟写时长", ev(3725, "seconds"), "1h 2m"],
+    ["百分比", ev(22.5, "percent"), "23%"],
+    ["毫秒", ev(182.44, "milliseconds"), "182 ms"],
+    ["天是剩余天数", ev(12, "days"), "剩 12 天"],
+    ["负的天数写过期天数", ev(-3, "days"), "已过期 3 天"],
+    ["剩 0 天照写", ev(0, "days"), "剩 0 天"],
+    ["无量纲两位小数", ev(1.5, ""), "1.50"],
+    ["字节速率按 Mbps", ev(12_500_000, "bytes/s"), "100.0 Mbps"],
+    ["字节", ev(2048, "bytes"), "2.0 KiB"],
+    ["计数", ev(3.4, "count"), "3"],
+    ["计数速率", ev(2.5, "count/s"), "2.50/s"],
+    ["单位未知只写数字并注明", ev(12_500_000, "unknown"), "12500000（单位未知）"],
+    ["面板不认识的单位原样带上", ev(7.125, "furlongs"), "7.13 furlongs"],
+  ])("%s", (_, e, want) => {
+    expect(eventValueText(e)).toBe(want);
   });
-  it("没有观测值的事件与清除到期日的恢复写破折号", () => {
-    expect(eventValueText(ev(0, "login_success"), undefined)).toBeNull();
-    expect(eventValueText(ev(0, "recovered"), rule({ kind: AlertKind.EXPIRY }))).toBeNull();
-    expect(eventValueText(ev(0, "firing"), rule({ kind: AlertKind.EXPIRY }))).toBe("剩 0 天");
+  it("没有观测值（n/a）写破折号，与单位未知不同", () => {
+    expect(eventValueText(ev(0, "n/a", "login_success"))).toBeNull();
+    expect(eventValueText(ev(0, "n/a", "recovered"))).toBeNull();
+    expect(eventValueText(ev(0, "unknown", "recovered"))).toBe("0（单位未知）");
   });
   it("规则标签按编号回退", () => {
     expect(ruleLabel(1n, [rule({ name: "cpu" })])).toBe("cpu（#1）");

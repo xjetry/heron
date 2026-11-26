@@ -201,7 +201,7 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 		hex.EncodeToString(id[:]), result.RestoredAt, result.ConfigTakenAt, result.MetricsTakenAt, string(orphans), string(themeSummary)); err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO main.alert_event (rule_id,node_id,transition,at,summary,value) VALUES (0,0,?,?,'已从备份恢复配置',0)", TransitionBackupRestored, result.RestoredAt); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO main.alert_event (rule_id,node_id,transition,at,summary,value,value_unit) VALUES (0,0,?,?,'已从备份恢复配置',0,?)", TransitionBackupRestored, result.RestoredAt, ValueUnitNotApplicable); err != nil {
 		return result, err
 	}
 	err = tx.Commit()
@@ -589,10 +589,15 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 				statements = migrationV57Config
 			}
 		case 58:
-			// 与迁移 58 同源：计费锚定日号只在配置层的 node 上，按现有 expires_on 的日号回填。
+			// 与迁移 58 同源：告警事件的单位一列与回填读的 alert_rule 都在配置层。
 			if layer == "config" {
-				if err := migrateV58Config(tx); err != nil {
-					return fmt.Errorf("migrate config snapshot to 58: %w", err)
+				statements = migrationV58Config
+			}
+		case 59:
+			// 与迁移 59 同源：计费锚定日号只在配置层的 node 上，按现有 expires_on 的日号回填。
+			if layer == "config" {
+				if err := migrateV59Config(tx); err != nil {
+					return fmt.Errorf("migrate config snapshot to 59: %w", err)
 				}
 			}
 		default:
@@ -820,6 +825,9 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		if err := validateSnapshotAPITokens(ctx, tx); err != nil {
 			return 0, err
 		}
+		if err := validateSnapshotAlertEvents(ctx, tx); err != nil {
+			return 0, err
+		}
 		if err := validateSnapshotOperations(ctx, tx); err != nil {
 			return 0, err
 		}
@@ -928,6 +936,30 @@ func validateSnapshotNodes(ctx context.Context, tx *sql.Tx) error {
 		}
 		if err := checkNodeFlags(maintenance, rented); err != nil {
 			return fmt.Errorf("config node %d (%s) has maintenance and rented both set", id, name)
+		}
+	}
+	return rows.Err()
+}
+
+// validateSnapshotAlertEvents 让恢复进来的事件与库里的一样能读：value_unit 是写入口收的取值或迁移写下的 unknown
+// （checkStoredEventValueUnit，与 recordAlertEvent 同一判定），系统事件恒为 n/a。快照不经写入口，旧版快照先经
+// migrateSnapshot 的迁移 58 补上这一列。
+func validateSnapshotAlertEvents(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT id,transition,value,value_unit FROM config.alert_event")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var tr Transition
+		var value float64
+		var unit string
+		if err := rows.Scan(&id, &tr, &value, &unit); err != nil {
+			return err
+		}
+		if err := checkStoredEventValueUnit(tr, value, unit); err != nil {
+			return fmt.Errorf("config alert event %d: %w", id, err)
 		}
 	}
 	return rows.Err()

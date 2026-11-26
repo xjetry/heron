@@ -126,7 +126,7 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 			}
 			next, transition := NextResource(e.current(stateKey{rule.ID, node.ID}), samples, rule.RecoveryThreshold)
 			value := samples[len(samples)-1].Value
-			if err := e.apply(ctx, cy, rule, node.ID, next, false, node.Maintenance, "", transition, resourceSummary(node, rule, transition, e.fullestMount(rule, node.ID)), value); err != nil {
+			if err := e.apply(ctx, cy, rule, node.ID, next, false, node.Maintenance, "", transition, resourceSummary(node, rule, transition, e.fullestMount(rule, node.ID)), observedValue(value)); err != nil {
 				errs = append(errs, err)
 			}
 		}

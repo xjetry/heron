@@ -83,20 +83,21 @@ var migrations = map[int]func(*sql.Tx) error{
 	55: migrateV55Metrics,
 	56: execAll(migrationV56Config),
 	57: execAll(append(append([]string{}, migrationV57Config...), migrationV57Trigger...)),
-	58: migrateV58Config,
+	58: execAll(migrationV58Config),
+	59: migrateV59Config,
 }
 
-// v58：节点的计费锚定日号（billing_anchor_day，含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。
+// v59：节点的计费锚定日号（billing_anchor_day，含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。
 // 用现有 expires_on 的日号初始化：合法 YYYY-MM-DD 取日号（1–31），没有到期日或无法解析的日期留 NULL。
 // 此前已因按月钳位漂移到 28 日的节点无法从库里自动找回原日号，升级后重新保存一次目标到期日即可纠正。
 // 此列不在 ListNodes 的响应里，不改节点资料版本的更新触发器。
-// 回滚边界同其它迁移：写入后 schema 57 的二进制不能直接启动，回退须恢复升级前的自动备份。
-var migrationV58Config = []string{
+// 回滚边界同其它迁移：写入后 schema 58 的二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV59Config = []string{
 	`ALTER TABLE node ADD COLUMN billing_anchor_day INTEGER`,
 }
 
-func migrateV58Config(tx *sql.Tx) error {
-	if err := execAll(migrationV58Config)(tx); err != nil {
+func migrateV59Config(tx *sql.Tx) error {
+	if err := execAll(migrationV59Config)(tx); err != nil {
 		return err
 	}
 	rows, err := tx.Query("SELECT id, expires_on FROM node WHERE expires_on <> ''")
@@ -433,6 +434,38 @@ var migrationV56Snapshot = []string{
 	`ALTER TABLE operation ADD COLUMN method TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE operation ADD COLUMN resource_key TEXT NOT NULL DEFAULT ''`,
 	`UPDATE operation SET principal=CASE owner_key WHEN 'session' THEN 'session' ELSE 'api_token' END,method='ExecuteChange'`,
+}
+
+// v58：告警事件的观测值自带单位（alert_event.value_unit）。新列的默认值 'unknown' 是起点，随后按能确定的依据改写：
+//   - 系统事件（本版本的十种系统 transition）没有观测值，写 'n/a'。
+//   - 规则事件按仍存在的规则推出，与告警引擎生成事件时的取值相同（alert.valueUnit）：离线 seconds；探测 loss_pct 为
+//     percent、rtt_ms 为 milliseconds；资源按读取的指标列，三种使用率为 percent、按核负载无量纲为空串、两种网卡速率为
+//     bytes/s；流量 percent，其中值为 0 且摘要写"已清除流量配额"的恢复写 'n/a'（周期重置的 0% 摘要写"已低于阈值"，按 percent）；
+//     到期与证书到期 days，其中到期规则值为 0 的恢复写 'n/a'：带到期日的恢复要求剩余天数大于提前天数（NextExpiry），
+//     而提前天数至少为 1（CheckRule），所以值为 0 的恢复只能是清除到期日。
+//   - 规则已删除的保持 'unknown'：事件留着，单位已无从推出。
+//
+// 推断依据的是规则当前的种类与指标。规则身份改过（种类、指标变了）的，迁移前的事件按改后的身份回填：库里没有身份
+// 变更的历史，区分不出；引入这一列之后的事件在生成时记下单位，不再受此影响。事件在配置层，迁移与配置快照共用。
+var migrationV58Config = []string{
+	`ALTER TABLE alert_event ADD COLUMN value_unit TEXT NOT NULL DEFAULT 'unknown'`,
+	`UPDATE alert_event SET value_unit = 'n/a' WHERE transition IN ('login_success', 'login_locked', 'login_failed', 'auth_changed',
+  'backup_success', 'backup_restored', 'backup_failed', 'backup_recovered', 'backup_disabled', 'traffic_report')`,
+	`UPDATE alert_event SET value_unit = (
+  SELECT CASE
+    WHEN r.kind = 'offline' THEN 'seconds'
+    WHEN r.kind = 'probe' AND r.metric = 'loss_pct' THEN 'percent'
+    WHEN r.kind = 'probe' AND r.metric = 'rtt_ms' THEN 'milliseconds'
+    WHEN r.kind = 'resource' AND r.resource_metric IN ('memory_used_pct', 'disk_used_pct', 'cpu_pct') THEN 'percent'
+    WHEN r.kind = 'resource' AND r.resource_metric = 'load1_per_core' THEN ''
+    WHEN r.kind = 'resource' AND r.resource_metric IN ('net_rx_bps', 'net_tx_bps') THEN 'bytes/s'
+    WHEN r.kind = 'traffic' AND alert_event.transition = 'recovered' AND alert_event.value = 0 AND alert_event.summary LIKE '%已清除流量配额%' THEN 'n/a'
+    WHEN r.kind = 'traffic' THEN 'percent'
+    WHEN r.kind = 'expiry' AND alert_event.transition = 'recovered' AND alert_event.value = 0 THEN 'n/a'
+    WHEN r.kind IN ('expiry', 'cert_expiry') THEN 'days'
+    ELSE 'unknown'
+  END FROM alert_rule r WHERE r.id = alert_event.rule_id)
+WHERE transition IN ('firing', 'recovered') AND EXISTS (SELECT 1 FROM alert_rule r WHERE r.id = alert_event.rule_id)`,
 }
 
 // 原有静默覆盖全部可静默规则，必须显式回填；新列的默认值不代表全部规则。

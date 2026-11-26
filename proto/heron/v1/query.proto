@@ -80,7 +80,7 @@ message MetricSeries {
   // 新指标只追加在末尾；客户端按 name 取。
   // 重传率不是一条序列：同一个点上 tcp_retrans_segs_ps 与 tcp_out_segs_ps 的 mean × n 相除再乘 100；分母为 0 时没有重传率。
   string name = 1;
-  // percent、bytes、bytes/s、count、count/s；load 无单位为空串。
+  // percent、bytes、bytes/s、count、count/s；load 无单位为空串。与 AlertEvent.value_unit 同一单位词表。
   string unit = 2;
   // 与 ts 一一对应。
   repeated MetricSample samples = 3;

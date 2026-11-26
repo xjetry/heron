@@ -6757,8 +6757,9 @@ type WebhookConfig struct {
 	// 合并后至多 16 个；键为合法 HTTP 标记，值不含控制字符；响应不返回值。
 	// 保存时省略的键保留，显式给出的键覆盖；头名不区分大小写并规范化。
 	Headers map[string]string `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// Go 文本模板；字段 Rule、Node、Kind、Transition、Value、At、Summary，
-	// 函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板。
+	// Go 文本模板；字段 Rule、Node、Kind、Transition、Value、ValueUnit、At、Summary，ValueUnit 与 AlertEvent.value_unit
+	// 同一取值（合并消息与测试消息没有单一观测值，为 0 与 n/a）；函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板，
+	// 默认模板带 value_unit 字段。
 	BodyTemplate string `protobuf:"bytes,4,opt,name=body_template,json=bodyTemplate,proto3" json:"body_template,omitempty"`
 	// 只在响应有意义，表示已保存 URL。
 	HasUrl bool `protobuf:"varint,5,opt,name=has_url,json=hasUrl,proto3" json:"has_url,omitempty"`
@@ -11015,8 +11016,13 @@ type AlertEvent struct {
 	// 事件墙钟，Unix 秒。
 	At      int64  `protobuf:"varint,5,opt,name=at,proto3" json:"at,omitempty"`
 	Summary string `protobuf:"bytes,6,opt,name=summary,proto3" json:"summary,omitempty"`
-	// 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）；
-	// 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
+	// 触发或恢复时的观测值，单位见 value_unit，读数值必须带着它读。各种类的含义：
+	// 离线是未上报的时长（seconds）；探测是这一分钟的读数，丢包 loss_pct 为 percent、往返 rtt_ms 为 milliseconds；
+	// 资源是规则读取的指标列的分钟均值，内存、磁盘（最满盘）、CPU 使用率为 percent，按核负载无量纲（空串），网卡下行、
+	// 上行速率为 bytes/s（面板按 1 Mbps = 125000 bytes/s 显示）；流量是本周期已用量占配额的 percent，因清除配额而恢复时
+	// 没有观测值（0 且单位 n/a）；到期是按节点计费时区（空即 hub 时区）算出的距到期日历日数（days，负数是已过期的天数），
+	// 因清除到期日而恢复时没有观测值（0 且单位 n/a）；证书到期是按 hub 时区算出的距到期日历日数（days，负数是已过期的天数）。
+	// 系统事件没有观测值，恒为 0、单位 n/a。
 	Value      float64          `protobuf:"fixed64,7,opt,name=value,proto3" json:"value,omitempty"`
 	Deliveries []*AlertDelivery `protobuf:"bytes,8,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
 	// 生成时是否处于维护静默覆盖内：为真时不产生任何投递（deliveries 为空），之后也不会补建投递。恢复事件记配对的触发
@@ -11024,7 +11030,12 @@ type AlertEvent struct {
 	// hub 在解除后的下一轮离线巡检（每 10 秒一轮）追加一条为假的 firing 事件补发通知：at 是补发时刻，summary 在原触发的摘要后附注
 	// 静默结束时仍未恢复与自最初触发起的持续时长，value 沿用原触发的观测值；之后的恢复事件为假、照常投递，持续时长仍从
 	// 最初触发起算。
-	Silenced      bool `protobuf:"varint,9,opt,name=silenced,proto3" json:"silenced,omitempty"`
+	Silenced bool `protobuf:"varint,9,opt,name=silenced,proto3" json:"silenced,omitempty"`
+	// value 的单位，事件生成时定下，规则之后被修改或删除也不变。取值与 MetricSeries.unit 同一词表：percent、bytes、
+	// bytes/s、count、count/s、seconds、milliseconds、days，空串是无量纲（按核负载）；另有两个不是单位的取值：
+	// n/a 表示这条事件没有观测值（系统事件、因清除到期日或流量配额而恢复的事件），value 为 0；unknown 表示引入这个字段之前
+	// 的事件、升级时规则已删除而推不出单位，value 是当时的观测值但单位不明，不能按任何单位解读。
+	ValueUnit     string `protobuf:"bytes,10,opt,name=value_unit,json=valueUnit,proto3" json:"value_unit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -11120,6 +11131,13 @@ func (x *AlertEvent) GetSilenced() bool {
 		return x.Silenced
 	}
 	return false
+}
+
+func (x *AlertEvent) GetValueUnit() string {
+	if x != nil {
+		return x.ValueUnit
+	}
+	return ""
 }
 
 type AlertDelivery struct {
@@ -13740,7 +13758,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vdelivery_id\x18\x01 \x01(\x03R\n" +
 	"deliveryId\"5\n" +
 	"\x1dGetAlertDeliveryErrorResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"\x83\x02\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"\xa2\x02\n" +
 	"\n" +
 	"AlertEvent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
@@ -13755,7 +13773,10 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"deliveries\x18\b \x03(\v2\x17.heron.v1.AlertDeliveryR\n" +
 	"deliveries\x12\x1a\n" +
-	"\bsilenced\x18\t \x01(\bR\bsilenced\"\xb4\x02\n" +
+	"\bsilenced\x18\t \x01(\bR\bsilenced\x12\x1d\n" +
+	"\n" +
+	"value_unit\x18\n" +
+	" \x01(\tR\tvalueUnit\"\xb4\x02\n" +
 	"\rAlertDelivery\x12\x1d\n" +
 	"\n" +
 	"channel_id\x18\x01 \x01(\x03R\tchannelId\x12\x1a\n" +

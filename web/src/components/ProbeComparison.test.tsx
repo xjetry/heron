@@ -136,7 +136,7 @@ it("全超时 100%、全本地错误无丢包率读数、混合按 lost/(sent �
       ].filter((series) => req.nodeIds.includes(series.nodeId)),
     }),
   });
-  const rtt = await screen.findByTestId("chart-ms");
+  const rtt = await screen.findByTestId("chart-milliseconds");
   expect(rtt.dataset.labels).toBe("ok");
   expect(rtt.dataset.values).toBe("[0]");
   for (const [name, loss, errors] of [["edge #1", "100%", "0"], ["edge #2", "–", "5"], ["edge #3", "57%", "3"]]) {
@@ -312,7 +312,7 @@ it("没有 RTT、也没有丢包率读数的节点仍逐行显示错误数，不
     expect(table.getByRole("checkbox", { name: `显示 n${id}` })).toBeDisabled();
   }
   expect(screen.getByText("窗口内没有读数")).toBeInTheDocument();
-  expect(screen.queryByTestId("chart-ms")).toBeNull();
+  expect(screen.queryByTestId("chart-milliseconds")).toBeNull();
 });
 
 it("页头显示类型、目标与节点数，汇总表排序、显隐和悬停联动，丢包标色并解释口径", async () => {
@@ -327,7 +327,7 @@ it("页头显示类型、目标与节点数，汇总表排序、显隐和悬停�
   const heading = await screen.findByRole("heading", { name: "ICMP edge.example" });
   expect(within(heading).getByText("ICMP")).toHaveClass("kind-badge");
   expect(screen.getByText("3 个节点执行此探测")).toBeInTheDocument();
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-legend", "false");
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-legend", "false");
   const table = within(screen.getByRole("table"));
   expect(table.getAllByRole("columnheader").map((th) => th.textContent)).toEqual(["显示", "节点", "均值", "最小", "最大", "丢包率", "错误数"]);
   const cells = (name: string) => within(table.getByRole("row", { name })).getAllByRole("cell").map((td) => td.textContent);
@@ -338,9 +338,9 @@ it("页头显示类型、目标与节点数，汇总表排序、显隐和悬停�
   expect(cells("gone")).toEqual(["", "gone", "–", "–", "–", "–", "0"]);
   expect(table.getByRole("checkbox", { name: "显示 gone" })).toBeDisabled();
   fireEvent.click(table.getByRole("checkbox", { name: "显示 edge" }));
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[0]");
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-hidden", "[0]");
   fireEvent.click(table.getByRole("checkbox", { name: "显示 edge" }));
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[]");
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-hidden", "[]");
   fireEvent.click(table.getByRole("button", { name: "均值" }));
   expect(table.getAllByRole("row").slice(1).map((row) => row.getAttribute("aria-label"))).toEqual(["ok", "edge", "gone"]);
   expect(table.getByRole("columnheader", { name: "均值" })).toHaveAttribute("aria-sort", "ascending");
@@ -407,19 +407,19 @@ it("刷新后线集合变化，隐藏的仍是同一个节点；节点没有读�
     },
   }, [{ id: 1n, name: "a" }, { id: 2n, name: "b" }]);
   const table = within(await screen.findByRole("table"));
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-labels", "a|b");
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-labels", "a|b");
   fireEvent.click(table.getByRole("checkbox", { name: "显示 a" }));
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[0]");
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-hidden", "[0]");
 
   await act(async () => advanceHub());
-  await waitFor(() => expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-labels", "b"));
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[]");
+  await waitFor(() => expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-labels", "b"));
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-hidden", "[]");
   expect(table.getByRole("checkbox", { name: "显示 a" })).toBeDisabled();
   expect(table.getByRole("checkbox", { name: "显示 b" })).toBeChecked();
 
   await act(async () => advanceHub());
-  await waitFor(() => expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-labels", "a|b"));
-  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[0]");
+  await waitFor(() => expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-labels", "a|b"));
+  expect(screen.getByTestId("chart-milliseconds")).toHaveAttribute("data-hidden", "[0]");
   expect(table.getByRole("checkbox", { name: "显示 a" })).not.toBeChecked();
   expect(table.getByRole("checkbox", { name: "显示 b" })).toBeChecked();
 });

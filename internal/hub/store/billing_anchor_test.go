@@ -11,19 +11,19 @@ import (
 	"time"
 )
 
-// schemaV58 冻结 v58 的完整 DDL：v57 加上 node.billing_anchor_day。
-var schemaV58 = append(slices.Clone(schemaV57), migrationV58Config...)
+// schemaV59 冻结 v59 的完整 DDL：v58 加上 node.billing_anchor_day。
+var schemaV59 = append(slices.Clone(schemaV58), migrationV59Config...)
 
-// removeV58Config 把当前配置库或快照退回 v57 的 node 结构，供从旧版本起步的迁移与恢复测试使用。
-func removeV58Config(t *testing.T, db *sql.DB) {
+// removeV59Config 把当前配置库或快照退回 v58 的 node 结构，供从旧版本起步的迁移与恢复测试使用。
+func removeV59Config(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec("ALTER TABLE node DROP COLUMN billing_anchor_day"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// v57 升到 v58：现有合法 expires_on 的节点按其日号初始化 billing_anchor_day；没有到期日或手改的不可解析日期留 NULL。
-func TestMigrationFromV57InitializesBillingAnchorDay(t *testing.T) {
+// v58 升到 v59：现有合法 expires_on 的节点按其日号初始化 billing_anchor_day；没有到期日或手改的不可解析日期留 NULL。
+func TestMigrationFromV58InitializesBillingAnchorDay(t *testing.T) {
 	t.Parallel()
 	rows := []struct {
 		id         int64
@@ -37,7 +37,7 @@ func TestMigrationFromV57InitializesBillingAnchorDay(t *testing.T) {
 		{4, "noexpiry", "", sql.NullInt64{}},
 		{5, "unreadable", "2026-09-31", sql.NullInt64{}},
 	}
-	s := migrateFrom(t, 57, func(t *testing.T, db *sql.DB) {
+	s := migrateFrom(t, 58, func(t *testing.T, db *sql.DB) {
 		for _, r := range rows {
 			if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at, billing_cycle, expires_on) VALUES (?, ?, ?, 1, 'monthly', ?)",
 				r.id, r.name, hash(byte(r.id)), r.expiresOn); err != nil {
@@ -248,7 +248,7 @@ func TestRestoreBillingAnchorDayValidationAndMigration(t *testing.T) {
 		}
 	})
 
-	t.Run("v57 snapshot initializes anchor day on restore", func(t *testing.T) {
+	t.Run("v58 snapshot initializes anchor day on restore", func(t *testing.T) {
 		t.Parallel()
 		source, clk := open(t)
 		ctx := t.Context()
@@ -269,8 +269,8 @@ func TestRestoreBillingAnchorDayValidationAndMigration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		removeV58Config(t, db)
-		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 57"); err != nil {
+		removeV59Config(t, db)
+		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 58"); err != nil {
 			t.Fatal(err)
 		}
 		db.Close()

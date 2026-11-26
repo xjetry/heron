@@ -55,7 +55,8 @@ func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
 			write(6, 80)
 			eval(6, store.StateOK)
 			events := f.events(t)
-			if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[1].Transition != store.TransitionFiring {
+			if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[1].Transition != store.TransitionFiring ||
+				events[0].ValueUnit != metric.UnitPercent || events[1].ValueUnit != metric.UnitPercent {
 				t.Fatalf("events=%+v", events)
 			}
 		})
@@ -69,6 +70,7 @@ func TestResourceNewMetricWindows(t *testing.T) {
 		name      string
 		metric    store.ResourceMetric
 		column    string
+		unit      string
 		threshold float64
 		recovery  float64
 		high      float64
@@ -76,10 +78,10 @@ func TestResourceNewMetricWindows(t *testing.T) {
 		mid       float64
 		low       float64
 	}{
-		{"cpu_pct", store.MetricCpuPct, "cpu", 90, 80, 90, 95, 85, 75},
-		{"net_rx_bps", store.MetricNetRxBps, "net_rx_bps", 1.25e8, 1e8, 1.25e8, 1.3e8, 1.1e8, 9e7},
-		{"net_tx_bps", store.MetricNetTxBps, "net_tx_bps", 1.25e8, 1e8, 1.25e8, 1.3e8, 1.1e8, 9e7},
-		{"load1_per_core", store.MetricLoad1PerCore, "load1_per_core", 2, 1, 2, 2.5, 1.5, 0.5},
+		{"cpu_pct", store.MetricCpuPct, "cpu", metric.UnitPercent, 90, 80, 90, 95, 85, 75},
+		{"net_rx_bps", store.MetricNetRxBps, "net_rx_bps", metric.UnitBytesPerSecond, 1.25e8, 1e8, 1.25e8, 1.3e8, 1.1e8, 9e7},
+		{"net_tx_bps", store.MetricNetTxBps, "net_tx_bps", metric.UnitBytesPerSecond, 1.25e8, 1e8, 1.25e8, 1.3e8, 1.1e8, 9e7},
+		{"load1_per_core", store.MetricLoad1PerCore, "load1_per_core", metric.UnitDimensionless, 2, 1, 2, 2.5, 1.5, 0.5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -118,8 +120,9 @@ func TestResourceNewMetricWindows(t *testing.T) {
 			write(6, tc.recovery)
 			eval(6, store.StateOK)
 			events := f.events(t)
-			if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[1].Transition != store.TransitionFiring {
-				t.Fatalf("events=%+v", events)
+			if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[1].Transition != store.TransitionFiring ||
+				events[0].ValueUnit != tc.unit || events[1].ValueUnit != tc.unit {
+				t.Fatalf("events=%+v want unit %q", events, tc.unit)
 			}
 		})
 	}

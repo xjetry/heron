@@ -14,6 +14,7 @@ import (
 	"time"
 	_ "time/tzdata" // 夏令时用例要真实时区库；嵌入的库让结论不随测试机的系统时区库变化。
 
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/testwait"
 )
@@ -387,11 +388,12 @@ func TestSweepExpiryFiresAndRecoversWithSpecSummaries(t *testing.T) {
 		state     store.AlertState
 		summary   string
 		value     float64
+		unit      string
 	}{
-		{"2026-09-28", store.StateFiring, "节点 node1 将于 2026-09-28 到期（剩 4 天，规则 到期）", 4},
-		{"2026-11-01", store.StateOK, "节点 node1 到期日已更新为 2026-11-01（规则 到期），告警持续 不到 1 分钟", 38},
-		{"2026-09-17", store.StateFiring, "节点 node1 已于 2026-09-17 到期（已过期 7 天，规则 到期）", -7},
-		{"", store.StateOK, "节点 node1 已清除到期日（规则 到期），告警持续 不到 1 分钟", 0},
+		{"2026-09-28", store.StateFiring, "节点 node1 将于 2026-09-28 到期（剩 4 天，规则 到期）", 4, metric.UnitDays},
+		{"2026-11-01", store.StateOK, "节点 node1 到期日已更新为 2026-11-01（规则 到期），告警持续 不到 1 分钟", 38, metric.UnitDays},
+		{"2026-09-17", store.StateFiring, "节点 node1 已于 2026-09-17 到期（已过期 7 天，规则 到期）", -7, metric.UnitDays},
+		{"", store.StateOK, "节点 node1 已清除到期日（规则 到期），告警持续 不到 1 分钟", 0, store.ValueUnitNotApplicable},
 	} {
 		f.billing(t, node1, store.Billing{ExpiresOn: step.expiresOn})
 		before := len(f.events(t))
@@ -401,8 +403,8 @@ func TestSweepExpiryFiresAndRecoversWithSpecSummaries(t *testing.T) {
 		if len(events) != before+1 {
 			t.Fatalf("expires_on %q: %d new events, want exactly 1 across two sweeps", step.expiresOn, len(events)-before)
 		}
-		if ev := events[0]; ev.NodeID != node1 || ev.Summary != step.summary || ev.Value != step.value {
-			t.Fatalf("expires_on %q: event %+v, want summary %q value %v", step.expiresOn, ev, step.summary, step.value)
+		if ev := events[0]; ev.NodeID != node1 || ev.Summary != step.summary || ev.Value != step.value || ev.ValueUnit != step.unit {
+			t.Fatalf("expires_on %q: event %+v, want summary %q value %v unit %q", step.expiresOn, ev, step.summary, step.value, step.unit)
 		}
 		wantState(t, f.e, r.ID, node1, step.state)
 		wantState(t, f.e, r.ID, node2, "")

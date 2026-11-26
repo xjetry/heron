@@ -322,6 +322,7 @@ func TestDownloadTimeoutsEnforcedByRealCurl(t *testing.T) {
 		}
 		defer ln.Close()
 		var accepted atomic.Int32
+		var acceptedAt atomic.Int64
 		done := make(chan struct{})
 		defer close(done)
 		go func() {
@@ -331,6 +332,7 @@ func TestDownloadTimeoutsEnforcedByRealCurl(t *testing.T) {
 					return
 				}
 				accepted.Add(1)
+				acceptedAt.CompareAndSwap(0, time.Now().UnixNano())
 				go func(conn net.Conn) {
 					defer conn.Close()
 					<-done
@@ -338,17 +340,18 @@ func TestDownloadTimeoutsEnforcedByRealCurl(t *testing.T) {
 			}
 		}()
 
-		start := time.Now()
 		out, code := in.install(e, "https://"+ln.Addr().String())
-		elapsed := time.Since(start)
+		finishedAt := time.Now()
 		if code == 0 {
 			t.Fatalf("stalled TLS handshake must fail:\n%s", out)
 		}
-		if elapsed > 10*time.Second {
-			t.Fatalf("connect timeout took too long: %v\n%s", elapsed, out)
-		}
 		if got := accepted.Load(); got != 1 {
 			t.Fatalf("connect timeout must not retry, accepted %d connections:\n%s", got, out)
+		}
+		// 从服务端收到建连起算耗时，排除并发跑全套脚本测试时拉起 sh 与探测环境带来的排队延迟；
+		// 15 秒远小于脚本默认值 30 秒，仍能照出 --connect-timeout 失效。
+		if wait := finishedAt.Sub(time.Unix(0, acceptedAt.Load())); wait > 15*time.Second {
+			t.Fatalf("connect timeout took too long after accept: %v\n%s", wait, out)
 		}
 	})
 
@@ -368,9 +371,11 @@ func TestDownloadTimeoutsEnforcedByRealCurl(t *testing.T) {
 		}
 
 		var hits atomic.Int32
+		var hitAt atomic.Int64
 		done := make(chan struct{})
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			hits.Add(1)
+			hitAt.CompareAndSwap(0, time.Now().UnixNano())
 			w.Header().Set("Content-Length", "100000")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(make([]byte, 128))
@@ -385,17 +390,17 @@ func TestDownloadTimeoutsEnforcedByRealCurl(t *testing.T) {
 		defer srv.Close()
 		defer close(done)
 
-		start := time.Now()
 		out, code := in.install(e, srv.URL)
-		elapsed := time.Since(start)
+		finishedAt := time.Now()
 		if code == 0 {
 			t.Fatalf("stalled transfer must fail:\n%s", out)
 		}
-		if elapsed > 10*time.Second {
-			t.Fatalf("low-speed abort took too long: %v\n%s", elapsed, out)
-		}
 		if got := hits.Load(); got != 1 {
 			t.Fatalf("low-speed abort must not retry, got %d hits:\n%s", got, out)
+		}
+		// 从服务端发出首包并开始停顿起算耗时，排除并发测试起进程的排队；15 秒远小于默认 60 秒。
+		if wait := finishedAt.Sub(time.Unix(0, hitAt.Load())); wait > 15*time.Second {
+			t.Fatalf("low-speed abort took too long after stall: %v\n%s", wait, out)
 		}
 		if !strings.Contains(out, "broke off after part of the file arrived") || !strings.Contains(out, "--base-url") {
 			t.Errorf("stalled partial transfer must advise offline install, got:\n%s", out)

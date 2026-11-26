@@ -7,6 +7,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
@@ -71,6 +72,7 @@ func TestCertAlertStateAfterIdentityCleanup(t *testing.T) {
 	}
 	_, err = db.Exec(`DROP TABLE node_list_revision;
 		ALTER TABLE node DROP COLUMN billing_anchor_day;
+		ALTER TABLE alert_event DROP COLUMN value_unit;
 		ALTER TABLE node DROP COLUMN billing_timezone;
 		ALTER TABLE node DROP COLUMN traffic_reset_minute;
 		ALTER TABLE probe_task DROP COLUMN http_status_policy;
@@ -125,7 +127,7 @@ func TestSweepCertExpiryFiresAtTheWindowEdge(t *testing.T) {
 	wantState(t, f.e, r.ID, f.ids[1], "")
 	events := f.events(t)
 	if len(events) != 1 || events[0].NodeID != f.ids[0] ||
-		events[0].Summary != "节点 node1 的证书将于 2026-10-01 到期（剩 7 天，规则 证书到期）" || events[0].Value != 7 {
+		events[0].Summary != "节点 node1 的证书将于 2026-10-01 到期（剩 7 天，规则 证书到期）" || events[0].Value != 7 || events[0].ValueUnit != metric.UnitDays {
 		t.Fatalf("events = %+v, want exactly one firing at the window edge", events)
 	}
 }
@@ -140,7 +142,7 @@ func TestSweepCertExpiryCountsDaysInTheHubZone(t *testing.T) {
 	f.sweepExpiry(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 	events := f.events(t)
-	if len(events) != 1 || events[0].Summary != "节点 node1 的证书已于 2026-09-20 到期（已过期 4 天，规则 证书到期）" || events[0].Value != -4 {
+	if len(events) != 1 || events[0].Summary != "节点 node1 的证书已于 2026-09-20 到期（已过期 4 天，规则 证书到期）" || events[0].Value != -4 || events[0].ValueUnit != metric.UnitDays {
 		t.Fatalf("events = %+v", events)
 	}
 }
@@ -172,7 +174,7 @@ func TestSweepCertExpiryRecoversWhenTheCertIsReplaced(t *testing.T) {
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 	events := f.events(t)
 	if len(events) != 2 || events[0].Transition != store.TransitionRecovered ||
-		events[0].Summary != "节点 node1 的证书到期日已更新为 2027-09-28（规则 证书到期），告警持续 不到 1 分钟" {
+		events[0].Summary != "节点 node1 的证书到期日已更新为 2027-09-28（规则 证书到期），告警持续 不到 1 分钟" || events[0].ValueUnit != metric.UnitDays {
 		t.Fatalf("events = %+v, want a renewal recovery after the firing", events)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/outbound"
 	"github.com/xjetry/heron/internal/hub/store"
 )
@@ -20,7 +21,7 @@ import (
 func templateChannel(t *testing.T, f *fixture, url string) store.NotifyChannel {
 	t.Helper()
 	cfg, err := json.Marshal(WebhookConfig{URL: url, Method: "PUT", Headers: map[string]string{"X-Secret": "s3cr3t"},
-		BodyTemplate: `{"r":{{json .Rule}},"n":{{json .Node}},"k":{{json .Kind}},"t":{{json .Transition}},"s":{{json .Summary}},"v":{{.Value}},"at":{{.At.Unix}}}`})
+		BodyTemplate: `{"r":{{json .Rule}},"n":{{json .Node}},"k":{{json .Kind}},"t":{{json .Transition}},"s":{{json .Summary}},"v":{{.Value}},"u":{{json .ValueUnit}},"at":{{.At.Unix}}}`})
 	must(t, err)
 	c, err := f.e.SaveChannel(t.Context(), store.NotifyChannel{Name: "tmpl", Kind: store.ChannelWebhook, Config: string(cfg)})
 	must(t, err)
@@ -98,29 +99,30 @@ func TestSampleEveryKindAndPhase(t *testing.T) {
 		phase   store.Transition
 		summary string
 		value   float64
+		unit    string
 	}{
-		{"offline_firing", offline(), store.TransitionFiring, "节点 node1 离线 30s（规则 离线）", 30},
-		{"offline_recovered", offline(), store.TransitionRecovered, "节点 node1 已恢复上报（规则 离线）" + tail, 0},
-		{"probe_firing", probe, store.TransitionFiring, "节点 node1 规则 P：loss_pct 50.0", 50},
-		{"probe_recovered", probe, store.TransitionRecovered, "节点 node1 规则 P：loss_pct 25.0" + tail, 25},
-		{"rtt_fixed_firing", fixedRtt, store.TransitionFiring, "节点 node1 规则 P：rtt 均值 120.0 ms，基线 80.0 ms，偏差 +50.0%（正常带 60.0–120.0 ms）", 120},
-		{"rtt_fixed_recovered", fixedRtt, store.TransitionRecovered, "节点 node1 规则 P：rtt 均值 80.0 ms，基线 80.0 ms，偏差 +0.0%（正常带 60.0–120.0 ms）" + tail, 80},
-		{"rtt_adaptive_firing", adaptiveRtt, store.TransitionFiring, "节点 node1 规则 P：rtt 均值 150.0 ms，基线 100.0 ms，偏差 +50.0%（正常带 75.0–150.0 ms）", 150},
-		{"resource_firing", resource, store.TransitionFiring, "节点 node1 CPU持续 5 分钟达到 90.0%（规则 R）", 90},
-		{"resource_recovered", resource, store.TransitionRecovered, "节点 node1 CPU持续 5 分钟不高于 70.0%，已恢复（规则 R）" + tail, 70},
-		{"traffic_firing", traffic, store.TransitionFiring, "节点 node1 本周期流量已用 80.00%（819 GiB / 1 TiB，收+发，规则 T）", 80},
-		{"traffic_recovered", traffic, store.TransitionRecovered, "节点 node1 本周期流量用量 40.00% 已低于阈值 80.00%（规则 T）" + tail, 40},
-		{"expiry_firing", expiry, store.TransitionFiring, "节点 node1 将于 2026-10-01 到期（剩 7 天，规则 E）", 7},
-		{"expiry_recovered", expiry, store.TransitionRecovered, "节点 node1 已不在提醒窗口内（规则 E）" + tail, 7},
-		{"cert_firing", cert, store.TransitionFiring, "节点 node1 的证书将于 2026-10-01 到期（剩 7 天，规则 C）", 7},
-		{"cert_recovered", cert, store.TransitionRecovered, "节点 node1 的证书已不在提醒窗口内（规则 C）" + tail, 7},
+		{"offline_firing", offline(), store.TransitionFiring, "节点 node1 离线 30s（规则 离线）", 30, metric.UnitSeconds},
+		{"offline_recovered", offline(), store.TransitionRecovered, "节点 node1 已恢复上报（规则 离线）" + tail, 0, metric.UnitSeconds},
+		{"probe_firing", probe, store.TransitionFiring, "节点 node1 规则 P：loss_pct 50.0", 50, metric.UnitPercent},
+		{"probe_recovered", probe, store.TransitionRecovered, "节点 node1 规则 P：loss_pct 25.0" + tail, 25, metric.UnitPercent},
+		{"rtt_fixed_firing", fixedRtt, store.TransitionFiring, "节点 node1 规则 P：rtt 均值 120.0 ms，基线 80.0 ms，偏差 +50.0%（正常带 60.0–120.0 ms）", 120, metric.UnitMilliseconds},
+		{"rtt_fixed_recovered", fixedRtt, store.TransitionRecovered, "节点 node1 规则 P：rtt 均值 80.0 ms，基线 80.0 ms，偏差 +0.0%（正常带 60.0–120.0 ms）" + tail, 80, metric.UnitMilliseconds},
+		{"rtt_adaptive_firing", adaptiveRtt, store.TransitionFiring, "节点 node1 规则 P：rtt 均值 150.0 ms，基线 100.0 ms，偏差 +50.0%（正常带 75.0–150.0 ms）", 150, metric.UnitMilliseconds},
+		{"resource_firing", resource, store.TransitionFiring, "节点 node1 CPU持续 5 分钟达到 90.0%（规则 R）", 90, metric.UnitPercent},
+		{"resource_recovered", resource, store.TransitionRecovered, "节点 node1 CPU持续 5 分钟不高于 70.0%，已恢复（规则 R）" + tail, 70, metric.UnitPercent},
+		{"traffic_firing", traffic, store.TransitionFiring, "节点 node1 本周期流量已用 80.00%（819 GiB / 1 TiB，收+发，规则 T）", 80, metric.UnitPercent},
+		{"traffic_recovered", traffic, store.TransitionRecovered, "节点 node1 本周期流量用量 40.00% 已低于阈值 80.00%（规则 T）" + tail, 40, metric.UnitPercent},
+		{"expiry_firing", expiry, store.TransitionFiring, "节点 node1 将于 2026-10-01 到期（剩 7 天，规则 E）", 7, metric.UnitDays},
+		{"expiry_recovered", expiry, store.TransitionRecovered, "节点 node1 已不在提醒窗口内（规则 E）" + tail, 7, metric.UnitDays},
+		{"cert_firing", cert, store.TransitionFiring, "节点 node1 的证书将于 2026-10-01 到期（剩 7 天，规则 C）", 7, metric.UnitDays},
+		{"cert_recovered", cert, store.TransitionRecovered, "节点 node1 的证书已不在提醒窗口内（规则 C）" + tail, 7, metric.UnitDays},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := tc.rule
 			r.ChannelIDs = []int64{c.ID}
 			s, err := f.e.Sample(t.Context(), r, node, tc.phase)
 			must(t, err)
-			want := Message{Rule: r.Name, Node: "node1", Kind: string(r.Kind), Transition: string(tc.phase), Summary: tc.summary, Value: tc.value, At: f.clk.Now()}
+			want := Message{Rule: r.Name, Node: "node1", Kind: string(r.Kind), Transition: string(tc.phase), Summary: tc.summary, Value: tc.value, ValueUnit: tc.unit, At: f.clk.Now()}
 			if s.Message != want {
 				t.Fatalf("message\n%+v\nwant\n%+v", s.Message, want)
 			}

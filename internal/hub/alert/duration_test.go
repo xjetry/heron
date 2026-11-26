@@ -92,7 +92,7 @@ func TestRecoveryDurationRequiresFiringState(t *testing.T) {
 	f.e.mu.Unlock()
 	tr := store.TransitionRecovered
 	cy := &cycle{batches: map[batchKey]int64{}}
-	err := f.e.apply(t.Context(), cy, r, f.ids[0], store.StateOK, false, false, "", &tr, "恢复", 0)
+	err := f.e.apply(t.Context(), cy, r, f.ids[0], store.StateOK, false, false, "", &tr, "恢复", observedValue(0))
 	f.e.writeMu.Unlock()
 	must(t, err)
 	if got := f.events(t)[0].Summary; got != "恢复" {

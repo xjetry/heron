@@ -186,12 +186,12 @@ it("图例无悬停显示每条序列的最新读数，悬停显示该时刻的�
 
 it("受控隐藏集合与悬停回调：隐藏传给 uPlot，焦点序列回报 labels 下标，legend=false 时不画图例", () => {
   const onFocus = vi.fn();
-  const { rerender, unmount } = mountChart({ data: [[0], [1], [2]], labels: ["a", "b"], unit: "ms", legend: false, hidden: new Set([1]), onFocus });
+  const { rerender, unmount } = mountChart({ data: [[0], [1], [2]], labels: ["a", "b"], unit: "milliseconds", legend: false, hidden: new Set([1]), onFocus });
   try {
     const plot = plots.at(-1)!;
     expect(screen.queryByRole("list", { name: "图例" })).toBeNull();
     expect(plot.setSeries).toHaveBeenCalledWith(2, { show: false });
-    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="ms" legend={false} hidden={new Set()} onFocus={onFocus} />);
+    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="milliseconds" legend={false} hidden={new Set()} onFocus={onFocus} />);
     expect(plot.setSeries).toHaveBeenLastCalledWith(2, { show: true });
     // uPlot 运行时在悬停时给 setSeries 钩子传 { focus: true }，d.ts 把 opts 声明成 Series，这里按运行时形状传。
     const focus = { focus: true } as unknown as uPlot.Series;
@@ -209,7 +209,7 @@ it("受控隐藏集合与悬停回调：隐藏传给 uPlot，焦点序列回报 
 });
 
 it("填充带按 labels 下标换算成 uPlot 序列下标，取上界序列的颜色", () => {
-  const { unmount } = mountChart({ data: [[0], [1], [0], [2]], labels: ["均值", "最小", "最大"], unit: "ms", soft: [false, true, true], bands: [{ lower: 1, upper: 2 }] });
+  const { unmount } = mountChart({ data: [[0], [1], [0], [2]], labels: ["均值", "最小", "最大"], unit: "milliseconds", soft: [false, true, true], bands: [{ lower: 1, upper: 2 }] });
   try {
     const opts = plots.at(-1)!.options;
     expect(opts.bands).toEqual([{ series: [3, 2], fill: `${strokeOf(opts.series[3])}33` }]);
@@ -223,7 +223,7 @@ it("填充带按 labels 下标换算成 uPlot 序列下标，取上界序列的�
 it("标签变化时用最新输入重建；隐藏集合、数据与同值的新数组只原地更新，不重建", () => {
   const first = vi.fn<(index: number | null) => void>();
   const latest = vi.fn<(index: number | null) => void>();
-  const props = { unit: "ms", legend: false } as const;
+  const props = { unit: "milliseconds", legend: false } as const;
   const { rerender, unmount } = mountChart({ ...props, data: [[0], [1], [2]], labels: ["a", "b"], soft: [false, true], bands: [{ lower: 1, upper: 0 }], hidden: new Set<number>(), onFocus: first });
   try {
     expect(plots).toHaveLength(1);
@@ -255,12 +255,12 @@ it("标签变化时用最新输入重建；隐藏集合、数据与同值的新�
 });
 
 it("浅线标记或填充带的取值变化时重建", () => {
-  const { rerender, unmount } = mountChart({ data: [[0], [1], [2]], labels: ["a", "b"], unit: "ms", soft: [false, false] });
+  const { rerender, unmount } = mountChart({ data: [[0], [1], [2]], labels: ["a", "b"], unit: "milliseconds", soft: [false, false] });
   try {
-    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="ms" soft={[false, true]} />);
+    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="milliseconds" soft={[false, true]} />);
     expect(plots).toHaveLength(2);
     expect(plots[1].options.series[2].width).toBeLessThan(plots[1].options.series[1].width as number);
-    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="ms" soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} />);
+    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="milliseconds" soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} />);
     expect(plots).toHaveLength(3);
     expect(plots[2].options.bands).toEqual([{ series: [1, 2], fill: `${strokeOf(plots[2].options.series[1])}33` }]);
   } finally {
