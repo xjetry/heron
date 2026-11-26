@@ -235,6 +235,10 @@ func (s *Service) TestAlertNotification(ctx context.Context, req *connect.Reques
 		}
 		out.Results = append(out.Results, result)
 	}
+	// 各渠道的发送都已发出（成败逐个在结果里），记录跟在发送之后：对象是样例里的规则（未保存的规则为 0）。
+	if err := s.store.RecordOperation(ctx, store.ChangeTarget{Action: store.ActionTestAlertNotification, ResourceID: req.Msg.GetSample().GetRule().GetId()}); err != nil {
+		return nil, s.operationError(err, "", "recording test alert notification failed")
+	}
 	return connect.NewResponse(out), nil
 }
 
@@ -338,6 +342,10 @@ func (s *Service) TestNotifyChannel(ctx context.Context, req *connect.Request[he
 				}
 				return nil, connect.NewError(code, err)
 			}
+			// 发送在库之外，记录只能跟在它之后：发出了而记录没写成时回答 Internal，不把它报告为成功。
+			if err := s.store.RecordOperation(ctx, store.ChangeTarget{Action: store.ActionTestNotifyChannel, ResourceID: c.ID}); err != nil {
+				return nil, s.operationError(err, "", "recording test notification failed")
+			}
 			return connect.NewResponse(&heronv1.TestNotifyChannelResponse{}), nil
 		}
 	}
@@ -345,14 +353,11 @@ func (s *Service) TestNotifyChannel(ctx context.Context, req *connect.Request[he
 }
 
 func (s *Service) ListAlertEvents(ctx context.Context, req *connect.Request[heronv1.ListAlertEventsRequest]) (*connect.Response[heronv1.ListAlertEventsResponse], error) {
-	limit := req.Msg.GetLimit()
-	if limit == 0 {
-		limit = 100
+	limit, err := listLimit(req.Msg.GetLimit(), 100, 500)
+	if err != nil {
+		return nil, err
 	}
-	if limit > 500 {
-		limit = 500
-	}
-	events, err := s.store.ListAlertEvents(ctx, req.Msg.GetNodeId(), req.Msg.GetBeforeId(), int(limit))
+	events, err := s.store.ListAlertEvents(ctx, req.Msg.GetNodeId(), req.Msg.GetBeforeId(), limit)
 	if err != nil {
 		return nil, s.operationError(err, "", "listing alert events failed")
 	}

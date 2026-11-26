@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -100,11 +101,23 @@ func (s *Store) TouchSessionAsync(hash [32]byte, now time.Time, done func(error)
 	}, done)
 }
 
+// DeleteSession 删掉一个会话行，不留操作记录：鉴权时顺手清理已过期的会话不是谁的操作。面板上的撤销与登出经
+// EndSession。
 func (s *Store) DeleteSession(ctx context.Context, hash [32]byte) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.write(ctx, deleteSessionTx(hash))
+}
+
+// EndSession 是面板结束一个会话的操作（action 为撤销或登出），经 writeChange 留记录，对象是 ListSessions 公开的会话
+// id。行不存在也算成功（重试与另一设备先撤销时目标都已达成），同样留记录。
+func (s *Store) EndSession(ctx context.Context, action ChangeAction, hash [32]byte) error {
+	return s.writeChange(ctx, ChangeTarget{Action: action, ResourceKey: hex.EncodeToString(hash[:])}, deleteSessionTx(hash))
+}
+
+func deleteSessionTx(hash [32]byte) func(*sql.Tx) error {
+	return func(tx *sql.Tx) error {
 		_, err := tx.Exec("DELETE FROM admin_session WHERE token_hash = ?", hash[:])
 		return err
-	})
+	}
 }
 
 // DeleteExpiredSessions 只按绝对过期时刻清理；空闲过期由鉴权调用方判定，

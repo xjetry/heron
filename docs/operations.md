@@ -126,6 +126,15 @@ docker exec -it heron heron-hub passwd --db /data/heron.db
 docker exec heron heron-hub security-reset --db /data/heron.db --yes
 ```
 
+## 操作记录
+
+面板「操作记录」页列出每一次成功写入：面板会话的直接操作、API token 经 `ExecuteChange` 的写入，以及 hub 自己发起的写入（目前只有到期节点的自动续期，主体显示为「hub 自身」）。每条记录有时间、主体（会话以会话 id 的前 8 位区分）、来源地址、方法、动作、对象，以及改动前后的对象快照，展开后按字段列出差异。
+
+- 快照不含任何密钥：密码与其哈希、节点与 API 凭据、Webhook 地址与模板、Telegram token、S3 secret、心跳地址、TOTP 秘密与恢复码、Passkey 材料都不进快照，只写不读的设置只记是否已设置。
+- 失败的调用（参数无效、版本过时、权限不足、测试通知发送失败）与只读调用不留记录。测试通知、hub 在线更新这类不改库的操作在动作发出之后留记录。
+- 不经面板与 API 的写入不留记录：agent 的上报与注册、指标归并与清理、告警状态推进、登录签发会话，以及在 hub 主机上执行的 `passwd`、`security-reset`、`token revoke`、`restore`。
+- 快照在 90 天后由之后的写入清空，其余字段一直保留。配置备份带着全部记录，恢复时与目标库已有的记录合并。
+
 ## 环境变量
 
 `serve` 的每个 flag 都可以用环境变量 `HERON_<FLAG>` 给出：flag 名的横线换成下划线、转大写，例如 `--offline-after` ↔ `HERON_OFFLINE_AFTER`、`--trusted-proxies` ↔ `HERON_TRUSTED_PROXIES`。同一项两处都给时以显式 flag 为准。环境变量设为空串等于显式给出空值，空值的含义与该 flag 写成空值时相同（`HERON_OFFLINE_AFTER=` 取默认值）。
@@ -173,6 +182,10 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
   某块合格的盘读不出（权限、I/O 错误）时整份逐盘读数缺失，节点诊断的采集失败项记「逐盘容量」，agent 日志点名路径；不需要监测它就把它加进排除规则。
 - 在线更新经 hub 中转（`--update-source hub`）的节点：更新器从 agent 配置里只取 `hub`、`token`、`insecure_http`，其余字段一律忽略，agent 以后新增配置项也不影响它取更新。只有本版本之前安装的更新器还会拒读它不认识的字段（写上 `disk_exclude` 后取不到更新）：这类节点先重跑一次新版安装器升级更新器，再写 `disk_exclude`（或在此之前改用 `run --disk-exclude`）；升级之后不再受 agent 配置新增字段影响。
 - agent 日志有总量上限（突发之后被压掉的行数记在下一条日志里）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
+
+## 墙钟
+
+分钟历史按 hub 收到上报时的墙钟归属，hub 主机需要 NTP 校时。墙钟快过之后被往回校（例如开机时 RTC 偏快、随后由 NTP 校正），hub 在下一次写入分钟数据或下一轮数据整理时自动清理快钟留下的痕迹：把推进到未来的数据整理水位退回按现在算的位置，删掉标在未来时刻的分钟数据（它们实际属于更早的时刻，无法还原到正确的分钟），之后的数据照常写入、照常整理。日志各记一条 Warn：`rollup watermark was ahead of the wall clock` 带回退幅度（`rolled_back`），`minute rows ahead of the wall clock deleted` 带删除行数。快钟期间的历史清理也按快钟的"现在"计算保留期，每一级最老的历史会多删掉与快出幅度等长的一段，删掉的无法找回。
 
 ## 排查
 

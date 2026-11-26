@@ -31,6 +31,8 @@ const (
 // 在拦截器里、早于入口，不在这条约束内。准入若在拿空位之前，同一来源的突发请求会在排队前各占一个
 // 读连接，按来源的在飞上限就封不住它的读并发。
 type history struct {
+	// store 也是选级的保留期来源（Store.ChooseLevel 读 Open 时给定的生效保留期）：两端都不持有自己的保留期副本，
+	// 选级与维护循环的清理按同一份保留期判定。
 	store *store.Store
 	// probes 只用来取节点当前的任务数，给单节点探测查询选首次读池（见 probeSeries）。
 	probes *probe.Registry
@@ -77,7 +79,7 @@ func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, ma
 	if err := admit(ctx); err != nil {
 		return nil, err
 	}
-	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
+	lv, step := h.store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, summary, err := h.store.QueryMetricsCoverage(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
 		h.log.Error("metric query failed", "err", err)
@@ -126,7 +128,7 @@ func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest,
 	if err := admit(ctx); err != nil {
 		return nil, err
 	}
-	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
+	lv, step := h.store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	// 序列数取节点的全部任务数，不取调用方可见的任务数：读的是这个节点全部任务的行，受限 token 只见其中一部分，
 	// 按可见数估会把同一条扫描低估进轻池，选池随调用方而变；管理与公开两端、各种 token 对同一节点同一窗口估计相同。
 	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step, h.probes.TaskCount(m.GetNodeId()))
@@ -218,7 +220,7 @@ func (h history) comparison(ctx context.Context, taskID uint64, nodeIDs []int64,
 	if err != nil {
 		return nil, err
 	}
-	lv, step := store.ChooseLevel(from, to, maxPoints)
+	lv, step := h.store.ChooseLevel(from, to, maxPoints)
 	rows, err := h.store.QueryProbeComparison(ctx, taskID, visible, from, to, lv, step)
 	if err != nil {
 		return nil, h.queryError(err, "probe comparison query failed")

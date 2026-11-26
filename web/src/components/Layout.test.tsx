@@ -92,6 +92,14 @@ it("API token 导航进入应用的 token 页路由", async () => {
   expect(await screen.findByRole("heading", { name: "API token" })).toBeInTheDocument();
 });
 
+it("操作记录导航进入应用的操作记录页路由", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listOperations: async () => ({ operations: [] }) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "操作记录" });
+  expect(link).toHaveAttribute("href", "/operations");
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "操作记录" })).toBeInTheDocument();
+});
+
 it("外观导航进入应用的外观页路由", async () => {
   renderWithAdmin({ listNodes: async () => ({ nodes: [] }), getSettings: async () => ({ settings: { theme: "auto" } }) }, appRouter.routes, "/nodes");
   const link = screen.getByRole("link", { name: "外观" });

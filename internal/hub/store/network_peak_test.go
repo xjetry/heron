@@ -22,6 +22,7 @@ func TestNetworkPeaksSurviveEveryRollupAndQueryBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clk.SetWall(time.Unix(base+7200, 0))
 	for i, rate := range []uint64{0, 900, 10} {
 		b := metric.NewBucket()
 		b.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)})
@@ -30,7 +31,6 @@ func TestNetworkPeaksSurviveEveryRollupAndQueryBucket(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	clk.SetWall(time.Unix(base+7200, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}

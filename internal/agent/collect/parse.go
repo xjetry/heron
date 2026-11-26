@@ -11,17 +11,18 @@ import (
 )
 
 type cpuTimes struct {
-	idle, total, steal, iowait uint64
-	// hasSteal、hasIowait 表示来源是否给出该累计计数：darwin 两者都不可得，老内核可能没有 steal。
-	// 缺失时对应指标不设置，而不是报 0。
-	hasSteal, hasIowait bool
+	idle, total, steal, iowait, softirq uint64
+	// hasSteal、hasIowait、hasSoftirq 表示来源是否给出该累计计数：darwin 三者都不可得，老内核可能没有
+	// softirq 或 steal。缺失时对应指标不设置，而不是报 0。
+	hasSteal, hasIowait, hasSoftirq bool
 }
 
 // parseStat 取 /proc/stat 首行的聚合 CPU 时间。
 //
 // 计数器个数随内核版本变化：user nice system idle iowait 自 2.5.41 起都在，
-// irq softirq steal 陆续加入，guest 与 guest_nice 已计入 user 与 nice 不再相加。
-// 所以至少要 5 个、最多取前 8 个；不足 5 个是格式错误，不能越界。
+// irq softirq（第 6、7 个）自 2.6.0、steal（第 8 个）自 2.6.11 加入，guest 与 guest_nice 已计入
+// user 与 nice 不再相加。所以至少要 5 个、最多取前 8 个；不足 5 个是格式错误，不能越界。
+// 某个计数是否存在只看计数器个数：5 个时没有 softirq 与 steal，7 个时没有 steal。
 func parseStat(r io.Reader) (cpuTimes, error) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
@@ -36,20 +37,22 @@ func parseStat(r io.Reader) (cpuTimes, error) {
 		if len(counters) > 8 {
 			counters = counters[:8]
 		}
-		c := cpuTimes{hasIowait: true, hasSteal: len(counters) > 7}
+		c := cpuTimes{hasIowait: true, hasSoftirq: len(counters) > 6, hasSteal: len(counters) > 7}
 		for i, s := range counters {
 			v, err := strconv.ParseUint(s, 10, 64)
 			if err != nil {
 				return cpuTimes{}, err
 			}
 			c.total += v
-			if i == 3 || i == 4 {
+			switch i {
+			case 3:
 				c.idle += v
-			}
-			if i == 4 {
+			case 4:
+				c.idle += v
 				c.iowait = v
-			}
-			if i == 7 {
+			case 6:
+				c.softirq = v
+			case 7:
 				c.steal = v
 			}
 		}
@@ -58,30 +61,39 @@ func parseStat(r io.Reader) (cpuTimes, error) {
 	return cpuTimes{}, errors.New("/proc/stat: no cpu line")
 }
 
-// cpuRatios 由两次 /proc/stat 采样算出忙碌、steal、iowait 三个占比，共用同一个分母与有效性判定：
-// Δtotal = 0 或任一被采用的计数回退，就整次放弃，三项一起缺失，不单独保留某一项。
-// idle 含 iowait，所以 cpu_pct 把 iowait 计为不忙（忙时不含 iowait）；steal 与 iowait 是另两个
-// 独立占比，都不是 cpu_pct 的子集，三者可以同时有值。
-func cpuRatios(prev, cur cpuTimes) (busy, steal, iowait float64, ok bool) {
-	if cur.total <= prev.total || cur.idle < prev.idle || cur.steal < prev.steal || cur.iowait < prev.iowait {
-		return 0, 0, 0, false
+// cpuShares 是一次差分得出的各项占比，百分比，分母都是同一个 Δtotal。
+type cpuShares struct{ busy, steal, iowait, softirq float64 }
+
+// cpuRatios 由两次 /proc/stat 采样算出忙碌、steal、iowait、softirq 四个占比，共用同一个分母与有效性判定：
+// Δtotal = 0 或任一被采用的计数回退，就整次放弃，四项一起缺失，不单独保留某一项。
+// 分母是 parseStat 相加的前 8 个计数，忙碌 = 1 − Δidle/Δtotal，而 idle 含 iowait：iowait 计为不忙，
+// 在 cpu_pct 之外；steal 与 softirq 不在 idle 里，计入忙碌，是 cpu_pct 里可以单独看的部分。
+// steal、iowait、softirq 各取各的计数，彼此不重叠。来源没有给出的计数（has* 为假）占比留 0，
+// 由调用方按 has* 决定不设置。
+func cpuRatios(prev, cur cpuTimes) (cpuShares, bool) {
+	if cur.total <= prev.total || cur.idle < prev.idle || cur.steal < prev.steal || cur.iowait < prev.iowait ||
+		cur.softirq < prev.softirq {
+		return cpuShares{}, false
 	}
 	dt := float64(cur.total - prev.total)
-	busy = 100 * (1 - float64(cur.idle-prev.idle)/dt)
-	busy = min(max(busy, 0), 100)
+	var s cpuShares
+	s.busy = min(max(100*(1-float64(cur.idle-prev.idle)/dt), 0), 100)
 	if cur.hasSteal {
-		steal = 100 * float64(cur.steal-prev.steal) / dt
+		s.steal = 100 * float64(cur.steal-prev.steal) / dt
 	}
 	if cur.hasIowait {
-		iowait = 100 * float64(cur.iowait-prev.iowait) / dt
+		s.iowait = 100 * float64(cur.iowait-prev.iowait) / dt
 	}
-	return busy, steal, iowait, true
+	if cur.hasSoftirq {
+		s.softirq = 100 * float64(cur.softirq-prev.softirq) / dt
+	}
+	return s, true
 }
 
 // cpuPercent 是 cpu_pct 的取值入口，判据与 cpuRatios 相同。
 func cpuPercent(prev, cur cpuTimes) (float64, bool) {
-	busy, _, _, ok := cpuRatios(prev, cur)
-	return busy, ok
+	s, ok := cpuRatios(prev, cur)
+	return s.busy, ok
 }
 
 type memInfo struct{ total, available, swapTotal, swapFree uint64 }

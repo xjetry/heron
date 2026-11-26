@@ -20,6 +20,7 @@ import { Storage } from "./pages/Storage";
 import { Sessions } from "./pages/Sessions";
 import { Security } from "./pages/Security";
 import { Updates } from "./pages/Updates";
+import { Operations } from "./pages/Operations";
 
 // basename 与 hub 的挂载路径一致。路由不做鉴权判断：谁都能打开任何页面，
 // 页面里的第一次请求得到 Unauthenticated 就会被数据层送去登录。
@@ -42,6 +43,7 @@ export const router = createBrowserRouter(
         { path: "silences", Component: Silences },
         { path: "channels", Component: Channels },
         { path: "tokens", Component: ApiTokens },
+        { path: "operations", Component: Operations },
         { path: "appearance", Component: Appearance },
         { path: "themes", Component: Themes },
         { path: "storage", Component: Storage },

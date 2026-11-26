@@ -28,8 +28,11 @@ func (s *Store) AdminSecurity(ctx context.Context) (AdminSecurity, error) {
 // CommitAdminSecurity 将校验依据、一次性因子消费和会话签发放在同一个事务中裁决。
 // source 只在 session != nil 时有意义：签发该会话的登录请求的来源地址（规范文本，空串 = 未知），
 // 与会话行一起写入，事后不可由别的请求改。
-func (s *Store) CommitAdminSecurity(ctx context.Context, before AdminSecurity, data string, revoke bool, session *[32]byte, now, expires time.Time, source string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+// action 是面板安全操作（SecurityAction 的各种类）的写目标，经 writeChange 留记录；登录签发会话与启动时导入来源
+// 不是操作记录链的一员，传 0——那些路径的 ctx 里没有直调审计，writeChange 等同 write；带着审计传 0 则认领失败、
+// 整个提交被拒绝，不会留下一条没有动作的记录。
+func (s *Store) CommitAdminSecurity(ctx context.Context, action ChangeAction, before AdminSecurity, data string, revoke bool, session *[32]byte, now, expires time.Time, source string) error {
+	return s.writeChange(ctx, ChangeTarget{Action: action}, func(tx *sql.Tx) error {
 		if before.SessionHash != nil {
 			var count int
 			if err := tx.QueryRow(`SELECT count(*) FROM admin_session WHERE token_hash=? AND expires_at>? AND last_used_at>?`, before.SessionHash[:], now.Unix(), now.Add(-24*time.Hour).Unix()).Scan(&count); err != nil {
