@@ -30,7 +30,8 @@ import (
 // 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。STUB_START_NO_PROCESS
 // 让 start 返回 0 却不起进程。STUB_RELOAD_FAILS 让 daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后
 // 开始失败；STUB_IS_ENABLED_FAILS_WITH_RELOAD 让 is-enabled 在 reload 失败时一起失败。STUB_SYSTEMCTL_FAILS 与
-// STUB_SYSTEMCTL_TERM 同 install.sh 的替身：参数串与前者相同时失败，与后者相同时给安装脚本发 SIGTERM。
+// STUB_SYSTEMCTL_TERM 同 install.sh 的替身：参数串与前者相同时失败（失败之前执行 stubFailure），与后者相同时给安装
+// 脚本发 SIGTERM。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 是三个脚本共用的 fileCurl；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -47,8 +48,10 @@ if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$HERON_INSTALL_ROO
 `,
 	"systemctl": `#!/bin/sh
 cat > /dev/null
-echo "systemctl $*" >> "$STUB_STATE/calls"
-[ "$*" != "${STUB_SYSTEMCTL_FAILS-}" ] || { echo "systemctl $*: failed" >&2; exit 1; }
+` + stubSignalAfterFailure + `echo "systemctl $*" >> "$STUB_STATE/calls"
+if [ "$*" = "${STUB_SYSTEMCTL_FAILS-}" ]; then
+` + stubFailure + `  echo "systemctl $*: failed" >&2; exit 1
+fi
 [ "$*" != "${STUB_SYSTEMCTL_TERM-}" ] || kill -TERM "$PPID"
 case "$*" in
   "show heron-updater-hub -p ActiveState --value") echo "${STUB_UPDATER_STATE:-active}"; exit 0;;

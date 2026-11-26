@@ -39,7 +39,10 @@ usage() {
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
 }
-fail() { echo "$*" >&2; exit 1; }
+# 退出处理及其调用链用这个函数写 stderr：理由同 install.sh 的 warn（bash 3.2 内建写不可写 fd 失败后残留 stdout 缓冲，
+# 污染后续 $(...) 命令替换捕获）。放在子 shell 里写，失败时缓冲随子进程丢弃，不污染父 shell。
+warn() { ( printf '%s\n' "$*" >&2 ); }
+fail() { warn "$*"; exit 1; }
 # 写回的单元一行一条指令，参数里带换行会把 ExecStart 断成两行；回车一并拒绝，不依赖 systemd 对行内回车的处理。
 # 命令行覆盖值按行暂存到合并那一步，带换行的值还会被拆成两个参数，所以解析命令行时就要拒绝。
 reject_line_breaks() {
@@ -92,6 +95,23 @@ fi
 (umask 077; touch "$INSTALL_LOCK")
 exec 9>>"$INSTALL_LOCK"
 flock -n 9 </dev/null || fail 'another heron-hub installer is running'
+
+# 暂存文件一律命名为"<目标路径>.tmp.<安装器的 pid>"（下面两个 *_TMP），在目标所在目录写好再 mv 过去，退出时由 on_exit
+# 删掉。安装器被 SIGKILL、断电打断时 on_exit 不执行，暂存文件留在 /usr/local/bin 里；pid 每次不同，之后的运行既不覆盖
+# 也不认得它们。所以每次启动按同一命名规则回收：只删 pid 部分全是数字的普通文件（不跟随链接），且最后修改超过一天
+# （-mmin +1440，GNU find、busybox find 与 BSD find 实测同一口径），与 install.sh 同一条规则。工作目录在 mktemp 的临时
+# 目录里，归系统的临时目录清理管，不在此列。
+BIN_TMP=$BIN.tmp.$$
+UPDATER_TMP=$UPDATER_BIN.tmp.$$
+remove_stale_temps() {
+  for target in "$@"; do
+    for f in "$target".tmp.*; do
+      case ${f#"$target".tmp.} in ''|*[!0-9]*) continue;; esac
+      if [ -f "$f" ] && [ ! -L "$f" ] && [ -n "$(find "$f" -prune -mmin +1440)" ]; then rm -f "$f"; fi
+    done
+  done
+}
+remove_stale_temps "$BIN" "$UPDATER_BIN"
 
 confirm_removal() {
   [ "$YES" = 0 ] || return 0
@@ -202,9 +222,11 @@ delete_account() {
 # - 单元的 User= 与 ExecStart 保证服务进程以该用户运行、可执行文件为 $BIN；两者改变时须同步修改判据。
 # exe 链接的目标在二进制被 mv 覆盖后带 " (deleted)" 后缀，一并匹配。读不出 exe 的活进程按本服务的进程
 # 计入（宁可误报不漏判）；僵尸进程没有 exe，已退出待收尸，不计。
+# 判不了时报出原因、返回 1，不 fail 退出：rollback_hub 经 confirm_service_started 也调用它，退出处理里的 exit 会让回滚
+# 停在半路。由调用方决定失败的后果。
 scan_svc_pids() {
   svc_pids=""
-  [ -r "$PROC/self/status" ] || fail 'cannot inspect processes: /proc is not mounted'
+  [ -r "$PROC/self/status" ] || { warn 'cannot inspect processes: /proc is not mounted'; return 1; }
   for s in "$PROC"/[0-9]*/status; do
     if euid=$(awk '$1 == "Uid:" { print $3; exit }' "$s" 2>/dev/null); then
       if [ "$euid" = "$1" ]; then
@@ -217,7 +239,7 @@ scan_svc_pids() {
           [ "$state" = Z ] || svc_pids="$svc_pids $p"
         fi
       fi
-    elif [ -e "$s" ]; then fail "cannot read $s"; fi
+    elif [ -e "$s" ]; then warn "cannot read $s"; return 1; fi
   done
 }
 stop_service() {
@@ -226,7 +248,7 @@ stop_service() {
   svc_uid=$(id -u "$SVC_USER")
   polls=0
   while :; do
-    scan_svc_pids "$svc_uid"
+    scan_svc_pids "$svc_uid" || exit 1
     [ -n "$svc_pids" ] || return 0
     [ "$polls" -lt 10 ] || fail "heron-hub is still running: uid $svc_uid processes:$svc_pids"
     sleep 1
@@ -234,48 +256,50 @@ stop_service() {
   done
 }
 confirm_service_started() {
-  # 失败只 return 1，不 fail 退出：rollback_hub 也调用它，在 EXIT trap 里 exit 会打断回滚余下的步骤。
-  svc_uid=$(id -u "$SVC_USER") || { echo 'no service user heron-hub; see journalctl -u heron-hub' >&2; return 1; }
+  # 失败只 return 1，不 fail 退出：rollback_hub 也调用它，退出处理里的 exit 会让回滚停在半路。退出处理关掉了 set -e，
+  # 扫描失败要显式 return，否则会拿空的 svc_pids 往下判。
+  svc_uid=$(id -u "$SVC_USER") || { warn 'no service user heron-hub; see journalctl -u heron-hub'; return 1; }
   polls=0; pid=""
   while :; do
-    scan_svc_pids "$svc_uid"
+    scan_svc_pids "$svc_uid" || return 1
     if [ -n "$svc_pids" ]; then pid=${svc_pids# }; pid=${pid%% *}; break; fi
-    if [ "$polls" -ge 10 ]; then echo 'heron-hub did not start; see journalctl -u heron-hub' >&2; return 1; fi
+    if [ "$polls" -ge 10 ]; then warn 'heron-hub did not start; see journalctl -u heron-hub'; return 1; fi
     sleep 1
     polls=$((polls + 1))
   done
   sleep 3
-  scan_svc_pids "$svc_uid"
+  scan_svc_pids "$svc_uid" || return 1
   case " $svc_pids " in *" $pid "*) return 0;; esac
-  echo "heron-hub did not stay running (pid $pid); see journalctl -u heron-hub" >&2
+  warn "heron-hub did not stay running (pid $pid); see journalctl -u heron-hub"
   return 1
 }
-# 停服务之后、启动确认成功之前的任何失败退出都由 on_exit 调到这里：换过二进制就把 .bak 换回来，库备份完整时把三个
+# 停服务确认完成（ROLLBACK 置 1）之后、启动确认成功之前的任何失败退出都由 on_exit 调到这里：换过二进制就把 .bak 换回来，库备份完整时把三个
 # 库文件也换回来，再按 systemd 重启旧版本。库文件必须一起回滚：候选 hub 在启动确认之前就会以 MigrateSchema 打开库
 # （cmd/hub/serve.go 的 store.Open）。比本二进制新的库由 Store 拒绝打开，只换二进制会把 hub 停在"旧程序
 # 打不开新库"。库备份没做完（DB_BACKED_UP=0）时候选 hub 还没启动过，库原样未动；这时不能拿可能只复制了一半的
 # .bak 去覆盖它，也不能按"备份时不存在"删掉原库正在用的 -wal。停服务时没有旧二进制（首次安装）就没有可回滚的
 # 版本，保持 hub 已停、脚本非零退出。安全检查失败（RESTART_ON_ROLLBACK=0）只换回文件，不启动：那些失败要人看过
-# 再重跑。它在 EXIT trap 里执行，set -e 仍然生效：每一步都放在条件里，失败只报告；换不回去的 .bak 留给人手工恢复
+# 再重跑。它只由 on_exit 调用，那时信号已被忽略、set -e 已关闭、父 shell 的 stdout 缓冲已清空（理由见 on_exit 与 warn）：
+# 每一步都写成条件式，失败只报告，写诊断经 warn 隔离在子 shell，失败也不中断或不污染命令替换；换不回去的 .bak 留给人手工恢复
 # （KEEP_BAK=1，on_exit 不删）。读 stdin 的命令都显式 </dev/null：脚本经 curl | sh 从 stdin 来。
 rollback_hub() {
   [ "$HAD_PREVIOUS" = 1 ] || return 0
-  echo "installation failed after heron-hub was stopped; rolling back to the previous version" >&2
+  warn "installation failed after heron-hub was stopped; rolling back to the previous version"
   systemctl stop heron-hub </dev/null || true
   if [ "$BACKED_UP" = 1 ]; then
     if ! mv -f "$BIN_BAK" "$BIN"; then
       KEEP_BAK=1
-      echo "failed to restore the previous binary; it is kept at $BIN_BAK" >&2
+      warn "failed to restore the previous binary; it is kept at $BIN_BAK"
       return 0
     fi
-    echo "restored the previous binary" >&2
+    warn "restored the previous binary"
   fi
   if [ "$DB_BACKED_UP" = 1 ]; then
     for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
       if [ -e "$file.bak" ]; then
         if ! { mv -f "$file.bak" "$file" && chown "$SVC_USER:$SVC_USER" "$file" && chmod 0600 "$file"; }; then
           KEEP_BAK=1
-          echo "failed to restore $file; the copy taken before the upgrade is kept at $file.bak" >&2
+          warn "failed to restore $file; the copy taken before the upgrade is kept at $file.bak"
           return 0
         fi
       else
@@ -283,22 +307,22 @@ rollback_hub() {
         rm -f "$file" || true
       fi
     done
-    echo "restored the previous database" >&2
+    warn "restored the previous database"
   fi
   [ "$RESTART_ON_ROLLBACK" = 1 ] || return 0
   # 停服务后收紧成 0750 的数据目录放回 0770，与正常路径收尾相同：0750 下旧 hub 建不了 WAL/SHM。走到这里说明
   # 安全检查都已通过（没通过的走 fail_stopped，上一行已返回）。
-  if [ "$DATA_LOCKED" = 1 ] && ! chmod 0770 "$DATA"; then echo "failed to reopen $DATA to heron-hub" >&2; fi
+  if [ "$DATA_LOCKED" = 1 ] && ! chmod 0770 "$DATA"; then warn "failed to reopen $DATA to heron-hub"; fi
   if systemctl start heron-hub </dev/null; then
     # start 返回 0 即已交给 systemd（Restart=always），与正常路径成功后的口径一致：不再补"hub 已停"。
     EXIT_HINT=""
     if confirm_service_started; then
-      echo "the previous heron-hub is running again" >&2
+      warn "the previous heron-hub is running again"
     else
-      echo "the previous heron-hub did not stay running; see journalctl -u heron-hub" >&2
+      warn "the previous heron-hub did not stay running; see journalctl -u heron-hub"
     fi
   else
-    echo "failed to start the previous heron-hub; see journalctl -u heron-hub" >&2
+    warn "failed to start the previous heron-hub; see journalctl -u heron-hub"
   fi
 }
 # 数据目录与三个库文件的形态核对，停服前的预检与停服后的复检共用。停服后，目录本身的复检在收紧目录之前，
@@ -350,10 +374,60 @@ prepare_updater() {
   fi
 }
 restore_updater() {
-  if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-hub </dev/null || echo 'failed to restore heron-updater-hub; start it manually' >&2; fi
+  if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-hub </dev/null || warn 'failed to restore heron-updater-hub; start it manually'; fi
 }
-trap restore_updater EXIT
-trap 'exit 1' INT TERM HUP
+
+# 回滚状态（rollback_hub 的读者）：ROLLBACK 在停服务确认完成之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
+# 旧二进制；BACKED_UP 记旧二进制是否已改名成 .bak；DB_BACKED_UP 记三个库文件是否都已完整复制；DATA_LOCKED 记数据目录
+# 是否正处于停服务后的 0750；RESTART_ON_ROLLBACK 在安全检查失败时清 0；KEEP_BAK 记回滚换不回去、要留给人手工恢复的 .bak。
+# DB_BAK_WRITTEN 记本次运行是否已开始写库的 .bak；work 是下载解包用的工作目录，建出之前为空。
+BIN_BAK=$BIN.bak
+ROLLBACK=0
+HAD_PREVIOUS=0
+BACKED_UP=0
+DB_BACKED_UP=0
+DB_BAK_WRITTEN=0
+DATA_LOCKED=0
+RESTART_ON_ROLLBACK=1
+KEEP_BAK=0
+work=""
+# 停服务之后的失败退出先由 rollback_hub 回滚。各步的报错只说自己的原因，失败退出时在报错之后补一句现状与该做什么，
+# 免得人以为旧服务还在跑。EXIT_HINT 随步骤更新，空串表示不必补（旧版本重新交给 systemd 或正常路径成功后清空）。
+EXIT_HINT=""
+# 退出处理，本脚本唯一的 EXIT trap：停服务之后的失败退出要回滚（rollback_hub），工作目录、暂存文件与本次写出的库副本
+# 要删，维护握手停掉的更新器要拉起来（restore_updater），失败时补上现状提示。每一步只看自己的状态变量，所以它在脚本
+# 任何位置退出都做得对。这些必须在任何退出方式下做完，靠进门的两步保证：
+# - 先忽略 HUP、INT、QUIT、TERM、TSTP、PIPE。退出处理期间再来的信号（SSH 断开的 SIGHUP、再按一次 Ctrl-C、外部 TERM）
+#   若仍按下面的 trap 转成 exit，会在这里直接结束脚本，回滚停在半路：旧二进制留在 .bak、服务停着、数据目录可能留在
+#   0750；SIGPIPE（tee 之类的读端先退出）与 Ctrl-Z 也一样。忽略的信号由之后启动的子进程继承（execve 保留 SIG_IGN），
+#   回滚里的 systemctl 因而也不被同一次挂断打断；hub 由 systemd 派生，不经本脚本 fork，不继承。
+# - 再关掉 set -e，并将父 shell 的 stdout 缓冲刷到 /dev/null 清空。写诊断在这里会失败：SSH 断开后写终端报 EIO，
+#   读端退出后写管道报 EPIPE（PIPE 已忽略，不再被它杀掉），set -e 下这一条输出失败就会结束脚本。回滚与清理的每一步
+#   都写成条件式、失败只报告，不依赖 set -e；刷空缓冲配合 warn 子 shell 隔离，防止 bash 3.2 下写失败残留的缓冲污染
+#   回滚里的 $(...) 命令替换（见 warn）。
+# rc 必须第一个取：之后的任何命令都会改写 $?。
+# 库的 .bak 只删本次运行写出的（DB_BAK_WRITTEN）：回滚用 mv 把它们换回去，正常路径在启动确认之后才删，没复制完的残片
+# 在这里删；别的运行留下的（上次回滚换不回去、留给人手工恢复的）不归这次处理。二进制的 .bak 不在这里删：回滚换回、
+# 或成功后删；回滚换不回去时它是旧版本仅存的一份（KEEP_BAK 同时保住库的 .bak）。
+on_exit() {
+  rc=$?
+  trap '' HUP INT QUIT TERM TSTP PIPE
+  set +e
+  echo >/dev/null
+  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_hub; fi
+  if [ -n "$work" ]; then rm -rf "$work"; fi
+  rm -f "$BIN_TMP" "$UPDATER_TMP"
+  if [ "$DB_BAK_WRITTEN" = 1 ] && [ "$KEEP_BAK" = 0 ]; then
+    rm -f "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
+  fi
+  restore_updater
+  if [ "$rc" != 0 ] && [ -n "$EXIT_HINT" ]; then warn "$EXIT_HINT"; fi
+}
+trap on_exit EXIT
+# EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，所以把会终止
+# 脚本的信号都转成 exit 1：Ctrl-C（INT）、Ctrl-\（QUIT）、SSH 断开（HUP）、外部 TERM、输出管道的读端退出（PIPE）
+# 都经 on_exit 回滚、清理。
+trap 'exit 1' HUP INT QUIT TERM PIPE
 if [ "$UNINSTALL" = 1 ]; then
   confirm_removal
   prepare_updater
@@ -396,7 +470,9 @@ else fail "neither curl nor wget is available to download $PKG"; fi
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required to verify downloads'
 # --base-url 只改变从哪里取字节，接受哪些字节仍由内嵌清单决定。
 [ -n "$BASE_URL" ] || BASE_URL=$REPO/releases/download/$RELEASE_VERSION
-is_https() { case "$1" in https://*) return 0;; esac; return 1; }
+# URL 的 scheme 不区分大小写，理由同 install.sh 的 is_https：区分大小写会让 --base-url HTTPS://… 漏掉下载只走 https 的
+# 限制。
+is_https() { case "$1" in [Hh][Tt][Tt][Pp][Ss]://*) return 0;; esac; return 1; }
 ca_bundle_present() {
   for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem; do
     [ ! -f "$ROOT$f" ] || return 0
@@ -418,43 +494,68 @@ if ! ca_bundle_present; then
   ca_bundle_present || fail 'ca-certificates installation did not produce a CA bundle'
 fi
 
-work=$(mktemp -d)
-BIN_TMP=$BIN.tmp.$$
-BIN_BAK=$BIN.bak
-UPDATER_TMP=$UPDATER_BIN.tmp.$$
-# 回滚状态（rollback_hub 的读者）：ROLLBACK 在停服务之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有旧
-# 二进制；BACKED_UP 记旧二进制是否已改名成 .bak；DB_BACKED_UP 记三个库文件是否都已完整复制；DATA_LOCKED 记数据目录
-# 是否正处于停服务后的 0750；RESTART_ON_ROLLBACK 在安全检查失败时清 0；KEEP_BAK 记回滚换不回去、要留给人手工恢复的 .bak。
-ROLLBACK=0
-HAD_PREVIOUS=0
-BACKED_UP=0
-DB_BACKED_UP=0
-DATA_LOCKED=0
-RESTART_ON_ROLLBACK=1
-KEEP_BAK=0
-# 停服务之后的失败退出先由 rollback_hub 回滚。各步的报错只说自己的原因，失败退出时在报错之后补一句现状与该做什么，
-# 免得人以为旧服务还在跑。EXIT_HINT 随步骤更新，空串表示不必补（旧版本重新交给 systemd 或正常路径成功后清空）。
-# 库的 .bak 在这里清：回滚用 mv 把它们换回去，正常路径在启动确认之后才删，没复制完的残片也在这里删。二进制的 .bak
-# 不在这里删：回滚换回、或成功后删；回滚换不回去时它是旧版本仅存的一份（KEEP_BAK 同时保住库的 .bak）。
-EXIT_HINT=""
-on_exit() {
-  rc=$?
-  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_hub; fi
-  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"
-  [ "$KEEP_BAK" = 1 ] || rm -f "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
-  restore_updater
-  if [ "$rc" != 0 ] && [ -n "$EXIT_HINT" ]; then echo "$EXIT_HINT" >&2; fi
-}
 # 安全检查在停服务之后失败：回滚只换回文件、不启动，留给人查看后重跑（RESTART_ON_ROLLBACK 见 rollback_hub）。
 fail_stopped() { RESTART_ON_ROLLBACK=0; fail "$@"; }
-trap on_exit EXIT
-trap 'exit 1' INT TERM HUP
-dl() {
-  if [ "$FETCH" = curl ]; then
-    if is_https "$1"; then curl --proto '=https' --proto-redir '=https' -fsSL -o "$2" "$1" </dev/null
-    else curl -fsSL -o "$2" "$1" </dev/null; fi
-  else wget -q -O "$2" "$1" </dev/null; fi
+
+# 下载的超时与重试，数值、依据与 wget 分支的差异见 install.sh 的同名段落，两处同一套规则。
+DL_CONNECT_TIMEOUT=30
+DL_SPEED_LIMIT=1024
+DL_STALL_TIME=60
+DL_TRIES=5
+DL_RETRY_DELAY=5
+WGET_BUSYBOX=0
+if [ "$FETCH" = wget ] && wget --help </dev/null 2>&1 | grep -qi busybox; then WGET_BUSYBOX=1; fi
+# 下载一次。curl 在 stdout 写 "<HTTP 状态码> <收到的正文字节数>"（-w；失败时照样写，连不上时是 "000 0"，实测）。
+fetch_once() {
+  if [ "$FETCH" = wget ]; then
+    set -- -q -T "$DL_STALL_TIME" -O "$2" "$1"
+    [ "$WGET_BUSYBOX" = 1 ] || set -- --tries=1 "$@"
+    wget "$@" </dev/null
+    return
+  fi
+  url=$1; dest=$2
+  set --
+  # 下载地址为 https 时，请求和重定向都只走 https。http（本地验收）不加：--proto '=https' 会拒绝它。wget 没有对应开关。
+  if is_https "$url"; then set -- --proto '=https' --proto-redir '=https'; fi
+  curl "$@" --connect-timeout "$DL_CONNECT_TIMEOUT" --speed-limit "$DL_SPEED_LIMIT" --speed-time "$DL_STALL_TIME" \
+    -fsSL -w '%{http_code} %{size_download}' -o "$dest" "$url" </dev/null
 }
+dl() {
+  attempt=1
+  while :; do
+    rm -f "$2"
+    dl_rc=0
+    dl_out=$(fetch_once "$1" "$2") || dl_rc=$?
+    [ "$dl_rc" != 0 ] || return 0
+    retry=0
+    if [ "$FETCH" = curl ]; then
+      dl_status=${dl_out%% *}; dl_size=${dl_out##* }
+      what="curl exit $dl_rc"
+      case "$dl_status" in 502|503|504) retry=1; what="HTTP $dl_status";; esac
+      case "$dl_rc" in 16|18|35|52|55|56|92) [ "$dl_size" != 0 ] || retry=1;; esac
+      partial=0; [ "$dl_size" = 0 ] || [ -z "$dl_size" ] || partial=1
+    else
+      what="wget exit $dl_rc"
+      partial=0; [ ! -s "$2" ] || partial=1
+      [ "$partial" = 1 ] || retry=1
+    fi
+    if [ "$retry" = 0 ]; then
+      if [ "$partial" = 1 ]; then
+        echo "download of $1 broke off after part of the file arrived ($what); the link is too slow or unstable to download directly: fetch the release files another way into a local directory or a nearby web server, then rerun with --base-url pointing there" >&2
+      fi
+      return 1
+    fi
+    if [ "$attempt" -ge "$DL_TRIES" ]; then
+      echo "download of $1 failed $DL_TRIES times ($what); giving up" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    echo "download of $1 failed ($what); retrying in ${DL_RETRY_DELAY}s (attempt $attempt of $DL_TRIES)" >&2
+    sleep "$DL_RETRY_DELAY"
+  done
+}
+
+work=$(mktemp -d)
 dl "$BASE_URL/$PKG" "$work/$PKG"
 # sha256sum 的输出以摘要开头、空白之后是文件名（GNU 与 busybox 相同）；它失败时摘要为空，同样按不符拒绝。
 GOT_SHA256=$(sha256sum "$work/$PKG" </dev/null) || GOT_SHA256=""
@@ -712,6 +813,7 @@ DATA_LOCKED=1
 db_files_ok || fail_stopped "database files changed after the pre-stop check; $DATA stays locked at 0750 until you inspect it and rerun the installer"
 # 新建的空库与已有的库走同一个交还步骤；umask 077 让它在交还之前也只有 root 可读。
 [ -e "$DATA/heron.db" ] || (umask 077 && : > "$DATA/heron.db")
+DB_BAK_WRITTEN=1
 for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
   [ -e "$file" ] || continue
   chown "$SVC_USER:$SVC_USER" "$file"

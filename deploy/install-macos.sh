@@ -64,6 +64,22 @@ fi
 
 [ "$(id -u)" = 0 ] || { echo "install-macos.sh must run as root" >&2; exit 1; }
 
+# 暂存文件命名为"<目标路径>.tmp.<安装器的 pid>"（BIN_TMP），在目标所在目录写好再 mv 过去，退出时由 on_exit 删掉。
+# 安装器被 SIGKILL、断电打断时 on_exit 不执行，暂存文件留在 /usr/local/bin 里；pid 每次不同，之后的运行既不覆盖也不
+# 认得它们。所以每次启动按同一命名规则回收：只删 pid 部分全是数字的普通文件（不跟随链接），且最后修改超过一天
+# （-mmin +1440，BSD find 与 GNU、busybox find 实测同一口径）——同时在跑的另一次安装（本脚本没有安装锁）正在写的暂存
+# 文件不到一天，不会被删。工作目录在 mktemp 的临时目录里，归系统的临时目录清理管，不在此列。
+BIN_TMP=$BIN.tmp.$$
+remove_stale_temps() {
+  for target in "$@"; do
+    for f in "$target".tmp.*; do
+      case ${f#"$target".tmp.} in ''|*[!0-9]*) continue;; esac
+      if [ -f "$f" ] && [ ! -L "$f" ] && [ -n "$(find "$f" -prune -mmin +1440)" ]; then rm -f "$f"; fi
+    done
+  done
+}
+remove_stale_temps "$BIN"
+
 # 停服务后确认进程退出的轮询间隔（秒）与次数上限：sleep 合计最多 10 秒，外加每轮一次 ps。
 STOP_POLL_INTERVAL=1
 STOP_POLL_MAX=10
@@ -71,12 +87,17 @@ STOP_POLL_MAX=10
 START_POLL_INTERVAL=1
 START_POLL_MAX=10
 
+# 退出处理及其调用链用这个函数写 stderr：macOS 自带的 bash 3.2（/bin/sh）里，内建 echo/printf 写到不可写的 fd
+# （EIO、EBADF、EPIPE）失败后不会清空 C stdio 的 stdout 缓冲，留下的字节会在之后每一次 $(...) 命令替换里混进捕获结果，
+# 让 scan_svc_pids、id -u 拿到错值而打断回滚（bash 3.2.57 实测）。放在子 shell 里写，失败时缓冲随子进程丢弃，不污染父 shell。
+warn() { ( printf '%s\n' "$*" >&2 ); }
+
 # 列出本服务的进程 pid（空格分隔，写入 svc_pids）：有效 uid 为 $1 且可执行路径为 $SVC_BIN。
 # BSD ps 的 uid 列是有效 uid（ps(1)）；comm 列是进程的 argv[0]（实测：不截断，文件被替换后不变），
 # launchd 作业的 argv[0] 是 plist 的 ProgramArguments[0]（用户域作业实测）。comm 里可能有空格，取前两列之后的整段比较。
 # 拉起之后、exec 之前的瞬间子进程的 comm 是 xpcproxy（实测）：启动确认是轮询，只会晚一轮认出它。
 scan_svc_pids() {
-  procs=$(ps -axo uid=,pid=,comm=) || { echo "cannot list processes" >&2; return 1; }
+  procs=$(ps -axo uid=,pid=,comm=) || { warn "cannot list processes"; return 1; }
   svc_pids=$(printf '%s\n' "$procs" | awk -v u="$1" -v p="$SVC_BIN" '
     { c = $0; sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+/, "", c) }
     $1 == u && c == p { printf " %s", $2 }')
@@ -102,16 +123,16 @@ confirm_service_stopped() {
     sleep "$STOP_POLL_INTERVAL"
     polls=$((polls + 1))
   done
-  echo "heron-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
+  warn "heron-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids"
   return 1
 }
 
 # 启动之后确认服务进程活着：bootstrap 返回 0 只说明作业已载入，证明不了子进程没有秒退。
 # 先等到出现本服务的进程，记下 pid，3 秒后同一个 pid 仍在；
 # 秒退再被 KeepAlive 拉起会换成新 pid，不能算起来了。判据与 confirm_service_stopped 同一处。
-start_log_hint() { echo "see $LOG_DIR/heron-agent.err" >&2; }
+start_log_hint() { warn "see $LOG_DIR/heron-agent.err"; }
 confirm_service_started() {
-  svc_uid=$(id -u "$SVC_USER") || { echo "no service user $SVC_USER" >&2; start_log_hint; return 1; }
+  svc_uid=$(id -u "$SVC_USER") || { warn "no service user $SVC_USER"; start_log_hint; return 1; }
   polls=0
   pid=""
   while :; do
@@ -126,7 +147,7 @@ confirm_service_started() {
     polls=$((polls + 1))
   done
   if [ -z "$pid" ]; then
-    echo "heron-agent did not start" >&2
+    warn "heron-agent did not start"
     start_log_hint
     return 1
   fi
@@ -135,7 +156,7 @@ confirm_service_started() {
   case " $svc_pids " in
     *" $pid "*) return 0;;
   esac
-  echo "heron-agent did not stay running (pid $pid)" >&2
+  warn "heron-agent did not stay running (pid $pid)"
   start_log_hint
   return 1
 }
@@ -146,7 +167,7 @@ confirm_service_started() {
 service_loaded() { launchctl print "system/$LABEL" >/dev/null 2>&1 </dev/null; }
 stop_service() {
   if service_loaded; then
-    launchctl bootout "system/$LABEL" </dev/null || { echo "failed to stop heron-agent" >&2; return 1; }
+    launchctl bootout "system/$LABEL" </dev/null || { warn "failed to stop heron-agent"; return 1; }
   fi
   confirm_service_stopped
 }
@@ -268,56 +289,112 @@ command -v curl >/dev/null 2>&1 || { echo "curl is required to download $PKG" >&
 command -v shasum >/dev/null 2>&1 || { echo "shasum is required to verify downloads" >&2; exit 1; }
 
 work=$(mktemp -d)
-BIN_TMP="$BIN.tmp.$$"
 BIN_BAK="$BIN.bak"
-# 回滚状态（rollback_agent 的读者）：ROLLBACK 在停服务之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
+# 回滚状态（rollback_agent 的读者）：ROLLBACK 在停服务确认完成之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
 # 旧二进制；BACKED_UP 记旧二进制是否已改名成 .bak。
 ROLLBACK=0
 HAD_PREVIOUS=0
 BACKED_UP=0
-# 停服务之后、启动确认成功之前的任何失败退出都由这里调到：换过二进制就把 .bak 换回来，再按原样载入旧版本，启停的
-# 确认口径与安装路径相同。停服务时没有旧二进制（首次安装）就没有可回滚的版本，保持服务停着、脚本非零退出。plist
-# 不回滚：旧二进制在新的 plist 下启动。它在 EXIT trap 里执行，set -e 仍然生效：每一步都放在条件里，失败只报告。
+# 停服务确认完成（ROLLBACK 置 1）之后、启动确认成功之前的任何失败退出都由这里调到：换过二进制就把 .bak 换回来，再按
+# 原样载入旧版本，启停的确认口径与安装路径相同。停服务时没有旧二进制（首次安装）就没有可回滚的版本，保持服务停着、
+# 脚本非零退出。plist 不回滚：旧二进制在新的 plist 下启动。它只由 on_exit 调用，那时信号已被忽略、set -e 已关闭、
+# 父 shell 的 stdout 缓冲已清空（理由见 on_exit 与 warn）：每一步都写成条件式，失败只报告，写诊断经 warn 隔离在子 shell，
+# 失败也不中断或不污染命令替换。
 rollback_agent() {
   [ "$HAD_PREVIOUS" = 1 ] || return 0
-  echo "installation failed after heron-agent was stopped; rolling back to the previous version" >&2
+  warn "installation failed after heron-agent was stopped; rolling back to the previous version"
   # 新版本可能已被载入（起来后秒退时 KeepAlive 还在反复拉起它），先卸下、确认进程退出，才能换回二进制重新载入。
   if ! stop_service; then
-    echo "failed to stop the new heron-agent; the previous binary is kept at $BIN_BAK" >&2
+    warn "failed to stop the new heron-agent; the previous binary is kept at $BIN_BAK"
     return 0
   fi
   if [ "$BACKED_UP" = 1 ]; then
     if ! mv -f "$BIN_BAK" "$BIN"; then
-      echo "failed to restore the previous binary; it is kept at $BIN_BAK" >&2
+      warn "failed to restore the previous binary; it is kept at $BIN_BAK"
       return 0
     fi
-    echo "restored the previous binary" >&2
+    warn "restored the previous binary"
   fi
   if [ -f "$PLIST" ] && launchctl enable "system/$LABEL" </dev/null && launchctl bootstrap system "$PLIST" </dev/null && confirm_service_started; then
-    echo "the previous heron-agent is running again" >&2
+    warn "the previous heron-agent is running again"
   else
-    echo "failed to restart the previous heron-agent" >&2
+    warn "failed to restart the previous heron-agent"
     start_log_hint
     # 换二进制的 mv 与记下 BACKED_UP 之间被信号打断时，旧二进制只剩 .bak 这一份；on_exit 不删它。
-    [ ! -e "$BIN_BAK" ] || echo "the previous binary is kept at $BIN_BAK" >&2
+    [ ! -e "$BIN_BAK" ] || warn "the previous binary is kept at $BIN_BAK"
   fi
 }
-# EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出；INT、TERM、HUP 转成 exit 1，
-# Ctrl-C 或 SSH 断开时也会回滚、清掉工作目录与写了一半的临时二进制。
+# 退出处理，本脚本唯一的 EXIT trap：停服务之后的失败退出要回滚（rollback_agent），工作目录与写了一半的暂存二进制要删。
+# 这些必须在任何退出方式下做完，靠进门的两步保证：
+# - 先忽略 HUP、INT、QUIT、TERM、TSTP、PIPE。退出处理期间再来的信号（SSH 断开的 SIGHUP、再按一次 Ctrl-C、外部 TERM）
+#   若仍按下面的 trap 转成 exit，会在这里直接结束脚本，回滚停在半路：旧二进制留在 .bak、作业没载入；SIGPIPE（tee 之类
+#   的读端先退出）与 Ctrl-Z 也一样。忽略的信号由之后启动的子进程继承（execve 保留 SIG_IGN），回滚里的 launchctl 因而
+#   也不被同一次挂断打断；agent 由 launchd 派生，不经本脚本 fork，不继承。
+# - 再关掉 set -e，并将父 shell 的 stdout 缓冲刷到 /dev/null 清空。写诊断在这里会失败：SSH 断开后写终端报 EIO，
+#   读端退出后写管道报 EPIPE（PIPE 已忽略，不再被它杀掉），set -e 下这一条输出失败就会结束脚本。回滚与清理的每一步
+#   都写成条件式、失败只报告，不依赖 set -e；刷空缓冲配合 warn 子 shell 隔离，防止 bash 3.2 下写失败残留的缓冲污染
+#   回滚里的 $(...) 命令替换（见 warn）。
+# rc 必须第一个取：之后的任何命令都会改写 $?。
 # .bak 不在这里删：回滚用 mv 把它换回 BIN，成功安装在启动确认之后才删；回滚换不回去时它是旧版本仅存的一份。
 on_exit() {
   rc=$?
+  trap '' HUP INT QUIT TERM TSTP PIPE
+  set +e
+  echo >/dev/null
   if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_agent; fi
   rm -rf "$work"; rm -f "$BIN_TMP"
 }
 trap on_exit EXIT
-trap 'exit 1' INT TERM HUP
+# EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，所以把会终止
+# 脚本的信号都转成 exit 1：Ctrl-C（INT）、Ctrl-\（QUIT）、SSH 断开（HUP）、外部 TERM、输出管道的读端退出（PIPE）
+# 都经 on_exit 回滚、清理。
+trap 'exit 1' HUP INT QUIT TERM PIPE
 
-is_https() { case "$1" in https://*) return 0;; esac; return 1; }
-dl() {
+# URL 的 scheme 不区分大小写，理由同 install.sh 的 is_https：区分大小写会让 --base-url HTTPS://… 漏掉下载只走 https 的
+# 限制。
+is_https() { case "$1" in [Hh][Tt][Tt][Pp][Ss]://*) return 0;; esac; return 1; }
+# 下载的超时与重试，数值与依据见 install.sh 的同名段落，两处同一套规则；macOS 自带 curl，没有 wget 分支。
+DL_CONNECT_TIMEOUT=30
+DL_SPEED_LIMIT=1024
+DL_STALL_TIME=60
+DL_TRIES=5
+DL_RETRY_DELAY=5
+# 下载一次。curl 在 stdout 写 "<HTTP 状态码> <收到的正文字节数>"（-w；失败时照样写，连不上时是 "000 0"，实测）。
+fetch_once() {
+  url=$1; dest=$2
+  set --
   # 下载地址为 https 时，请求和重定向都只走 https。其他协议（本地验收）不加：--proto '=https' 会拒绝它。
-  if is_https "$1"; then curl --proto '=https' --proto-redir '=https' -fsSL -o "$2" "$1" </dev/null
-  else curl -fsSL -o "$2" "$1" </dev/null; fi
+  if is_https "$url"; then set -- --proto '=https' --proto-redir '=https'; fi
+  curl "$@" --connect-timeout "$DL_CONNECT_TIMEOUT" --speed-limit "$DL_SPEED_LIMIT" --speed-time "$DL_STALL_TIME" \
+    -fsSL -w '%{http_code} %{size_download}' -o "$dest" "$url" </dev/null
+}
+dl() {
+  attempt=1
+  while :; do
+    rm -f "$2"
+    dl_rc=0
+    dl_out=$(fetch_once "$1" "$2") || dl_rc=$?
+    [ "$dl_rc" != 0 ] || return 0
+    retry=0
+    dl_status=${dl_out%% *}; dl_size=${dl_out##* }
+    what="curl exit $dl_rc"
+    case "$dl_status" in 502|503|504) retry=1; what="HTTP $dl_status";; esac
+    case "$dl_rc" in 16|18|35|52|55|56|92) [ "$dl_size" != 0 ] || retry=1;; esac
+    partial=0; [ "$dl_size" = 0 ] || [ -z "$dl_size" ] || partial=1
+    if [ "$retry" = 0 ]; then
+      if [ "$partial" = 1 ]; then
+        echo "download of $1 broke off after part of the file arrived ($what); the link is too slow or unstable to download directly: fetch the release files another way into a local directory or a nearby web server, then rerun with --base-url pointing there" >&2
+      fi
+      return 1
+    fi
+    if [ "$attempt" -ge "$DL_TRIES" ]; then
+      echo "download of $1 failed $DL_TRIES times ($what); giving up" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    echo "download of $1 failed ($what); retrying in ${DL_RETRY_DELAY}s (attempt $attempt of $DL_TRIES)" >&2
+    sleep "$DL_RETRY_DELAY"
+  done
 }
 dl "$BASE_URL/$PKG" "$work/$PKG"
 # shasum 的输出以摘要开头、空白之后是文件名；它失败时摘要为空，同样按不符拒绝。
