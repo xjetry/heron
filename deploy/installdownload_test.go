@@ -452,7 +452,7 @@ func pathWithoutCurl(t *testing.T) string {
 	dir := t.TempDir()
 	tools := []string{
 		"sh", "awk", "grep", "sed", "cat", "cp", "mv", "rm", "mkdir", "chmod",
-		"ln", "tr", "wc", "tar", "sha256sum", "mktemp", "dirname", "find",
+		"ln", "tr", "wc", "tar", "gzip", "sha256sum", "mktemp", "dirname", "find",
 		"install", "touch", "sort", "cut", "readlink", "head", "tail", "uname",
 	}
 	for _, name := range tools {

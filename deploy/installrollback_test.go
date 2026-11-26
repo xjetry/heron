@@ -388,14 +388,24 @@ func (e *env) runUnwritableStderr(args ...string) (string, int) {
 
 // availableShells 是本机能跑的 POSIX shell：用例在每一个上各跑一遍，退出处理在 dash、bash、busybox ash 上的信号与 set -e
 // 语义各有不同。sh 是系统默认的那个（macOS 上是 bash，Debian 系上是 dash）。至少有 sh，缺的跳过。
+// 开启了 FEATURE_SH_STANDALONE 的 busybox（如 Ubuntu 的 busybox-static）会优先执行内建 applet 而不查 PATH，
+// 替身无法拦截 id/rm/sleep 等外部命令，因此只纳入按 PATH 查找外部命令的 shell。
 func availableShells(t *testing.T) [][]string {
 	t.Helper()
+	probeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(probeBin, "id"), []byte("#!/bin/sh\necho probe-stub-id\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probeEnv := append(slices.Clone(os.Environ()), "PATH="+probeBin+":"+os.Getenv("PATH"))
 	var shells [][]string
 	for _, sh := range [][]string{{"sh"}, {"dash"}, {"bash"}, {"busybox", "sh"}} {
 		if _, err := exec.LookPath(sh[0]); err != nil {
 			continue
 		}
-		if err := exec.Command(sh[0], append(slices.Clone(sh[1:]), "-c", "true")...).Run(); err != nil {
+		cmd := exec.Command(sh[0], append(slices.Clone(sh[1:]), "-c", "id -u")...)
+		cmd.Env = probeEnv
+		out, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(out)) != "probe-stub-id" {
 			continue
 		}
 		shells = append(shells, sh)
