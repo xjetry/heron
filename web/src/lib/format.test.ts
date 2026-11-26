@@ -3,17 +3,17 @@ import { ago, bytes, dateTime, day, duration, formatScaled, formatUnit, percent 
 
 describe("format", () => {
   it("ms 按舍入后的量级取位数，门槛处不出现位数跳变", () => {
-    expect(formatUnit(0.4567, "ms")).toBe("0.46 ms");
-    expect(formatUnit(9.994, "ms")).toBe("9.99 ms");
-    expect(formatUnit(9.995, "ms")).toBe("10.0 ms");
-    expect(formatUnit(12.34, "ms")).toBe("12.3 ms");
-    expect(formatUnit(99.94, "ms")).toBe("99.9 ms");
-    expect(formatUnit(99.95, "ms")).toBe("100 ms");
-    expect(formatUnit(250.7, "ms")).toBe("251 ms");
-    expect(formatUnit(0, "ms")).toBe("0.00 ms");
-    expect(formatUnit(-0.004, "ms")).toBe("0.00 ms");
-    expect(formatUnit(-9.995, "ms")).toBe("-10.0 ms");
-    expect(formatUnit(Number.NaN, "ms")).toBe("NaN ms");
+    expect(formatUnit(0.4567, "milliseconds")).toBe("0.46 ms");
+    expect(formatUnit(9.994, "milliseconds")).toBe("9.99 ms");
+    expect(formatUnit(9.995, "milliseconds")).toBe("10.0 ms");
+    expect(formatUnit(12.34, "milliseconds")).toBe("12.3 ms");
+    expect(formatUnit(99.94, "milliseconds")).toBe("99.9 ms");
+    expect(formatUnit(99.95, "milliseconds")).toBe("100 ms");
+    expect(formatUnit(250.7, "milliseconds")).toBe("251 ms");
+    expect(formatUnit(0, "milliseconds")).toBe("0.00 ms");
+    expect(formatUnit(-0.004, "milliseconds")).toBe("0.00 ms");
+    expect(formatUnit(-9.995, "milliseconds")).toBe("-10.0 ms");
+    expect(formatUnit(Number.NaN, "milliseconds")).toBe("NaN ms");
   });
   it("bytes 按四舍五入后的值决定单位与位数，进位到 1024 即换单位", () => {
     expect(bytes(0)).toBe("0 B");

@@ -10,7 +10,7 @@ export function axisValues(values: number[], unit: string): string[] {
   if (gaps.length === 0) return values.map((v) => formatUnit(v, unit));
   const minGap = Math.min(...gaps);
   let scale = 1;
-  let suffix = unit === "percent" ? "%" : unit === "ms" ? " ms" : unit === "count/s" ? "/s" : "";
+  let suffix = unit === "percent" ? "%" : unit === "milliseconds" ? " ms" : unit === "count/s" ? "/s" : "";
   const rate = unit === "bytes/s";
   let digits = axisDigits(minGap, scale);
   if (unit === "bytes" || rate) {

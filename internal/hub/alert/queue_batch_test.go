@@ -12,6 +12,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/outbound"
 	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/testwait"
@@ -289,7 +290,7 @@ func TestWebhookSendsOneRequestPerEvent(t *testing.T) {
 	nodes := map[string]bool{}
 	for _, b := range bodies {
 		nodes[b.Node] = true
-		if b.Transition != "firing" || !strings.HasPrefix(b.Summary, "节点 "+b.Node+" 离线") {
+		if b.Transition != "firing" || b.ValueUnit != metric.UnitSeconds || !strings.HasPrefix(b.Summary, "节点 "+b.Node+" 离线") {
 			t.Errorf("webhook body=%+v, want one event per request", b)
 		}
 	}

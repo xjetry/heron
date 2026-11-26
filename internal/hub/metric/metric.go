@@ -31,12 +31,33 @@ const (
 	Int
 )
 
+// 单位词表：hub 下发的数值凡带单位都取这里的名字（MetricSeries.unit、AlertEvent.value_unit），读者只学一套。
+// 指标列用到其中的 percent、bytes、bytes/s、count、count/s 与无量纲；秒、毫秒、天目前只出现在告警事件的观测值上。
+// 新单位只追加在这里，沿用同一命名：单独的量写全称，速率写"量/s"。
+const (
+	UnitPercent        = "percent"
+	UnitBytes          = "bytes"
+	UnitBytesPerSecond = "bytes/s"
+	UnitCount          = "count"
+	UnitCountPerSecond = "count/s"
+	UnitSeconds        = "seconds"
+	UnitMilliseconds   = "milliseconds"
+	UnitDays           = "days"
+	// UnitDimensionless 是无量纲的读数（负载、按核负载），空串。
+	UnitDimensionless = ""
+)
+
+// Units 列出词表的全部单位；写入口据此校验落库的单位名（store 的告警事件）。
+func Units() []string {
+	return []string{UnitPercent, UnitBytes, UnitBytesPerSecond, UnitCount, UnitCountPerSecond, UnitSeconds, UnitMilliseconds, UnitDays, UnitDimensionless}
+}
+
 type Column struct {
 	// Name 是 SQL 列名的词干：cpu → cpu_sum、cpu_n、cpu_max。
 	Name string
 	Kind Kind
 	Type Type
-	// Unit 随查询结果下发：percent、bytes、bytes/s、count、count/s；load 无单位为空串。
+	// Unit 随查询结果下发，取自上面的单位词表；load 无量纲为空串。
 	// 数据自带单位，图表与 agent 都不必查表才知道该怎么读。
 	Unit string
 	// Get 从一次上报里取读数；false 表示无读数，此时既不进 sum 也不进 n。Sum 列为 nil。
@@ -55,43 +76,43 @@ func f64(v uint64) float64 { return float64(v) }
 // Columns 的顺序就是 Bucket 各切片的下标，也是 SQL 里列的顺序。
 // 只能在末尾追加：中间插入会让已存在的桶与行错位。
 var Columns = []Column{
-	{"cpu", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuPct(), m.CpuPct != nil }},
-	{"mem_used", MeanMax, Int, "bytes", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetMemUsed()), m.MemUsed != nil }},
-	{"swap_used", Mean, Int, "bytes", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetSwapUsed()), m.SwapUsed != nil }},
-	{"disk_used", Mean, Int, "bytes", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskUsed()), m.DiskUsed != nil }},
-	{"load1", Mean, Float, "", func(m *heronv1.Metrics) (float64, bool) { return m.GetLoad1(), m.Load1 != nil }},
-	{"tcp", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
-	{"udp", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
-	{"procs", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
-	{"rx_bytes", Sum, Int, "bytes", nil},
-	{"tx_bytes", Sum, Int, "bytes", nil},
-	{"memory_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return UsedPercent(m.MemUsed, m.MemTotal) }},
-	{"disk_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return UsedPercent(m.DiskUsed, m.DiskTotal) }},
+	{"cpu", MeanMax, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuPct(), m.CpuPct != nil }},
+	{"mem_used", MeanMax, Int, UnitBytes, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetMemUsed()), m.MemUsed != nil }},
+	{"swap_used", Mean, Int, UnitBytes, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetSwapUsed()), m.SwapUsed != nil }},
+	{"disk_used", Mean, Int, UnitBytes, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskUsed()), m.DiskUsed != nil }},
+	{"load1", Mean, Float, UnitDimensionless, func(m *heronv1.Metrics) (float64, bool) { return m.GetLoad1(), m.Load1 != nil }},
+	{"tcp", Mean, Int, UnitCount, func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
+	{"udp", Mean, Int, UnitCount, func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
+	{"procs", Mean, Int, UnitCount, func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
+	{"rx_bytes", Sum, Int, UnitBytes, nil},
+	{"tx_bytes", Sum, Int, UnitBytes, nil},
+	{"memory_used_pct", Mean, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return UsedPercent(m.MemUsed, m.MemTotal) }},
+	{"disk_used_pct", Mean, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return UsedPercent(m.DiskUsed, m.DiskTotal) }},
 	// 速率取 agent 按本地采样间隔测得的值；请求到达间隔受网络拥塞影响，不用于推算峰值。
 	// 字节增量仍单独由入账方累计，采样速率的均值不能替代总字节数除以桶长。
-	{"net_rx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
-	{"net_tx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetTxBps()), m.NetTxBps != nil }},
+	{"net_rx_bps", MeanMax, Int, UnitBytesPerSecond, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
+	{"net_tx_bps", MeanMax, Int, UnitBytesPerSecond, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetTxBps()), m.NetTxBps != nil }},
 	// 磁盘整盘设备的采样速率，与网络速率同一差分与峰值口径：首样本、设备集合变化或计数回退时缺失。
-	{"disk_read_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskReadBps()), m.DiskReadBps != nil }},
-	{"disk_write_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskWriteBps()), m.DiskWriteBps != nil }},
+	{"disk_read_bps", MeanMax, Int, UnitBytesPerSecond, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskReadBps()), m.DiskReadBps != nil }},
+	{"disk_write_bps", MeanMax, Int, UnitBytesPerSecond, func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskWriteBps()), m.DiskWriteBps != nil }},
 	// steal 与 iowait 是 cpu_pct 之外的独立占比，各自成一系列，均可与 cpu_pct 同时显示。
-	{"cpu_steal_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuStealPct(), m.CpuStealPct != nil }},
-	{"cpu_iowait_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuIowaitPct(), m.CpuIowaitPct != nil }},
+	{"cpu_steal_pct", MeanMax, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuStealPct(), m.CpuStealPct != nil }},
+	{"cpu_iowait_pct", MeanMax, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuIowaitPct(), m.CpuIowaitPct != nil }},
 	// 按核负载由 agent 在同一次采样里用 load1 除以当时的分母得到。hub 只存这个值，不再用 Facts 的核数去除：
 	// 分母变化不会重新解释已经入库的分钟。旧上报没有该字段时不入账（n 保持 0），与测得的 0 区分。
-	{"load1_per_core", Mean, Float, "", func(m *heronv1.Metrics) (float64, bool) { return m.GetLoad1PerCore(), m.Load1PerCore != nil }},
+	{"load1_per_core", Mean, Float, UnitDimensionless, func(m *heronv1.Metrics) (float64, bool) { return m.GetLoad1PerCore(), m.Load1PerCore != nil }},
 	// TCP 计数的采样速率，单位 count/s。建连保留峰值：短时的建连风暴会被分钟均值抹平。两个段速率只为
 	// 重传率而存：查询端用同一个桶里两列的 mean × n 相除，hub 准入保证两列同现，所以它们的 n 相同、和来自同一组样本。
-	{"tcp_active_opens_ps", MeanMax, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpActiveOpensPs(), m.TcpActiveOpensPs != nil }},
-	{"tcp_passive_opens_ps", MeanMax, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpPassiveOpensPs(), m.TcpPassiveOpensPs != nil }},
-	{"tcp_out_segs_ps", Mean, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpOutSegsPs(), m.TcpOutSegsPs != nil }},
-	{"tcp_retrans_segs_ps", Mean, Float, "count/s", func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpRetransSegsPs(), m.TcpRetransSegsPs != nil }},
+	{"tcp_active_opens_ps", MeanMax, Float, UnitCountPerSecond, func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpActiveOpensPs(), m.TcpActiveOpensPs != nil }},
+	{"tcp_passive_opens_ps", MeanMax, Float, UnitCountPerSecond, func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpPassiveOpensPs(), m.TcpPassiveOpensPs != nil }},
+	{"tcp_out_segs_ps", Mean, Float, UnitCountPerSecond, func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpOutSegsPs(), m.TcpOutSegsPs != nil }},
+	{"tcp_retrans_segs_ps", Mean, Float, UnitCountPerSecond, func(m *heronv1.Metrics) (float64, bool) { return m.GetTcpRetransSegsPs(), m.TcpRetransSegsPs != nil }},
 	// 最满盘使用率：纳入监测的全部本地盘里最满那块的百分比，驱动概览进度与磁盘告警。值由 hub 准入后写入
 	// （ingest.normalizeDiskMax，不带逐盘列表时退回根盘），这里只读字段、不自己再推一遍。disk_used 与 disk_used_pct
 	// 仍只是根盘：两种口径并存，根盘曲线不因哪块盘最满而换主语。
-	{"disk_max_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetDiskMaxUsedPct(), m.DiskMaxUsedPct != nil }},
+	{"disk_max_used_pct", Mean, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return m.GetDiskMaxUsedPct(), m.DiskMaxUsedPct != nil }},
 	// softirq 与 steal、iowait 同一次差分、同一口径，同样保留峰值：网络突发造成的软中断尖峰会被分钟均值抹平。
-	{"cpu_softirq_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuSoftirqPct(), m.CpuSoftirqPct != nil }},
+	{"cpu_softirq_pct", MeanMax, Float, UnitPercent, func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuSoftirqPct(), m.CpuSoftirqPct != nil }},
 }
 
 // UsedPercent 是容量类读数的使用率，百分比。同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，

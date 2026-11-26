@@ -197,7 +197,7 @@ func TestReporterSchedule(t *testing.T) {
 	// 东京周一 09:30：日报与周报都到期，合成一条。
 	check(time.Date(2026, 10, 12, 0, 30, 0, 0, time.UTC))
 	evs := reportEvents(t, f)
-	if len(evs) != 1 || !strings.HasPrefix(evs[0].Summary, "流量报告（日报、周报）2026-10-12 Asia/Tokyo，共 2 台节点") || len(evs[0].Deliveries) != 1 {
+	if len(evs) != 1 || evs[0].Value != 0 || evs[0].ValueUnit != store.ValueUnitNotApplicable || !strings.HasPrefix(evs[0].Summary, "流量报告（日报、周报）2026-10-12 Asia/Tokyo，共 2 台节点") || len(evs[0].Deliveries) != 1 {
 		t.Fatalf("first report: %+v", evs)
 	}
 	if got := sender.events(); len(got) != 1 || got[0].ID != evs[0].ID {
@@ -286,8 +286,8 @@ func TestTrafficReportAndLoginAreDeliveredSeparately(t *testing.T) {
 		{store.SystemKindLogin, string(store.TransitionLoginSuccess), "管理员登录成功（密码）"},
 		{store.SystemKindTrafficReport, string(store.TransitionTrafficReport), texts[1]},
 	} {
-		if h := hooks[i]; h["kind"] != want.kind || h["transition"] != want.transition || h["summary"] != want.summary || h["node"] != "Hub" {
-			t.Errorf("webhook %d = %v, want kind %q transition %q", i, h, want.kind, want.transition)
+		if h := hooks[i]; h["kind"] != want.kind || h["transition"] != want.transition || h["summary"] != want.summary || h["node"] != "Hub" || h["value"] != float64(0) || h["value_unit"] != store.ValueUnitNotApplicable {
+			t.Errorf("webhook %d = %v, want kind %q transition %q value_unit n/a", i, h, want.kind, want.transition)
 		}
 	}
 }

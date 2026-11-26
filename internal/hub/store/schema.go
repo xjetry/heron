@@ -666,7 +666,10 @@ const ddlAlertEvent = `CREATE TABLE alert_event (
   summary TEXT NOT NULL,
   value REAL NOT NULL,
   -- 该事件生成时是否处于静默覆盖内；静默只抑制投递、不改状态机，事件仍完整保留。列序与迁移 27 的 ADD COLUMN 结果一致。
-  silenced INTEGER NOT NULL DEFAULT 0
+  silenced INTEGER NOT NULL DEFAULT 0,
+  -- value 的单位，取值见 AlertEvent.ValueUnit。写入口（recordAlertEvent）总是显式写这一列；默认值 'unknown' 只为迁移 58
+  -- 的 ADD COLUMN 给旧行一个起点，不是新事件的缺省。列序与迁移 58 的 ADD COLUMN 结果一致。
+  value_unit TEXT NOT NULL DEFAULT 'unknown'
 )`
 const ddlAlertEventByNode = `CREATE INDEX alert_event_by_node ON alert_event(node_id, id)`
 const ddlAlertEventByAt = `CREATE INDEX alert_event_by_at ON alert_event(at)`

@@ -63,8 +63,8 @@ func TestSilenceEndingMidFiringRenotifies(t *testing.T) {
 	if !strings.HasPrefix(renotify.Summary, original.Summary) || !strings.Contains(renotify.Summary, "静默结束时仍未恢复，已持续 3 小时 29 分钟") {
 		t.Fatalf("renotification summary %q; want the original %q annotated with the elapsed 3h29m", renotify.Summary, original.Summary)
 	}
-	if renotify.Value != original.Value {
-		t.Fatalf("renotification value=%v, want the original %v", renotify.Value, original.Value)
+	if renotify.Value != original.Value || renotify.ValueUnit != metric.UnitSeconds || original.ValueUnit != metric.UnitSeconds {
+		t.Fatalf("renotification value=%v (%q), want the original %v (%q)", renotify.Value, renotify.ValueUnit, original.Value, original.ValueUnit)
 	}
 	if kept.ID != original.ID || !kept.Silenced || len(kept.Deliveries) != 0 || kept.Summary != original.Summary || !kept.At.Equal(original.At) {
 		t.Fatalf("original event changed: %+v, was %+v", kept, original)
@@ -167,8 +167,8 @@ func TestRenotificationWithoutNewSamples(t *testing.T) {
 	if len(events) != 2 || events[0].Silenced || events[0].Transition != store.TransitionFiring || len(events[0].Deliveries) != 1 || len(sender.events) != 1 {
 		t.Fatalf("sweep after the window: events=%+v sent=%d; want one renotification", events, len(sender.events))
 	}
-	if !strings.HasPrefix(events[0].Summary, original.Summary) || events[0].Value != 100 {
-		t.Fatalf("renotification=%+v; want the original summary %q and loss 100", events[0], original.Summary)
+	if !strings.HasPrefix(events[0].Summary, original.Summary) || events[0].Value != 100 || events[0].ValueUnit != metric.UnitPercent {
+		t.Fatalf("renotification=%+v; want the original summary %q and loss 100 percent", events[0], original.Summary)
 	}
 }
 
@@ -246,7 +246,7 @@ func TestRenotificationSurvivesRestart(t *testing.T) {
 	if len(events) != 2 || events[0].Silenced || len(sender.events) != 1 {
 		t.Fatalf("after restart and the window: events=%+v sent=%d", events, len(sender.events))
 	}
-	if !strings.HasPrefix(events[0].Summary, original.Summary) || events[0].Value != original.Value || !strings.Contains(events[0].Summary, "已持续 3 小时 29 分钟") {
-		t.Fatalf("renotification=%+v; want the original %q, value %v, elapsed since %v", events[0], original.Summary, original.Value, original.At)
+	if !strings.HasPrefix(events[0].Summary, original.Summary) || events[0].Value != original.Value || events[0].ValueUnit != metric.UnitSeconds || !strings.Contains(events[0].Summary, "已持续 3 小时 29 分钟") {
+		t.Fatalf("renotification=%+v; want the original %q, value %v seconds, elapsed since %v", events[0], original.Summary, original.Value, original.At)
 	}
 }

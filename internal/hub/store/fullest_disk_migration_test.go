@@ -169,6 +169,7 @@ func TestRestoreV52MetricsSnapshotBackfillsFullestDisk(t *testing.T) {
 			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
 		} else {
+			removeV58Config(t, db)
 			removeV57Config(t, db)
 			removeV56Config(t, db)
 		}

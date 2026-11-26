@@ -336,7 +336,7 @@ type MetricSeries struct {
 	// 新指标只追加在末尾；客户端按 name 取。
 	// 重传率不是一条序列：同一个点上 tcp_retrans_segs_ps 与 tcp_out_segs_ps 的 mean × n 相除再乘 100；分母为 0 时没有重传率。
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// percent、bytes、bytes/s、count、count/s；load 无单位为空串。
+	// percent、bytes、bytes/s、count、count/s；load 无单位为空串。与 AlertEvent.value_unit 同一单位词表。
 	Unit string `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`
 	// 与 ts 一一对应。
 	Samples       []*MetricSample `protobuf:"bytes,3,rep,name=samples,proto3" json:"samples,omitempty"`

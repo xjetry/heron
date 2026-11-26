@@ -577,11 +577,13 @@ wait_alert_recovered_s=$((request_timeout_s + initial_interval_s + sweep_s + ret
 docker kill "$(cat "$work/cid-arm64")" > /dev/null
 wait "$arm64" || true
 wait_alert "$node2" firing "$wait_alert_firing_s"
-grep -q '"transition":"firing"' "$work/hooks.txt" || { echo "FAIL: webhook body"; cat "$work/hooks.txt"; exit 1; }
+jq -e --arg n "$node2" '[.events[] | select(.nodeId == $n and .transition == "firing")][0].valueUnit == "seconds"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: offline firing value_unit"; cat "$work/ListAlertEvents.json"; exit 1; }
+grep -q '"transition":"firing".*"value_unit":"seconds"' "$work/hooks.txt" || { echo "FAIL: webhook body"; cat "$work/hooks.txt"; exit 1; }
 docker start "$(cat "$work/cid-arm64")" > /dev/null
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
 arm64=$!
 wait_alert "$node2" recovered "$wait_alert_recovered_s"
+jq -e --arg n "$node2" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].valueUnit == "seconds"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: offline recovered value_unit"; cat "$work/ListAlertEvents.json"; exit 1; }
 
 # 计费与到期（规则见 store.Billing）。UpdateNode 整体替换，billing 与 node1 其余可编辑字段（公开、重置日 15）一起给全。
 # hub 以 --timezone UTC 运行、node1 没设计费时区，daysLeft 按 UTC 的今天算；jq 的 now 与 strftime 也按 UTC 取日历日。
@@ -624,8 +626,8 @@ expiry_rule_body() {
 jq -e '.rule.kind == "ALERT_KIND_EXPIRY" and .rule.daysBefore == 10' "$work/SaveAlertRule.json" > /dev/null || { echo "FAIL: expiry rule echo"; cat "$work/SaveAlertRule.json"; exit 1; }
 expiry_rule=$(jq -r '.rule.id' "$work/SaveAlertRule.json")
 wait_alert "$node1" firing "$wait_expiry_s"
-jq -e --arg n "$node1" --arg exp "$soon" '[.events[] | select(.nodeId == $n and .transition == "firing")][0].summary | startswith("节点 e2e-amd64 将于 " + $exp + " 到期（剩 ") and endswith("天，规则 e2e expiry）")' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry firing summary"; cat "$work/ListAlertEvents.json"; exit 1; }
-grep -q '"kind":"expiry","transition":"firing"' "$work/hooks.txt" || { echo "FAIL: expiry webhook body"; cat "$work/hooks.txt"; exit 1; }
+jq -e --arg n "$node1" --arg exp "$soon" '[.events[] | select(.nodeId == $n and .transition == "firing")][0] | (.valueUnit == "days") and (.summary | startswith("节点 e2e-amd64 将于 " + $exp + " 到期（剩 ") and endswith("天，规则 e2e expiry）"))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry firing summary or value_unit"; cat "$work/ListAlertEvents.json"; exit 1; }
+grep -q '"kind":"expiry","transition":"firing".*"value_unit":"days"' "$work/hooks.txt" || { echo "FAIL: expiry webhook body"; cat "$work/hooks.txt"; exit 1; }
 # node1 停在 firing 进入重启；续期与恢复放到重启之后。
 # node1 的 agent 已退出；先推进到新重置日对应的周期，再保存停机前状态。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
@@ -721,9 +723,9 @@ later=$(jq -rn 'now + 60 * 86400 | strftime("%Y-%m-%d")')
 [ "$(rpc UpdateNode "$(node_body "$later" false)")" = 200 ] || { echo "FAIL: UpdateNode renewal"; cat "$work/UpdateNode.json"; exit 1; }
 jq -e '.node.billing | .daysLeft >= 59 and .daysLeft <= 60' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: renewed days_left"; cat "$work/UpdateNode.json"; exit 1; }
 wait_alert "$node1" recovered "$wait_expiry_s"
-jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary |
+jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0] | (.valueUnit == "days") and (.summary |
   ("节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry），告警持续 ") as $prefix |
-  startswith($prefix) and (ltrimstr($prefix) | test("^(不到 1 分钟|([1-9]|[1-5][0-9]) 分钟|([1-9]|1[0-9]|2[0-3]) 小时( ([1-9]|[1-5][0-9]) 分钟)?|[1-9][0-9]* 天( ([1-9]|1[0-9]|2[0-3]) 小时)?)\\z"))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
+  startswith($prefix) and (ltrimstr($prefix) | test("^(不到 1 分钟|([1-9]|[1-5][0-9]) 分钟|([1-9]|1[0-9]|2[0-3]) 小时( ([1-9]|[1-5][0-9]) 分钟)?|[1-9][0-9]* 天( ([1-9]|1[0-9]|2[0-3]) 小时)?)\\z")))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary or value_unit"; cat "$work/ListAlertEvents.json"; exit 1; }
 jq -e '[.events[] | select(.ruleId != null)] | length == 4 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks before deletion"; exit 1; }
 task_version=$(jq -r '.version' "$work/ListProbeTasks.json")

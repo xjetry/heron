@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/outbound"
 	"github.com/xjetry/heron/internal/hub/store"
 	"github.com/xjetry/heron/internal/testdeps"
@@ -25,6 +26,7 @@ import (
 type receivedMessage struct {
 	Rule, Node, Kind, Transition, Summary string
 	Value                                 float64
+	ValueUnit                             string `json:"value_unit"`
 	At                                    int64
 }
 
@@ -43,7 +45,7 @@ func queueEvent(t *testing.T, f *fixture, cs ...store.NotifyChannel) store.Alert
 	for _, c := range cs {
 		ids = append(ids, store.DeliveryTarget{ChannelID: c.ID})
 	}
-	ev, err := f.st.RecordTransition(t.Context(), r.ID, f.ids[0], store.StateFiring, "", time.Time{}, store.AlertEvent{At: f.clk.Now(), Summary: "persisted summary", Value: 5, Transition: store.TransitionFiring}, ids)
+	ev, err := f.st.RecordTransition(t.Context(), r.ID, f.ids[0], store.StateFiring, "", time.Time{}, store.AlertEvent{At: f.clk.Now(), Summary: "persisted summary", Value: 5, ValueUnit: metric.UnitSeconds, Transition: store.TransitionFiring}, ids)
 	must(t, err)
 	return ev
 }
@@ -233,7 +235,7 @@ func TestSendTestDoesNotRecord(t *testing.T) {
 	c := queueChannel(t, f, srv.URL)
 	q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	must(t, q.SendTest(t.Context(), c))
-	if got.Summary == "" || got.Transition != "test" {
+	if got.Summary == "" || got.Transition != "test" || got.ValueUnit != store.ValueUnitNotApplicable {
 		t.Fatalf("test message=%+v", got)
 	}
 	if len(f.events(t)) != 0 {
@@ -316,7 +318,7 @@ func TestQueueMessageUsesCurrentNamesAndHistoricalSummary(t *testing.T) {
 			if deleted {
 				rule, node, kind = "规则 #1", "节点 #1", ""
 			}
-			if m.Rule != rule || m.Node != node || m.Kind != kind || m.Summary != ev.Summary || m.Value != ev.Value {
+			if m.Rule != rule || m.Node != node || m.Kind != kind || m.Summary != ev.Summary || m.Value != ev.Value || m.ValueUnit != metric.UnitSeconds {
 				t.Fatalf("message=%+v", m)
 			}
 		})

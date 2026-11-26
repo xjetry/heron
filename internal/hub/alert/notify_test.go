@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/heron/internal/hub/metric"
 	"github.com/xjetry/heron/internal/hub/outbound"
 	"github.com/xjetry/heron/internal/hub/store"
 )
 
 func messageForTest() Message {
-	return Message{Rule: "rule", Node: "node", Kind: "offline", Transition: "firing", Value: 12.5, At: time.Unix(123, 0), Summary: "line\n\"quoted\""}
+	return Message{Rule: "rule", Node: "node", Kind: "offline", Transition: "firing", Value: 12.5, ValueUnit: metric.UnitSeconds, At: time.Unix(123, 0), Summary: "line\n\"quoted\""}
 }
 
 func wantRetry(t *testing.T, err error, want bool) {
@@ -63,7 +64,7 @@ func TestWebhookRendersTemplateAndHeaders(t *testing.T) {
 			if custom && len(got) != 1 {
 				t.Fatalf("custom template ignored: %s", body)
 			}
-			if !custom && (got["rule"] != "rule" || got["kind"] != "offline" || got["transition"] != "firing" || got["value"] != 12.5 || got["at"] != float64(123) || got["summary"] != messageForTest().Summary) {
+			if !custom && (got["rule"] != "rule" || got["kind"] != "offline" || got["transition"] != "firing" || got["value"] != 12.5 || got["value_unit"] != metric.UnitSeconds || got["at"] != float64(123) || got["summary"] != messageForTest().Summary) {
 				t.Fatalf("default body=%s", body)
 			}
 		})

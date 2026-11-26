@@ -502,8 +502,8 @@ test('手机上的告警事件排成卡片：不横向滚动，投递起在标�
   const now = Math.floor(Date.now() / 1000);
   const delivery = (id: bigint, ok: boolean) => ({ id, channelId: id, attempts: ok ? 1 : 3, ok, done: true, ...(ok ? { deliveredAt: BigInt(now) } : { failure: DeliveryFailure.TRANSPORT }) });
   await page.route(rpcRoute(AdminService.method.listAlertEvents), (route) => fulfillRpc(route, AdminService.method.listAlertEvents, () => ({ events: [
-    { id: 2n, ruleId: 1n, nodeId: 1n, transition: 'firing', at: BigInt(now), summary: '节点 tokyo 离线 39s', value: 39, deliveries: [delivery(11n, true), delivery(12n, false)] },
-    { id: 1n, ruleId: 1n, nodeId: 1n, transition: 'recovered', at: BigInt(now - 60), summary: '节点 tokyo 已恢复', value: 0, deliveries: [] },
+    { id: 2n, ruleId: 1n, nodeId: 1n, transition: 'firing', at: BigInt(now), summary: '节点 tokyo 离线 39s', value: 39, valueUnit: 'seconds', deliveries: [delivery(11n, true), delivery(12n, false)] },
+    { id: 1n, ruleId: 1n, nodeId: 1n, transition: 'recovered', at: BigInt(now - 60), summary: '节点 tokyo 已恢复', value: 0, valueUnit: 'seconds', deliveries: [] },
   ] })));
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/admin/events');

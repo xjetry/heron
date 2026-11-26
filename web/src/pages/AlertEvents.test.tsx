@@ -20,7 +20,7 @@ const render = (impl: AdminImpl, path = "/events") =>
 it("规则、变化与日期筛选只作用于已加载的行，筛空仍可加载更早，URL 可清除", async () => {
   let requests = 0;
   const events = [
-    { ...event(200n), ruleId: 1n, summary: "A 触发", value: 95.5 },
+    { ...event(200n), ruleId: 1n, summary: "A 触发", value: 95.5, valueUnit: "percent" },
     { ...event(199n), ruleId: 2n, transition: "recovered", summary: "B 恢复", value: 10 },
     ...Array.from({ length: 98 }, (_, i) => ({ ...event(BigInt(198 - i)), ruleId: 2n })),
   ];
@@ -34,7 +34,7 @@ it("规则、变化与日期筛选只作用于已加载的行，筛空仍可加�
   fireEvent.change(screen.getByRole("combobox", { name: "规则" }), { target: { value: "1" } });
   expect(router.state.location.search).toBe("?rule=1");
   expect(screen.getAllByRole("row")).toHaveLength(2);
-  expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell").map((c) => c.textContent)).toEqual([expect.any(String), "东京", "cpu（#1）", "触发A 触发", "95.5", "未配置渠道"]);
+  expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell").map((c) => c.textContent)).toEqual([expect.any(String), "东京", "cpu（#1）", "触发A 触发", "96%", "未配置渠道"]);
   expect(screen.getByText("A 触发").tagName).toBe("SMALL");
   fireEvent.change(screen.getByRole("combobox", { name: "变化" }), { target: { value: "recovered" } });
   await expectEmptyState("已加载的 100 条里没有匹配的事件。", { region: "告警事件", status: true });
@@ -98,19 +98,20 @@ it("四个查询错误汇总去重，规则名失败不阻断已有事件", asyn
   expect(screen.getByRole("cell", { name: "规则 #7" })).toBeInTheDocument();
 });
 
-it("事件组件省略规则名与筛选时显示全部行，系统零值为空而触发零值保留", async () => {
+it("事件组件省略规则名与筛选时显示全部行，观测值按事件自带的单位写：没有规则也写得出，n/a 为空而零值保留", async () => {
   function Feed() {
     const events = useAlertEvents(0n);
     return <EventFeed events={events} nodeName={() => "节点"} channelName={() => "渠道"} rules={undefined} />;
   }
   renderWithAdmin({ listAlertEvents: async () => ({ events: [
-    event(1n),
-    { ...event(2n, 0n), ruleId: 0n, transition: "login_success", value: 0 },
-    { ...event(3n, 0n), ruleId: 0n, transition: "login_success", value: 5 },
+    { ...event(1n), value: 0, valueUnit: "percent" },
+    { ...event(2n), value: 12_500_000, valueUnit: "bytes/s" },
+    { ...event(3n, 0n), ruleId: 0n, transition: "login_success", value: 0, valueUnit: "n/a" },
+    { ...event(4n), value: 7, valueUnit: "unknown" },
   ] }) }, [{ path: "/feed", Component: Feed }], "/feed");
   await screen.findByText("事件 1");
   expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent).filter((_, i) => [1, 2, 4].includes(i)))).toEqual([
-    ["节点", "规则 #7", "0"], ["—", "—", "—"], ["—", "—", "5"],
+    ["节点", "规则 #7", "0.0%"], ["节点", "规则 #7", "100.0 Mbps"], ["—", "—", "—"], ["节点", "规则 #7", "7（单位未知）"],
   ]);
 });
 

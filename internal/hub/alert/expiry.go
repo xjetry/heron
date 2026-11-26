@@ -236,13 +236,13 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 			o := ExpiryObservation{HasExpiry: ob.hasExpiry, DaysLeft: ob.daysLeft, DaysBefore: r.DaysBefore}
 			cur := e.entry(stateKey{r.ID, n.ID})
 			next, tr := NextExpiry(cur.state, o)
-			summary, value := expirySummary(n, r, o, tr, cur.firedExpiresOn)
+			summary, rd := expirySummary(n, r, o, tr, cur.firedExpiresOn)
 			// 进入 firing 的观测一定有到期日（NextExpiry 对没有到期日的观测只给 ok），记下的日期非空。
 			fired := ""
 			if next == store.StateFiring {
 				fired = n.Billing.ExpiresOn
 			}
-			if err := e.apply(ctx, cy, r, n.ID, next, false, false, fired, tr, summary, value); err != nil {
+			if err := e.apply(ctx, cy, r, n.ID, next, false, false, fired, tr, summary, rd); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -288,7 +288,7 @@ func (e *Engine) publishExpiryZones(nodes []store.Node) {
 	}
 }
 
-// expirySummary 是到期告警的文案；value 是剩余天数，因清除到期日而恢复时为 0。一条规则对一个节点只提醒一次：
+// expirySummary 是到期告警的文案与观测：观测是剩余天数，因清除到期日而恢复时没有观测（noReading）。一条规则对一个节点只提醒一次：
 // 触发文案按进入窗口时的剩余天数写"将于"或"已于"。此后留在 firing，NextExpiry 不给转换，apply 也跳过状态不变的
 // 写，两处各自都挡住第二条。
 // 恢复文案按离开窗口的原因。firedOn 是恢复之前那个 firing 状态记下的触发时到期日：当前到期日与它相同，日期没变，
@@ -296,19 +296,19 @@ func (e *Engine) publishExpiryZones(nodes []store.Node) {
 // 这句同样成立）；
 // 不同就是到期日改过，手动修改与自动续期都算。引擎只经触发转换进入 firing 并总是记下日期，firedOn 为空的 firing
 // 只可能来自绕过引擎写的库，这时当前日期非空、与它不等，按到期日改过写。
-func expirySummary(n store.Node, r store.AlertRule, o ExpiryObservation, tr *store.Transition, firedOn string) (string, float64) {
+func expirySummary(n store.Node, r store.AlertRule, o ExpiryObservation, tr *store.Transition, firedOn string) (string, reading) {
 	recovered := tr != nil && *tr == store.TransitionRecovered
 	switch {
 	case recovered && !o.HasExpiry:
-		return fmt.Sprintf("节点 %s 已清除到期日（规则 %s）", n.Name, r.Name), 0
+		return fmt.Sprintf("节点 %s 已清除到期日（规则 %s）", n.Name, r.Name), noReading
 	case recovered && n.Billing.ExpiresOn == firedOn:
-		return fmt.Sprintf("节点 %s 已不在提醒窗口内（规则 %s）", n.Name, r.Name), float64(o.DaysLeft)
+		return fmt.Sprintf("节点 %s 已不在提醒窗口内（规则 %s）", n.Name, r.Name), observedValue(float64(o.DaysLeft))
 	case recovered:
-		return fmt.Sprintf("节点 %s 到期日已更新为 %s（规则 %s）", n.Name, n.Billing.ExpiresOn, r.Name), float64(o.DaysLeft)
+		return fmt.Sprintf("节点 %s 到期日已更新为 %s（规则 %s）", n.Name, n.Billing.ExpiresOn, r.Name), observedValue(float64(o.DaysLeft))
 	case o.DaysLeft < 0:
-		return fmt.Sprintf("节点 %s 已于 %s 到期（已过期 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, -o.DaysLeft, r.Name), float64(o.DaysLeft)
+		return fmt.Sprintf("节点 %s 已于 %s 到期（已过期 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, -o.DaysLeft, r.Name), observedValue(float64(o.DaysLeft))
 	}
-	return fmt.Sprintf("节点 %s 将于 %s 到期（剩 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, o.DaysLeft, r.Name), float64(o.DaysLeft)
+	return fmt.Sprintf("节点 %s 将于 %s 到期（剩 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, o.DaysLeft, r.Name), observedValue(float64(o.DaysLeft))
 }
 
 // 到期扫描出错后的退避：第一次重扫在出错那一轮开始后 1 分钟，之后每次翻倍，上限 1 小时。

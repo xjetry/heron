@@ -172,7 +172,7 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number 
       labels: ["RTT 均值", "最小", "最大"],
       soft: [false, true, true],
       bands: [{ lower: 1, upper: 2 }],
-      unit: "ms" as const,
+      unit: "milliseconds" as const,
       data: toProbeTaskAligned(shown, s.taskId, from, to, [rttMeanMs, rttMinMs, rttMaxMs]),
       summary: summarizeProbes(s.samples),
     }));
@@ -231,7 +231,7 @@ export function MetricCharts({ history }: { history: HistoryState }) {
   );
 }
 
-const ms = (v: number | null) => (v === null ? "–" : formatUnit(v, "ms"));
+const ms = (v: number | null) => (v === null ? "–" : formatUnit(v, "milliseconds"));
 
 // 与跨节点对比表同一组列、同一口径（summarizeProbes）：按窗口内（或切出的晚高峰内）全部样本汇总。
 function ProbeSummaryLine({ summary }: { summary: ProbeSummary }) {
