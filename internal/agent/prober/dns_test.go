@@ -155,7 +155,7 @@ func TestDNSOutcomes(t *testing.T) {
 	}
 
 	// 解析器地址过本地策略：默认策略拒绝回环，拒绝是 error。
-	denied := DNS{Clock: clock.Real(), Targets: Targets{}}
+	denied := DNS{Clock: clock.Real(), Targets: Targets{PublicRoute: dualStackHost.route}}
 	if out := denied.Probe(t.Context(), dnsTask(addr)); out.Err == "" || out.Timeout {
 		t.Fatalf("policy=%+v", out)
 	}

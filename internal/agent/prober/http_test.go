@@ -96,7 +96,7 @@ func TestHTTPOutcomes(t *testing.T) {
 	}
 
 	// 默认策略拒绝回环：地址策略拒绝是 error，照常调度由调用方负责。
-	denied := HTTP{Clock: clock.Real(), Targets: Targets{}, Version: "test-version"}
+	denied := HTTP{Clock: clock.Real(), Targets: Targets{PublicRoute: dualStackHost.route}, Version: "test-version"}
 	if out := denied.Probe(t.Context(), httpTask(ok.URL)); out.Err == "" || out.Timeout {
 		t.Fatalf("policy=%+v", out)
 	}

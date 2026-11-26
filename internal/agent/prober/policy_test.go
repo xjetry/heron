@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,15 +16,15 @@ import (
 	"github.com/xjetry/heron/internal/probelimit"
 )
 
-// loopbackTargets 放行本机回环：引擎测试只连本机的服务，不依赖宿主网络。本机接口地址固定为双栈，
-// 两族都具备，测试结果不随运行它的机器有没有某一族的地址而变。
+// loopbackTargets 放行本机回环：引擎测试只连本机的服务，不依赖宿主网络。本机接口地址与公网路由都固定为双栈，
+// 两族都具备，测试结果不随运行它的机器有没有某一族的地址或路由而变。
 func loopbackTargets(t *testing.T, r *net.Resolver) Targets {
 	t.Helper()
 	p, err := ParsePolicy([]string{"127.0.0.0/8", "::1/128"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Targets{Resolver: r, Policy: p, HostAddrs: func() ([]netip.Addr, error) { return dualStackHost, nil }}
+	return Targets{Resolver: r, Policy: p, HostAddrs: func() ([]netip.Addr, error) { return bridgedHostAddrs, nil }, PublicRoute: dualStackHost.route}
 }
 
 func TestPolicyDefaults(t *testing.T) {
@@ -97,14 +98,15 @@ func TestDenialMessageFitsProbeError(t *testing.T) {
 }
 
 // 两个引擎都经 Targets：默认策略下回环目标不发包，错误写明地址与前缀；名字解析到被拒地址同样被拒。
+// 公网路由固定为双栈，结论只取决于策略，不随运行测试的机器有没有某一族的路由而变。
 func TestEnginesApplyPolicyAfterResolution(t *testing.T) {
 	socket := newQuietSocket()
 	var sent int
 	socket.write = func([]byte, net.Addr) (int, error) { sent++; return 0, syscall.EPERM }
 	ic := icmpWithSocket(t, socket)
-	ic.Targets = Targets{Resolver: localDNS(t, dnsDual, nil)}
+	ic.Targets = Targets{Resolver: localDNS(t, dnsDual, nil), PublicRoute: dualStackHost.route}
 	var dialed int
-	tcp := TCP{Clock: clock.Real(), Targets: Targets{Resolver: localDNS(t, dnsDual, nil)}, DialContext: func(context.Context, string, string) (net.Conn, error) {
+	tcp := TCP{Clock: clock.Real(), Targets: Targets{Resolver: localDNS(t, dnsDual, nil), PublicRoute: dualStackHost.route}, DialContext: func(context.Context, string, string) (net.Conn, error) {
 		dialed++
 		return nil, syscall.ECONNREFUSED
 	}}
@@ -181,7 +183,8 @@ func TestTargetsFailClosedWhenHostAddressesUnknown(t *testing.T) {
 	}
 }
 
-// 生产路径（零值 Targets 经 net.InterfaceAddrs 枚举）：本机非回环地址上的监听收不到连接。
+// 生产路径（Targets 不注入接口地址，经 net.InterfaceAddrs 枚举）：本机非回环地址上的监听收不到连接。
+// 只固定公网路由为双栈，让结论只取决于接口地址并入的默认拒绝。
 func TestTCPDeniesThisHostsOwnAddress(t *testing.T) {
 	own, err := interfaceAddrs()
 	if err != nil {
@@ -211,7 +214,7 @@ func TestTCPDeniesThisHostsOwnAddress(t *testing.T) {
 	}()
 	task := tcpTask(ln.Addr().String())
 	task.TimeoutMs = probelimit.MaxTimeoutMs
-	out := (TCP{Clock: clock.Real()}).Probe(t.Context(), task)
+	out := (TCP{Clock: clock.Real(), Targets: Targets{PublicRoute: dualStackHost.route}}).Probe(t.Context(), task)
 	if out.Err != "target "+addr.String()+" denied by local probe policy (an address of this host)" {
 		t.Fatalf("outcome %+v", out)
 	}
@@ -219,5 +222,56 @@ func TestTCPDeniesThisHostsOwnAddress(t *testing.T) {
 	case <-accepted:
 		t.Fatal("the listener on this host's own address accepted a connection")
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// 内核为公网目标选出的源地址只有能收回包时才算具备该族：只有链路本地地址却挂着默认路由的 IPv6、
+// 回环与未指定地址都不算。
+func TestRoutableSource(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"203.0.113.7", true},
+		{"172.17.0.1", true}, // NAT 后面的私网源地址照样能收回包。
+		{"2001:db8::10", true},
+		{"::ffff:203.0.113.7", true},
+		{"127.0.0.1", false},
+		{"::1", false},
+		{"169.254.3.4", false},
+		{"fe80::1", false},
+		{"0.0.0.0", false},
+		{"::", false},
+	} {
+		if got := routableSource(netip.MustParseAddr(tc.addr)); got != tc.want {
+			t.Errorf("routableSource(%s) = %v, want %v", tc.addr, got, tc.want)
+		}
+	}
+	if routableSource(netip.Addr{}) {
+		t.Error("the zero address counts as a routable source")
+	}
+}
+
+// 生产路径的路由查询不发包也不出错：本机有某族公网路由时，内核选出的源地址必然是本机接口上的地址。
+func TestPublicRouteSourceIsThisHosts(t *testing.T) {
+	own, err := interfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v6 := range []bool{false, true} {
+		network := map[bool]string{false: "udp4", true: "udp6"}[v6]
+		if !publicRoute(v6) {
+			t.Logf("%s: no public route on this host", network)
+			continue
+		}
+		c, err := net.Dial(network, routeProbe[v6])
+		if err != nil {
+			t.Fatalf("%s: publicRoute is true but connect fails: %v", network, err)
+		}
+		src := c.LocalAddr().(*net.UDPAddr).AddrPort().Addr().Unmap()
+		c.Close()
+		if !slices.Contains(own, src) {
+			t.Errorf("%s: source %s is not among this host's addresses %v", network, src, own)
+		}
 	}
 }

@@ -134,12 +134,16 @@ func (p Policy) String() string {
 //
 // 宿主机的接口地址每次探测前重新枚举：地址会随 DHCP、网卡增删而变，启动时取一次的快照会漏掉之后加上的地址。
 // 连本机的非回环地址走本地路由，常能绕过只挡外部入站的防火墙，所以它们与回环同样默认拒绝。枚举失败时拒绝这次探测。
-// 本机具备哪些地址族也从同一次枚举得出（hostStack），与策略看到的是同一份地址。
+//
+// 本机具备哪些地址族不看接口地址，看该族有没有通往公网的路由（hostStack）：内网网桥（docker0 的 172.17.0.1）
+// 让纯 IPv6 主机的接口上也有 IPv4 地址，按地址判会让自动地址族去连发不出去的 A 记录。路由同样每次探测前重新查。
 type Targets struct {
 	Resolver *net.Resolver
 	Policy   Policy
-	// HostAddrs 列出宿主机接口上的地址；nil 取 net.InterfaceAddrs。
+	// HostAddrs 列出宿主机接口上的地址，供 Policy 并入默认拒绝；nil 取 net.InterfaceAddrs。
 	HostAddrs func() ([]netip.Addr, error)
+	// PublicRoute 报告本机是否有通往公网的该族路由（v6 为真问 IPv6，否则问 IPv4）；nil 取 publicRoute。
+	PublicRoute func(v6 bool) bool
 }
 
 // stack 是一组地址族。
@@ -157,22 +161,45 @@ func (s stack) has(a netip.Addr) bool {
 
 func (s stack) and(o stack) stack { return stack{v4: s.v4 && o.v4, v6: s.v6 && o.v6} }
 
-// hostStack 判定本机具备的地址族：接口上有该族的非回环、非链路本地地址。只有回环与链路本地地址的族
-// 到不了远端，向它发起的探测必然失败；把这种失败计成丢包，会把本机能力缺失记成目标不可达。
-func hostStack(own []netip.Addr) stack {
-	var s stack
-	for _, a := range own {
-		a = a.Unmap()
-		if a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsUnspecified() {
-			continue
-		}
-		if a.Is4() {
-			s.v4 = true
-		} else {
-			s.v6 = true
-		}
+// hostStack 判定本机具备的地址族：该族有通往公网的路由。没有公网路由的族到不了远端，向它发起的探测必然失败；
+// 把这种失败计成丢包，会把本机能力缺失记成目标不可达。
+func (t Targets) hostStack() stack {
+	route := t.PublicRoute
+	if route == nil {
+		route = publicRoute
 	}
-	return s
+	return stack{v4: route(false), v6: route(true)}
+}
+
+// routeProbe 是问路由用的公网地址（Google Public DNS 的两族地址）。只做路由查找、不发包，所以它是否响应、
+// 是否被 probe_deny 拒绝都无关；选它只因为它是确定落在公网、由默认路由覆盖的单播地址。
+var routeProbe = map[bool]string{false: "8.8.8.8:53", true: "[2001:4860:4860::8888]:53"}
+
+// publicRoute 对该族的一个公网地址做 UDP connect：connect 只让内核选路由与源地址，不发包。没有该族路由时
+// connect 失败（ENETUNREACH 等，例如 IPv4 只有 docker0 这类内网网桥的直连路由）；connect 成功但选出的源地址
+// 收不到回包时同样不算（routableSource）——Linux 上只有链路本地 IPv6 地址却挂着默认路由时，connect 成功、
+// 源地址是 fe80::/10 的地址。
+func publicRoute(v6 bool) bool {
+	network := "udp4"
+	if v6 {
+		network = "udp6"
+	}
+	c, err := net.Dial(network, routeProbe[v6])
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+	src, ok := c.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	return routableSource(src.AddrPort().Addr())
+}
+
+// routableSource 判定内核为公网目标选出的源地址能否收到回包。
+func routableSource(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsValid() && !a.IsLoopback() && !a.IsLinkLocalUnicast() && !a.IsUnspecified()
 }
 
 // familyStack 是任务的探测地址族允许的族；缺省（自动）两族都允许。CheckTask 只放行定义过的取值。
@@ -190,11 +217,11 @@ func familyStack(f heronv1.ProbeIpFamily) stack {
 func missingStack(want stack) error {
 	switch {
 	case want.v4 && want.v6:
-		return errors.New("this host has no IPv4 or IPv6 address other than loopback and link-local")
+		return errors.New("this host has no route to public IPv4 or IPv6 addresses")
 	case want.v6:
-		return errors.New("this host has no IPv6 address other than loopback and link-local")
+		return errors.New("this host has no route to public IPv6 addresses")
 	}
-	return errors.New("this host has no IPv4 address other than loopback and link-local")
+	return errors.New("this host has no route to public IPv4 addresses")
 }
 
 // Resolve 取出这次探测要连的地址。family 是任务的探测地址族，engine 是引擎自身能发起的族（ICMP 由套接字决定，
@@ -202,9 +229,10 @@ func missingStack(want stack) error {
 // 所以纯 IPv6 节点探测双栈名字时得到 AAAA，而不是连向一个本机发不出去的 IPv4 地址。
 //
 // 任务要求的族本机不具备，或字面量属于本机不具备的族时返回错误：探测错误按周期上报，不计入丢包，也不静默跳过——
-// 缺结果会被误读成任务没下发或调度停了。字面量与显式地址族不同族的任务已被 probelimit.CheckTask 拒于准入之外，
-// 这里仍核对，因为解析器地址（DNS 的 dns_server）以自动地址族走同一个入口，字面量的族只能在这里比对本机能力。
-// 字面量所属族的引擎能力不在这里判：ICMP 自己报出该族套接字的初始化诊断，比笼统的"不可用"更能说明原因。
+// 缺结果会被误读成任务没下发或调度停了。字面量只核对本机能力，不核对与任务地址族是否同族：显式地址族与字面量
+// 不同族的任务由 probelimit.CheckTask 拒于准入之外（Scheduler.Apply 只调度通过它的任务），解析器地址（DNS 的
+// dns_server）以自动地址族走这里，两族都允许。字面量所属族的引擎能力不在这里判：ICMP 自己报出该族套接字的
+// 初始化诊断，比笼统的"不可用"更能说明原因。
 func (t Targets) Resolve(ctx context.Context, host string, family heronv1.ProbeIpFamily, engine stack) (netip.Addr, error) {
 	list := t.HostAddrs
 	if list == nil {
@@ -214,11 +242,8 @@ func (t Targets) Resolve(ctx context.Context, host string, family heronv1.ProbeI
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("list this host's addresses: %w", err)
 	}
-	have, want := hostStack(own), familyStack(family)
+	have, want := t.hostStack(), familyStack(family)
 	if lit, err := netip.ParseAddr(host); err == nil {
-		if !want.has(lit) {
-			return netip.Addr{}, fmt.Errorf("target address %s is outside ip_family %s", lit, family)
-		}
 		if !have.has(lit) {
 			return netip.Addr{}, missingStack(stack{v4: lit.Unmap().Is4(), v6: !lit.Unmap().Is4()})
 		}

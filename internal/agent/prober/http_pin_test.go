@@ -334,7 +334,7 @@ func TestHTTPPinPolicyDeniedBeforeDial(t *testing.T) {
 	leaf, chain := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
 	var hits atomic.Int64
 	s := pinnedServer(t, chain, &hits)
-	p := HTTP{Clock: clk, Targets: Targets{}, Version: "v"} // 零值策略拒绝回环。
+	p := HTTP{Clock: clk, Targets: Targets{PublicRoute: dualStackHost.route}, Version: "v"} // 零值策略拒绝回环。
 	pin := spki(leaf)
 	out := p.Probe(t.Context(), pinnedTask(1, s.URL, pin[:], nil))
 	if out.Err == "" || out.Timeout || out.Presented != nil {

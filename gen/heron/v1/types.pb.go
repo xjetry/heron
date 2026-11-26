@@ -595,7 +595,8 @@ func (HttpStatusPolicy) EnumDescriptor() ([]byte, []int) {
 }
 
 // 探测地址族。缺省（UNSPECIFIED）即自动：agent 只在本机具备的地址族里选，本机两族都具备时名字优先取 IPv4。
-// 本机具备某族 ⇔ 本机接口上有该族的非回环、非链路本地地址（ICMP 还要求该族的套接字可用）。显式要求本机
+// 本机具备某族 ⇔ 本机有该族通往公网的路由（对该族一个公网地址做 UDP connect 能取得可收回包的源地址，不发包；
+// 内网网桥如 docker0 上的私网地址不算），ICMP 还要求该族的套接字可用。显式要求本机
 // 不具备的地址族，或目标字面量属于本机不具备的地址族时，agent 每个周期上报 ProbeError（不计入丢包），不静默跳过。
 type ProbeIpFamily int32
 

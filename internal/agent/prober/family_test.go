@@ -13,20 +13,33 @@ import (
 	"github.com/xjetry/heron/internal/clock"
 )
 
-// 本机接口地址的几种形状。回环与链路本地地址不算具备该族：它们到不了远端。
+// 本机通往公网的路由的几种形状：具备某族只看该族有没有公网路由。
 var (
-	dualStackHost = []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1"), netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("2001:db8::10")}
-	v6OnlyHost    = []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1"), netip.MustParseAddr("169.254.3.4"), netip.MustParseAddr("fe80::1"), netip.MustParseAddr("2001:db8::10")}
-	v4OnlyHost    = []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1"), netip.MustParseAddr("fe80::1"), netip.MustParseAddr("192.0.2.10")}
-	noStackHost   = []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1"), netip.MustParseAddr("169.254.3.4"), netip.MustParseAddr("fe80::1")}
+	dualStackHost = stack{v4: true, v6: true}
+	v6OnlyHost    = stack{v6: true}
+	v4OnlyHost    = stack{v4: true}
+	noStackHost   = stack{}
 )
 
-// hostTargets 放行回环并固定本机接口地址：解析器把名字答成回环地址，本机具备哪些地址族只由 host 决定，
-// 结果不随运行测试的机器的网卡变化。
-func hostTargets(t *testing.T, r *net.Resolver, host []netip.Addr) Targets {
+// bridgedHostAddrs 是装了 Docker 的主机的接口地址：docker0 上的 172.17.0.1 与一个全局 IPv6 地址，两族都有
+// 非回环、非链路本地地址。它与上面任一路由形状搭配，接口地址都不能改变本机具备哪些族的结论。
+var bridgedHostAddrs = []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1"), netip.MustParseAddr("172.17.0.1"), netip.MustParseAddr("2001:db8::10")}
+
+// route 是按族问路由的接缝的固定答案。
+func (s stack) route(v6 bool) bool {
+	if v6 {
+		return s.v6
+	}
+	return s.v4
+}
+
+// hostTargets 放行回环并固定本机的公网路由与接口地址：解析器把名字答成回环地址，本机具备哪些地址族只由 routes 决定，
+// 结果不随运行测试的机器的网卡与路由表变化。
+func hostTargets(t *testing.T, r *net.Resolver, routes stack) Targets {
 	t.Helper()
 	tg := loopbackTargets(t, r)
-	tg.HostAddrs = func() ([]netip.Addr, error) { return host, nil }
+	tg.HostAddrs = func() ([]netip.Addr, error) { return bridgedHostAddrs, nil }
+	tg.PublicRoute = routes.route
 	return tg
 }
 
@@ -41,7 +54,7 @@ func TestTCPFamilyFollowsTaskAndHostStack(t *testing.T) {
 	resolver := localDNS(t, dnsDual, nil)
 	for _, tc := range []struct {
 		name    string
-		host    []netip.Addr
+		host    stack
 		target  string
 		family  heronv1.ProbeIpFamily
 		dialed  string
@@ -52,11 +65,11 @@ func TestTCPFamilyFollowsTaskAndHostStack(t *testing.T) {
 		{"v4_only_auto", v4OnlyHost, "dual.prober.invalid:9", auto, "127.0.0.1:9", ""},
 		{"dual_explicit_v6", dualStackHost, "dual.prober.invalid:9", v6, "[::1]:9", ""},
 		{"dual_explicit_v4", dualStackHost, "dual.prober.invalid:9", v4, "127.0.0.1:9", ""},
-		{"v4_only_explicit_v6", v4OnlyHost, "dual.prober.invalid:9", v6, "", "this host has no IPv6 address other than loopback and link-local"},
-		{"v6_only_explicit_v4", v6OnlyHost, "dual.prober.invalid:9", v4, "", "this host has no IPv4 address other than loopback and link-local"},
-		{"v6_only_v4_literal", v6OnlyHost, "127.0.0.1:9", auto, "", "this host has no IPv4 address other than loopback and link-local"},
-		{"v4_only_v6_literal", v4OnlyHost, "[::1]:9", auto, "", "this host has no IPv6 address other than loopback and link-local"},
-		{"no_stack_auto", noStackHost, "dual.prober.invalid:9", auto, "", "this host has no IPv4 or IPv6 address other than loopback and link-local"},
+		{"v4_only_explicit_v6", v4OnlyHost, "dual.prober.invalid:9", v6, "", "this host has no route to public IPv6 addresses"},
+		{"v6_only_explicit_v4", v6OnlyHost, "dual.prober.invalid:9", v4, "", "this host has no route to public IPv4 addresses"},
+		{"v6_only_v4_literal", v6OnlyHost, "127.0.0.1:9", auto, "", "this host has no route to public IPv4 addresses"},
+		{"v4_only_v6_literal", v4OnlyHost, "[::1]:9", auto, "", "this host has no route to public IPv6 addresses"},
+		{"no_stack_auto", noStackHost, "dual.prober.invalid:9", auto, "", "this host has no route to public IPv4 or IPv6 addresses"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var dialed []string
@@ -80,21 +93,21 @@ func TestTCPFamilyFollowsTaskAndHostStack(t *testing.T) {
 	}
 }
 
-// HTTP 与 TCP 共用同一个取址入口，任务的地址族同样生效：本机没有 IPv6 时要求 IPv6 的任务报错，不按自动退回 IPv4。
+// HTTP 与 TCP 共用同一个取址入口，任务的地址族同样生效：本机没有 IPv6 公网路由时要求 IPv6 的任务报错，不按自动退回 IPv4。
 func TestHTTPHonorsTaskFamily(t *testing.T) {
 	p := &HTTP{Clock: clock.Real(), Targets: hostTargets(t, localDNS(t, dnsDual, nil), v4OnlyHost), Version: "test"}
 	probe := task(1)
 	probe.Kind, probe.Target, probe.IpFamily = heronv1.ProbeKind_PROBE_KIND_HTTP, "http://dual.prober.invalid:9/", heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6
 	out := p.Probe(t.Context(), probe)
-	if out.Timeout || !strings.Contains(out.Err, "this host has no IPv6 address") {
+	if out.Timeout || !strings.Contains(out.Err, "this host has no route to public IPv6 addresses") {
 		t.Fatalf("outcome=%+v, want the missing-family probe error", out)
 	}
 }
 
-// ICMP 的地址族能力是本机地址与该族套接字两者都具备：自动模式在纯 IPv6 节点上选 AAAA；
-// 显式要求的族缺套接字时报该族的套接字诊断，缺地址时报本机没有该族地址。
+// ICMP 的地址族能力是本机公网路由与该族套接字两者都具备：自动模式在纯 IPv6 节点上选 AAAA；
+// 显式要求的族缺套接字时报该族的套接字诊断，缺路由时报本机没有该族的公网路由。
 func TestICMPFamilyFollowsSocketsAndHostStack(t *testing.T) {
-	withSockets := func(t *testing.T, host []netip.Addr, v4, v6 bool) (*ICMP, *string) {
+	withSockets := func(t *testing.T, host stack, v4, v6 bool) (*ICMP, *string) {
 		t.Helper()
 		var destination string
 		socket := func() *quietSocket {
@@ -131,10 +144,10 @@ func TestICMPFamilyFollowsSocketsAndHostStack(t *testing.T) {
 		t.Fatalf("explicit v6 without a v6 socket destination=%q outcome=%+v", *dst, out)
 	}
 	e, dst = withSockets(t, v4OnlyHost, true, true)
-	if out := e.Probe(t.Context(), probe("dual.prober.invalid", heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6)); *dst != "" || out.Timeout || !strings.Contains(out.Err, "this host has no IPv6 address") {
+	if out := e.Probe(t.Context(), probe("dual.prober.invalid", heronv1.ProbeIpFamily_PROBE_IP_FAMILY_IPV6)); *dst != "" || out.Timeout || !strings.Contains(out.Err, "this host has no route to public IPv6 addresses") {
 		t.Fatalf("explicit v6 without a v6 address destination=%q outcome=%+v", *dst, out)
 	}
-	// 自动模式：本机有 IPv6 地址但只有 IPv4 套接字，又没有 IPv4 地址——两族都用不了。
+	// 自动模式：本机有 IPv6 路由但只有 IPv4 套接字，又没有 IPv4 路由——两族都用不了。
 	e, dst = withSockets(t, v6OnlyHost, true, false)
 	if out := e.Probe(t.Context(), probe("dual.prober.invalid", heronv1.ProbeIpFamily_PROBE_IP_FAMILY_UNSPECIFIED)); *dst != "" || out.Timeout || out.Err == "" {
 		t.Fatalf("auto with no usable family destination=%q outcome=%+v", *dst, out)
@@ -166,7 +179,7 @@ func TestDNSRecordTypeAndResolverFamily(t *testing.T) {
 
 	_, port, _ := net.SplitHostPort(aOnly)
 	noV6 := DNS{Clock: clock.Real(), Targets: hostTargets(t, nil, v4OnlyHost)}
-	if out := noV6.Probe(t.Context(), aaaa(net.JoinHostPort("::1", port))); out.Timeout || !strings.Contains(out.Err, "this host has no IPv6 address") {
+	if out := noV6.Probe(t.Context(), aaaa(net.JoinHostPort("::1", port))); out.Timeout || !strings.Contains(out.Err, "this host has no route to public IPv6 addresses") {
 		t.Fatalf("v6 resolver on a v4-only host=%+v, want the missing-family probe error", out)
 	}
 }
