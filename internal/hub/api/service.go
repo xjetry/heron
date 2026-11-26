@@ -315,6 +315,19 @@ func invalid(format string, args ...any) error {
 	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(format, args...))
 }
 
+// listLimit 是所有带 limit 的列表共用的裁决：0 取缺省，超过上限返回 InvalidArgument 并点名 limit，不截断。
+// 这些列表要么没有翻页游标，要么调用方按"不满一页即到底"翻页；按上限截断会让请求 1000 条的调用方拿到 500 条后
+// 以为已经取完。
+func listLimit(got uint32, def, maxLimit int) (int, error) {
+	if got == 0 {
+		return def, nil
+	}
+	if int64(got) > int64(maxLimit) {
+		return 0, invalid("limit must be between 1 and %d (0 means %d), got %d", maxLimit, def, got)
+	}
+	return int(got), nil
+}
+
 func notFound(id int64) error {
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("node %d does not exist", id))
 }
