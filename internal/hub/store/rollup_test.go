@@ -180,7 +180,7 @@ func TestChooseLevel(t *testing.T) {
 		{3600, 0, "1m", 60},
 	}
 	for _, c := range cases {
-		lv, step := ChooseLevel(1_000_000, 1_000_000+c.span, c.maxPoints)
+		lv, step := chooseLevel(1_000_000, 1_000_000+c.span, c.maxPoints, 0)
 		if lv.Name != c.level || step != c.step {
 			t.Fatalf("span %d max %d: got %s/%d, want %s/%d", c.span, c.maxPoints, lv.Name, step, c.level, c.step)
 		}
@@ -202,7 +202,7 @@ func TestQueryMetricsRebucketsAndKeepsNoData(t *testing.T) {
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+10*60)}); err != nil {
 		t.Fatal(err)
 	}
-	lv, step := ChooseLevel(base+30, base+10*60, 4) // 570s / 4 → 需要 143s → 对齐 180s
+	lv, step := chooseLevel(base+30, base+10*60, 4, 0) // 570s / 4 → 需要 143s → 对齐 180s
 	if lv.Name != "1m" || step != 180 {
 		t.Fatalf("level %s step %d", lv.Name, step)
 	}
@@ -264,7 +264,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	if err := s.setRollupWatermark(t.Context(), "probe_5m", now.Unix()-8*86400); err != nil {
 		t.Fatal(err)
 	}
-	n, err := s.Prune(ctx, r)
+	n, err := s.prune(ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 			}
 		}
 	}
-	if n, err := s.Prune(ctx, r); err != nil || n != 0 {
+	if n, err := s.prune(ctx, r); err != nil || n != 0 {
 		t.Fatalf("second prune = %d %v, want 0 nil", n, err)
 	}
 	// 孤儿节点的行不出现在任何查询结果里（family.live），剩余行按表直接数。
@@ -311,7 +311,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	if err := s.setRollupWatermark(t.Context(), "probe_5m", now.Unix()); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.Prune(ctx, r); err != nil || n != 2 {
+	if n, err := s.prune(ctx, r); err != nil || n != 2 {
 		t.Fatalf("consumed probe prune=%d err=%v, want 2", n, err)
 	}
 	for _, node := range []int64{id, orphan} {
@@ -362,7 +362,7 @@ func TestRetentionMinimaMatchChooseLevelWindows(t *testing.T) {
 			lo, hi := int64(1), int64(400*86400)
 			for lo < hi {
 				mid := lo + (hi-lo+1)/2
-				chosen, _ := ChooseLevel(0, mid, 0)
+				chosen, _ := chooseLevel(0, mid, 0, 0)
 				if chosen.Bucket <= target.Bucket {
 					lo = mid
 				} else {
@@ -380,7 +380,18 @@ func TestRetentionMinimaMatchChooseLevelWindows(t *testing.T) {
 			if err := r.Validate(); err != nil {
 				t.Fatalf("%s longest ChooseLevel window %v rejected: %v", target.Name, window, err)
 			}
-			*value -= time.Second
+			// 下限处，截止到现在、跨度恰为该级最长窗口的起点仍在该级保留期内，保留期那条下限不把它推粗；
+			// 保留期再短一个桶长（Validate 拒绝的配置），同一窗口就会被推到更粗的级。
+			i := levelIndex(target)
+			now := unalignedNow.Unix()
+			if got := r.finestRetained(now-lo, now); got > i {
+				t.Fatalf("%s retention %v pushes the longest window ending now to %s", target.Name, *value, levels[got].Name)
+			}
+			*value -= time.Duration(target.Bucket) * time.Second
+			if got := r.finestRetained(now-lo, now); got <= i {
+				t.Fatalf("%s retention %v below the minimum still keeps the window start on %s", target.Name, *value, levels[got].Name)
+			}
+			*value += time.Duration(target.Bucket-1) * time.Second
 			if err := r.Validate(); err == nil {
 				t.Fatalf("%s retention %v accepted below longest ChooseLevel window %v", target.Name, *value, window)
 			}
@@ -422,7 +433,7 @@ func TestChooseLevelCapsAlignedWindows(t *testing.T) {
 		{"long_single_point", 1_000_000, 1_000_000 + 400*86400, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			lv, step := ChooseLevel(c.from, c.to, c.maxPoints)
+			lv, step := chooseLevel(c.from, c.to, c.maxPoints, 0)
 			if step < lv.Bucket || step%lv.Bucket != 0 {
 				t.Fatalf("step %d is not a positive multiple of bucket %d", step, lv.Bucket)
 			}
@@ -447,7 +458,7 @@ func TestQueryMetricsHonorsAlignedPointLimitWithoutDroppingSamples(t *testing.T)
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+11*60)}); err != nil {
 		t.Fatal(err)
 	}
-	lv, step := ChooseLevel(base+30, base+630, 10)
+	lv, step := chooseLevel(base+30, base+630, 10, 0)
 	rows, err := s.QueryMetrics(ctx, id, base+30, base+630, lv, step)
 	if err != nil {
 		t.Fatal(err)
@@ -472,7 +483,7 @@ func TestChooseLevelKeepsFinestStepWithinAlignedBudget(t *testing.T) {
 		for _, span := range []int64{1, 60, 61, 570, 600, 6 * 3600, 6*3600 + 1, 7 * 86400, 7*86400 + 1, 30 * 86400, 400 * 86400} {
 			for _, budget := range []int{1, 2, 4, 10, 100, 720} {
 				to := from + span
-				lv, step := ChooseLevel(from, to, budget)
+				lv, step := chooseLevel(from, to, budget, 0)
 				// 逐个枚举桶长倍数作为独立基准，不复用被测的跳跃计算。
 				want := lv.Bucket
 				for (to-1)/want-from/want+1 > int64(budget) {

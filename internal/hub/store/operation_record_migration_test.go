@@ -12,17 +12,17 @@ import (
 	"github.com/xjetry/heron/internal/clock"
 )
 
-// schemaV55 冻结 v55 的完整 DDL：v54 加上迁移 55 重建的操作记录表与按时刻的索引。
-var schemaV55 = append(slices.Clone(schemaV54), migrationV55Config...)
+// schemaV56 冻结 v56 的完整 DDL：v55 加上迁移 56 重建的操作记录表与按时刻的索引。
+var schemaV56 = append(slices.Clone(schemaV55), migrationV56Config...)
 
-// operationColumnsV55 是迁移 55 给操作记录加的列；伪造早于 55 的配置快照时撤掉它们（removeV55Config）。
-var operationColumnsV55 = []string{"principal", "session_id", "source", "method", "resource_key"}
+// operationColumnsV56 是迁移 56 给操作记录加的列；伪造早于 56 的配置快照时撤掉它们（removeV56Config）。
+var operationColumnsV56 = []string{"principal", "session_id", "source", "method", "resource_key"}
 
-// removeV55Config 把当前版本导出的配置快照撤回迁移 55 之前的操作记录列集合。快照里的表是 CREATE TABLE AS 拷出的，
+// removeV56Config 把当前版本导出的配置快照撤回迁移 56 之前的操作记录列集合。快照里的表是 CREATE TABLE AS 拷出的，
 // 没有约束，可以直接删列。
-func removeV55Config(t *testing.T, db *sql.DB) {
+func removeV56Config(t *testing.T, db *sql.DB) {
 	t.Helper()
-	for _, column := range operationColumnsV55 {
+	for _, column := range operationColumnsV56 {
 		if _, err := db.Exec("ALTER TABLE operation DROP COLUMN " + column); err != nil {
 			t.Fatal(column, err)
 		}
@@ -32,7 +32,7 @@ func removeV55Config(t *testing.T, db *sql.DB) {
 // legacyTokenIdentity 是种子里 API token 回执的 owner_key：迁移之前 token 的回执以它的身份（token_hash 的十六进制）为键。
 const legacyTokenIdentity = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
 
-// seedLegacyReceipts 写两条迁移 55 之前的回执：一条会话的、一条 API token 的。那时只有 ExecuteChange 写回执。
+// seedLegacyReceipts 写两条迁移 56 之前的回执：一条会话的、一条 API token 的。那时只有 ExecuteChange 写回执。
 func seedLegacyReceipts(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
@@ -79,9 +79,9 @@ func assertLegacyReceipts(t *testing.T, s *Store) {
 	}
 }
 
-func TestMigrationFromV54KeepsReceiptsQueryable(t *testing.T) {
+func TestMigrationFromV55KeepsReceiptsQueryable(t *testing.T) {
 	t.Parallel()
-	s := migrateFrom(t, 54, seedLegacyReceipts)
+	s := migrateFrom(t, 55, seedLegacyReceipts)
 	assertLegacyReceipts(t, s)
 	// principal 没有默认值且只收三种取值：漏写主体或写错主体的插入在库里就被拒绝。
 	for _, q := range []string{
@@ -94,10 +94,10 @@ func TestMigrationFromV54KeepsReceiptsQueryable(t *testing.T) {
 	}
 }
 
-// 54 的配置快照恢复到 55：快照迁移给配置层的操作记录加列并按同一规则回填，旧回执照常可查。
-func TestRestoreConfigSnapshotFrom54KeepsReceipts(t *testing.T) {
+// 55 的配置快照恢复到 56：快照迁移给配置层的操作记录加列并按同一规则回填，旧回执照常可查。
+func TestRestoreConfigSnapshotFrom55KeepsReceipts(t *testing.T) {
 	t.Parallel()
-	path, db := frozenSchemaFixture(t, 54)
+	path, db := frozenSchemaFixture(t, 55)
 	seedLegacyReceipts(t, db)
 	source := &Store{path: path, clk: clock.NewFake(time.Unix(2_000_000_000, 0))}
 	config := filepath.Join(t.TempDir(), "config.db")

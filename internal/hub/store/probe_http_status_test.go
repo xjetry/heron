@@ -163,7 +163,7 @@ func TestProbeTaskHTTPStatusPolicySurvivesConfigSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	removeV55Config(t, db)
+	removeV56Config(t, db)
 	removeV52Config(t, db)
 	if _, err := db.Exec("UPDATE snapshot_meta SET schema_version = 51"); err != nil {
 		t.Fatal(err)

@@ -739,11 +739,11 @@ const ddlOperation = `CREATE TABLE operation (
   committed_at INTEGER NOT NULL,
   -- 主体种类（PrincipalKind）。没有默认值：每个写者都显式给出，漏写即违反 NOT NULL，不会被默认成某个主体。
   principal TEXT NOT NULL CHECK (principal IN ('session', 'api_token', 'system')),
-  -- 会话主体的会话 id（ListSessions 的 id）；其余主体与迁移 55 之前的会话回执为空串。
+  -- 会话主体的会话 id（ListSessions 的 id）；其余主体与迁移 56 之前的会话回执为空串。
   session_id TEXT NOT NULL,
-  -- 请求来源（auth.SourceText）；系统主体与迁移 55 之前的回执为空串。
+  -- 请求来源（auth.SourceText）；系统主体与迁移 56 之前的回执为空串。
   source TEXT NOT NULL,
-  -- AdminService 方法名；系统主体为空串，迁移 55 之前的回执都来自 ExecuteChange。
+  -- AdminService 方法名；系统主体为空串，迁移 56 之前的回执都来自 ExecuteChange。
   method TEXT NOT NULL,
   -- 以文本标识的对象或多个对象的 JSON 数组；其余为空串。
   resource_key TEXT NOT NULL,

@@ -174,7 +174,7 @@ func (c *Collector) Metrics(snap *execSnapshot) (*heronv1.Metrics, error) {
 	case snap.exec.GetCpu() == heronv1.ResourceScope_RESOURCE_SCOPE_ENVIRONMENT && snap.readCPUUsage != nil:
 		c.changeCPUBaseline(snap.cpuBaseline)
 		// 环境内 /proc/stat 是宿主全机口径：cpu_pct 只由本环境用量差分得出，
-		// steal/iowait 是全机计数的一部分、不归属于本环境的算力，不设置。
+		// steal/iowait/softirq 是全机计数的一部分、不归属于本环境的算力，不设置。
 		c.prevCPU = nil
 		usage, err := snap.readCPUUsage()
 		if err != nil {
@@ -196,13 +196,16 @@ func (c *Collector) Metrics(snap *execSnapshot) (*heronv1.Metrics, error) {
 		c.prevCgroup = nil
 		if cur, err := h.cpuTimes(); err == nil {
 			if c.prevCPU != nil {
-				if busy, steal, iowait, ok := cpuRatios(*c.prevCPU, cur); ok {
-					m.CpuPct = proto.Float64(busy)
+				if r, ok := cpuRatios(*c.prevCPU, cur); ok {
+					m.CpuPct = proto.Float64(r.busy)
 					if cur.hasSteal {
-						m.CpuStealPct = proto.Float64(steal)
+						m.CpuStealPct = proto.Float64(r.steal)
 					}
 					if cur.hasIowait {
-						m.CpuIowaitPct = proto.Float64(iowait)
+						m.CpuIowaitPct = proto.Float64(r.iowait)
+					}
+					if cur.hasSoftirq {
+						m.CpuSoftirqPct = proto.Float64(r.softirq)
 					}
 				}
 			}
@@ -344,7 +347,7 @@ func (c *Collector) Metrics(snap *execSnapshot) (*heronv1.Metrics, error) {
 // 速率会偏大数十倍；"计数回退不置速率"的既有防线照不到这种情形，只能在休眠信号（规则见 client.Runner）
 // 触发时把基线整体置空，让本轮采样成为新基线的首样本。
 // 属于重置范围的基线清单——新增差分基线必须加进来，否则跨休眠的那一次差分会漏过：
-//   - prevCPU、prevCPUKey（cpu_pct / steal / iowait 的两次采样差分与它的基线键）
+//   - prevCPU、prevCPUKey（cpu_pct / steal / iowait / softirq 的两次采样差分与它的基线键）
 //   - prevCgroup、prevCgroupT（cgroup 限额下 cpu_pct 的 usage_usec 差分）
 //   - prevNet、prevNetT（网卡速率）
 //   - prevDisk、prevDiskT、prevDiskEpoch（磁盘速率）

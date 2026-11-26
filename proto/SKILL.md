@@ -83,7 +83,7 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 本地数据盘的逐盘容量不进历史，也不在 `GetSnapshot` 里：`GetNodeDisks`（`{"nodeId":"42"}`）返回节点最近一次上报的逐盘读数，只在 hub 内存里，hub 重启后到节点再次上报前为空。`mounts` 按使用率（`used ÷ total`）降序、同使用率按 `path` 升序，至多 16 项；`total` 是截断前的盘数，0 表示那次上报没有逐盘读数（采集失败或 agent 版本不提供）；`sampledAt` 缺席表示 hub 启动后还没收到该节点的上报，`online` 为 false 时是离线前的最后一次读数。共享同一块设备或存储池的挂载点只出现一项（根所在的那组报 `/`，其余报最短路径）。快照与历史里的 `diskTotal` / `diskUsed`（历史序列 `disk_used`、`disk_used_pct`）始终是根盘 `/`；`metrics.diskMaxUsedPct`（历史序列 `disk_max_used_pct`，percent）是最满盘使用率：纳入监测的盘里最满那一块的百分比，hub 取逐盘列表的首项，节点没有逐盘读数（旧版 agent、逐盘采集失败）时取根盘，根盘也没有读数时缺席。问"磁盘满没满"看 `diskMaxUsedPct`，再用 `GetNodeDisks` 看是哪块盘。公开端没有对应接口，挂载路径不公开；公开快照只有 `diskMaxUsedPct` 这个百分比。资源告警 `RESOURCE_METRIC_DISK_USED_PCT` 按 `disk_max_used_pct` 的分钟均值判定；触发事件的 `summary` 在 hub 持有逐盘读数时写成「磁盘（/data）」，否则只写「磁盘」，不要从摘要里解析路径当作数据。
 
-历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
+历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。级别取两条下限中较粗的一级：按跨度（不超过 6 小时 1m，不超过 7 天 5m，否则 1h），以及 hub 保留期此刻仍保有 `from` 处数据的最细级。各级保留期在 `GetStorageStats` 的 `series[].retentionS` 里（默认 1m 七天、5m 三十天、1h 一年）。所以按日历切过去的时段（十天前的某天、上个月的晚高峰），或先用粗步长找峰再缩窗放大时，窗口起点超出细级保留期的那一段只能拿到更粗的级，`stepS` 不会细于那一级的桶长；数据不会因此缺失。起点早于所有级的保留期时取 1h，保留期之外那段没有点，`coverageSummary` 里计为未知分钟。
 
 两个服务的 QueryMetrics 均返回与 ts 对齐的 coverage：minutes 为留存的已准入上报分钟数，observed 为 hub 观测分钟数，observedReported 为两者交集；三项独立可缺席（未知）。纯观测点的指标 n=0，不能画成零读数。coverageSummary 按请求窗口的完整已闭合分钟汇总，不随 maxPoints 改变：覆盖率为 observedReportedMinutes/observedMinutes，未知分钟为 eligibleMinutes−observedMinutes；分母为零时无可观测区间，coverageStart 缺席时尚无覆盖记录。覆盖起点是接收首报的分钟，迁移前节点为最早留存证据；不等于在线率或 SLA。公开节点的 observed 暴露 hub 在保留期内的观测分钟。
 

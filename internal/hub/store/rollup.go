@@ -209,8 +209,13 @@ const (
 	MinRetentionAlertEvents = 24 * time.Hour
 )
 
-// Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
-// 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
+// Validate 的下限与 Store.ChooseLevel 的两条选级下限配合：
+//   - 1m 至少六小时、5m 至少七天，与按跨度选级的阈值相同。截止到现在（to 不早于此刻）、按跨度落到某级的窗口，
+//     起点不早于 now − 该级阈值，也就不早于该级的保留截止点，保留期那条下限不会把它推到更粗的级：面板与公开页
+//     各档窗口的分辨率不随保留期配置变化。过去的窗口不受这条约束，由保留期那条下限选到仍有数据的级。
+//   - 粗级不短于细级：截止点随级别变粗不会变晚（cutoff），某级保有的时刻更粗的级也保有，
+//     选级取两条下限中较粗的一条时才一定落在窗口起点处仍有数据的级上（finestRetained）。
+//
 // 事件下限覆盖满队列的最坏投递时长，不能在正常重试完成前清掉事件。
 func (r Retention) Validate() error {
 	if r.AlertEvents < MinRetentionAlertEvents {
@@ -242,20 +247,49 @@ func (r Retention) ForLevel(name string) time.Duration {
 	return r.M1
 }
 
+// cutoff 是 lv 这一级在 now 时刻的保留截止点：prune 只删 ts < cutoff 的行（还受粗一级消费水位约束，只会更晚删），
+// 所以 ts >= cutoff 的行在 now 时刻一定还在。prune 与选级（finestRetained）都经它取截止点：选级据此断言
+// "选中的级在窗口起点处还没被删"，两处各算一份公式时，一边改了另一边不跟，就会选到起点处已清空的级。
+// 截止点对齐到本级桶长；各级桶长逐级整除（60 | 300 | 3600），保留期不随级别缩短时截止点随级别变粗不会变晚。
+func (r Retention) cutoff(lv Level, now int64) int64 {
+	return alignDown(now-int64(r.ForLevel(lv.Name)/time.Second), lv.Bucket)
+}
+
+// finestRetained 是在 now 时刻仍保有 ts 处数据的最细级下标。Validate 保证保留期随级别变粗不缩短，截止点随级别
+// 变粗不会变晚，所以这一级之上的更粗级同样保有 ts。ts 早于全部级别的截止点时返回最粗级：窗口里保留期之外的部分
+// 哪一级都没有行，查询照常返回其余部分，缺的分钟在覆盖汇总里是未知分钟。
+func (r Retention) finestRetained(ts, now int64) int {
+	for i, lv := range levels {
+		if ts >= r.cutoff(lv, now) {
+			return i
+		}
+	}
+	return len(levels) - 1
+}
+
+// Retention 是 Store 的生效保留期（Open 的 WithRetention 给定）。
+func (s *Store) Retention() Retention { return s.retention }
+
 // pruneSlice 限制每块删除覆盖的时间片（秒）；deleteRange 每次只处理一个节点，
 // 不把该节点的全部过期历史合并成一个写事务。
 var pruneSlice = map[string]int64{"1m": 86400, "5m": 7 * 86400, "1h": 30 * 86400}
 
-// Prune 删除各级保留期之外的行。每块一个短事务，按节点、按时间片：
+// Prune 按 Store 的生效保留期（Open 的 WithRetention）删除各级保留期之外的行。保留期只有这一份：
+// 选级（ChooseLevel）读的是同一个字段，删除的截止点与选级判定"某级是否仍保有窗口起点"用的是同一个 cutoff。
+func (s *Store) Prune(ctx context.Context) (int64, error) {
+	return s.prune(ctx, s.retention)
+}
+
+// prune 删除 r 下各级保留期之外的行。每块一个短事务，按节点、按时间片：
 // WHERE node_id = ? AND ts >= ? AND ts < ? 走主键。节点集合取自表本身而不是
 // node 表：已删节点若留有孤儿行，也要随保留期消失。全部表都清理完才记下 maintenance_state 的
-// prune 完成时刻；事件表的清理（PruneAlertEvents）不在其内。
-func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
+// prune 完成时刻；事件表的清理（PruneAlertEvents）不在其内。生产路径只经 Prune 以 s.retention 调用它。
+func (s *Store) prune(ctx context.Context, r Retention) (int64, error) {
 	now := s.clk.Now().Unix()
 	var total int64
 	for _, f := range families {
 		for i, lv := range levels {
-			cutoff := alignDown(now-int64(r.ForLevel(lv.Name)/time.Second), lv.Bucket)
+			cutoff := r.cutoff(lv, now)
 			// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
 			// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
 			if i+1 < len(levels) {
@@ -332,18 +366,30 @@ func ceilDiv(n, d int64) int64 {
 	return q
 }
 
-// ChooseLevel 按窗口跨度选级，步长保持为桶长的整数倍。点数预算按
+// ChooseLevel 为窗口 [from, to) 选级与步长，管理端与公开端的三个历史查询都经它选级。级别取两条下限中较粗的一条：
+//   - 跨度：不超过 6 小时 1m，不超过 7 天 5m，否则 1h；
+//   - 保留期：此刻仍保有 from 处数据的最细级（finestRetained，截止点与 Prune 同一个 cutoff、同一份 s.retention）。
+//
+// 只看跨度不够：查询从选中的级往更细的级按水位拼接，不读更粗的级，过去的短窗口（十天前的两小时）按跨度落到
+// 已被清理的 1m，整段返回空，而同一段在 5m、1h 里有数据。截止到现在的窗口保留期那条不起作用（见 Validate），
+// 选级与只看跨度相同。
+func (s *Store) ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
+	return chooseLevel(from, to, maxPoints, s.retention.finestRetained(from, s.clk.Now().Unix()))
+}
+
+// chooseLevel 在不细于 levels[floor] 的前提下按跨度选级，步长保持为桶长的整数倍。点数预算按
 // QueryMetrics 对齐后的窗口计算，不能只限制原始跨度，以免首尾扩展后超限。
-func ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
+func chooseLevel(from, to int64, maxPoints int, floor int) (Level, int64) {
 	span := to - from
-	lv := levels[0]
+	i := 0
 	switch {
 	case span <= 6*3600:
 	case span <= 7*86400:
-		lv = levels[1]
+		i = 1
 	default:
-		lv = levels[2]
+		i = 2
 	}
+	lv := levels[max(i, floor)]
 	step := lv.Bucket
 	if maxPoints > 0 {
 		budget := int64(maxPoints)
@@ -570,12 +616,10 @@ func nextMaintenanceAt(wall time.Time) time.Time {
 
 // RunMaintenance 按分钟边界调度上卷、清理与已删主体的历史清理；一轮维护使用 Background，
 // 因而取消只在等待下一轮时生效，已开始的一轮会完成后再退出。
-// AlertEvents 为零会以现在为截止点删除此前全部事件，不能视作禁用清理。
-// 本入口拒绝非法装配，不依赖调用方记得校验；serve 的 Validate 另提供启动时的友好错误。
-func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
-	if err := r.Validate(); err != nil {
-		panic(err)
-	}
+// 保留期取 s.retention：Open 已用 Validate 拒绝非法值（AlertEvents 为零会以现在为截止点删除此前全部事件），
+// 所以这里不再校验；serve 的 Validate 另在打开库之前给出启动时的友好错误。
+func (s *Store) RunMaintenance(ctx context.Context) {
+	r := s.retention
 	for {
 		wall := s.clk.Now()
 		timer := time.NewTimer(nextMaintenanceAt(wall).Sub(wall))
@@ -587,7 +631,7 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 			if err := s.Rollup(context.Background()); err != nil {
 				s.log.Error("rollup failed", "err", err)
 				// 上卷失败只跳过时序行清理，保留未上卷的分钟行；Prune 的水位守卫仍独立生效。
-			} else if n, err := s.Prune(context.Background(), r); err != nil {
+			} else if n, err := s.Prune(context.Background()); err != nil {
 				s.log.Error("prune failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("pruned expired rows", "rows", n)

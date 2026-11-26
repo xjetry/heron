@@ -80,7 +80,51 @@ var migrations = map[int]func(*sql.Tx) error{
 	52: execAll(migrationV52Config),
 	53: migrateV53Metrics,
 	54: migrateV54Config,
-	55: execAll(migrationV55Config),
+	55: migrateV55Metrics,
+	56: execAll(migrationV56Config),
+}
+
+// metricDDLV55 冻结引入 softirq 占比时的指标表 DDL：v53 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
+func metricDDLV55(table string) string {
+	type col struct {
+		name, sqlType string
+		max           bool
+	}
+	cols := []col{
+		{"cpu", "REAL", true}, {"mem_used", "INTEGER", true}, {"swap_used", "INTEGER", false}, {"disk_used", "INTEGER", false},
+		{"load1", "REAL", false}, {"tcp", "INTEGER", false}, {"udp", "INTEGER", false}, {"procs", "INTEGER", false},
+		{"rx_bytes", "INTEGER", false}, {"tx_bytes", "INTEGER", false}, {"memory_used_pct", "REAL", false}, {"disk_used_pct", "REAL", false},
+		{"net_rx_bps", "INTEGER", true}, {"net_tx_bps", "INTEGER", true}, {"disk_read_bps", "INTEGER", true}, {"disk_write_bps", "INTEGER", true},
+		{"cpu_steal_pct", "REAL", true}, {"cpu_iowait_pct", "REAL", true}, {"load1_per_core", "REAL", false},
+		{"tcp_active_opens_ps", "REAL", true}, {"tcp_passive_opens_ps", "REAL", true}, {"tcp_out_segs_ps", "REAL", false}, {"tcp_retrans_segs_ps", "REAL", false},
+		{"disk_max_used_pct", "REAL", false}, {"cpu_softirq_pct", "REAL", true},
+	}
+	parts := []string{"node_id INTEGER NOT NULL", "ts INTEGER NOT NULL"}
+	for _, c := range cols {
+		parts = append(parts, c.name+"_sum "+c.sqlType+" NOT NULL DEFAULT 0", c.name+"_n INTEGER NOT NULL DEFAULT 0")
+		if c.max {
+			parts = append(parts, c.name+"_max "+c.sqlType+" NOT NULL DEFAULT 0")
+		}
+	}
+	if strings.TrimSuffix(table, "_new") == "metric_1m" {
+		parts = append(parts, "reported INTEGER NOT NULL DEFAULT 1", "observed INTEGER")
+	} else {
+		parts = append(parts, "minutes INTEGER", "observed INTEGER", "both INTEGER")
+	}
+	return "CREATE TABLE " + table + " (" + strings.Join(parts, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"
+}
+
+// v55：softirq 占比一列（cpu_softirq_pct 的 sum/n/max），只在指标层，迁移与指标快照恢复共用。与 v43 同理：覆盖列已在
+// 指标列之后，ADD COLUMN 只能加在表尾、列序会与新建库不同，所以按冻结 DDL 重建三张表。
+// 不回填：升级前的 agent 不采集 softirq，旧行新列取默认值，n=0 表示这一分钟没有读数，不是测得的 0%。
+// 回滚边界同 v43：写入后 schema 54 的二进制不能直接启动，回退须恢复升级前的数据库备份。
+func migrateV55Metrics(tx *sql.Tx) error {
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		if err := rebuildTable(tx, table, metricDDLV55); err != nil {
+			return fmt.Errorf("rebuilding %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // metricDDLV53 冻结引入最满盘使用率时的指标表 DDL：v43 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。
@@ -290,24 +334,24 @@ func migrateV54Config(tx *sql.Tx) error {
 	return nil
 }
 
-// v55：操作记录加主体、会话、来源、方法与文本对象五列，会话的全量查询加按时刻的索引。重建而不是 ADD COLUMN：
+// v56：操作记录加主体、会话、来源、方法与文本对象五列，会话的全量查询加按时刻的索引。重建而不是 ADD COLUMN：
 // principal 要 NOT NULL 且不带默认值（漏写的写者必须报错，不能被默认成某个主体），而 ADD COLUMN 的 NOT NULL 列
 // 必须带默认值。迁移之前只有 ExecuteChange 写回执，所以旧行的主体由 owner_key 推出（'session' 是会话，其余是 API
 // token 的身份），方法都是 ExecuteChange；会话 id 与来源当时没有记录，取空串，读侧把空串当作未知。
-var migrationV55Config = []string{
-	`CREATE TABLE operation_v55 (owner_key TEXT NOT NULL,owner_id INTEGER NOT NULL,request_id TEXT NOT NULL,request_hash TEXT NOT NULL,action TEXT NOT NULL,resource_id INTEGER NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL,committed_at INTEGER NOT NULL,principal TEXT NOT NULL CHECK (principal IN ('session', 'api_token', 'system')),session_id TEXT NOT NULL,source TEXT NOT NULL,method TEXT NOT NULL,resource_key TEXT NOT NULL,PRIMARY KEY(owner_key,request_id)) WITHOUT ROWID`,
-	`INSERT INTO operation_v55 SELECT owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at,CASE owner_key WHEN 'session' THEN 'session' ELSE 'api_token' END,'','','ExecuteChange','' FROM operation`,
+var migrationV56Config = []string{
+	`CREATE TABLE operation_v56 (owner_key TEXT NOT NULL,owner_id INTEGER NOT NULL,request_id TEXT NOT NULL,request_hash TEXT NOT NULL,action TEXT NOT NULL,resource_id INTEGER NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL,committed_at INTEGER NOT NULL,principal TEXT NOT NULL CHECK (principal IN ('session', 'api_token', 'system')),session_id TEXT NOT NULL,source TEXT NOT NULL,method TEXT NOT NULL,resource_key TEXT NOT NULL,PRIMARY KEY(owner_key,request_id)) WITHOUT ROWID`,
+	`INSERT INTO operation_v56 SELECT owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at,CASE owner_key WHEN 'session' THEN 'session' ELSE 'api_token' END,'','','ExecuteChange','' FROM operation`,
 	`DROP TABLE operation`,
-	`ALTER TABLE operation_v55 RENAME TO operation`,
+	`ALTER TABLE operation_v56 RENAME TO operation`,
 	`CREATE INDEX operation_by_owner ON operation(owner_id,committed_at DESC,request_id)`,
 	`CREATE INDEX operation_details_by_time ON operation(committed_at) WHERE before_json!='' OR after_json!=''`,
 	`CREATE INDEX operation_by_time ON operation(committed_at DESC,request_id)`,
 }
 
-// migrationV55Snapshot 是迁移 55 在配置快照上的同源步骤：快照的表是 CREATE TABLE AS 拷出的，没有主键与约束，重建
+// migrationV56Snapshot 是迁移 56 在配置快照上的同源步骤：快照的表是 CREATE TABLE AS 拷出的，没有主键与约束，重建
 // 无从谈起，改为加列后按同一规则回填。默认值只为 ADD COLUMN 存在，回填之后每行都是显式值；恢复按目标库的列名搬运，
 // 目标库的 CHECK 再核一遍主体取值。
-var migrationV55Snapshot = []string{
+var migrationV56Snapshot = []string{
 	`ALTER TABLE operation ADD COLUMN principal TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE operation ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE operation ADD COLUMN source TEXT NOT NULL DEFAULT ''`,

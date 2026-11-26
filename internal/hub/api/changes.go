@@ -345,7 +345,7 @@ func copyChangeField(dst, src protoreflect.Message, path []string) error {
 // ListOperations 的可见性由 store 按 ctx 的主体裁决（API token 只看自己的）；这里只把"指定了别人"答成
 // PermissionDenied，而不是静默改成自己的、让调用方误以为别人没有记录。
 func (s *Service) ListOperations(ctx context.Context, req *connect.Request[heronv1.ListOperationsRequest]) (*connect.Response[heronv1.ListOperationsResponse], error) {
-	f := store.OperationFilter{OwnerID: req.Msg.OwnerId, Action: req.Msg.Action, RequestID: req.Msg.RequestId, Limit: int(req.Msg.Limit)}
+	f := store.OperationFilter{OwnerID: req.Msg.OwnerId, Action: req.Msg.Action, RequestID: req.Msg.RequestId}
 	if p, ok := store.Principal(ctx); ok && f.OwnerID != 0 && f.OwnerID != p.ID {
 		return nil, permissionDenied("only your own operations are visible")
 	}
@@ -360,12 +360,11 @@ func (s *Service) ListOperations(ctx context.Context, req *connect.Request[heron
 			return nil, invalid("principal: unknown value %d", req.Msg.Principal)
 		}
 	}
-	if f.Limit == 0 {
-		f.Limit = 100
+	limit, err := listLimit(req.Msg.Limit, 100, 500)
+	if err != nil {
+		return nil, err
 	}
-	if f.Limit > 500 {
-		f.Limit = 500
-	}
+	f.Limit = limit
 	list, err := s.store.ListOperations(ctx, f)
 	if err != nil {
 		return nil, internalError("list operations")

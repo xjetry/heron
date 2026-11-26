@@ -572,9 +572,16 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 				}
 			}
 		case 55:
-			// 与迁移 55 同源：操作记录加五列，只在配置层。
+			// 与迁移 55 同源：softirq 占比一列只在指标层，按冻结 DDL 重建后按列名搬运，旧行该列无读数。配置层无变化。
+			if layer == "metrics" {
+				if err := migrateV55Metrics(tx); err != nil {
+					return fmt.Errorf("migrate metrics snapshot to 55: %w", err)
+				}
+			}
+		case 56:
+			// 与迁移 56 同源：操作记录加五列，只在配置层。
 			if layer == "config" {
-				statements = migrationV55Snapshot
+				statements = migrationV56Snapshot
 			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)

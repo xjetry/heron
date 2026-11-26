@@ -40,10 +40,11 @@ func v8Fixture(t *testing.T, dir string) string {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 		t.Fatal(err)
 	}
-	if freshVersion != 55 {
-		t.Fatalf("fixture user_version = %d, want 55; rebuild the v8 fixture for the new version", freshVersion)
+	if freshVersion != 56 {
+		t.Fatalf("fixture user_version = %d, want 56; rebuild the v8 fixture for the new version", freshVersion)
 	}
-	removeV55Config(t, raw)
+	removeV56Config(t, raw)
+	removeV55Metrics(t, raw)
 	// 54 只规范化价格与币种的数据，没有结构可撤回。
 	removeV53Metrics(t, raw)
 	removeV52Config(t, raw)

@@ -166,10 +166,11 @@ func TestRestoreV52MetricsSnapshotBackfillsFullestDisk(t *testing.T) {
 			t.Fatal(err)
 		}
 		if layer == "metrics" {
+			dropSoftirqColumns(t, db)
 			dropFullestDiskColumns(t, db)
 		}
 		if layer == "config" {
-			removeV55Config(t, db)
+			removeV56Config(t, db)
 		}
 		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=52"); err != nil {
 			t.Fatal(err)

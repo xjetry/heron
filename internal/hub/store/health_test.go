@@ -113,20 +113,20 @@ func TestPruneRecordsCompletionOnlyOnSuccess(t *testing.T) {
 	s, clk := open(t)
 	failDelete := "CREATE TRIGGER fail_prune BEFORE DELETE ON metric_1h BEGIN SELECT RAISE(ABORT, 'prune rejected'); END"
 	execStmts(t, s, "INSERT INTO metric_1h (node_id, ts) VALUES (1, 0)", failDelete)
-	if _, err := s.Prune(t.Context(), DefaultRetention); err == nil {
+	if _, err := s.Prune(t.Context()); err == nil {
 		t.Fatal("prune with a failing delete succeeded")
 	}
 	wantFinished(t, s, MaintenancePrune, nil)
 	execStmts(t, s, "DROP TRIGGER fail_prune")
 	clk.Advance(time.Minute)
-	if n, err := s.Prune(t.Context(), DefaultRetention); err != nil || n != 1 {
+	if n, err := s.Prune(t.Context()); err != nil || n != 1 {
 		t.Fatalf("prune removed %d rows: %v", n, err)
 	}
 	done := clk.Now().Unix()
 	wantFinished(t, s, MaintenancePrune, &done)
 	execStmts(t, s, "INSERT INTO metric_1h (node_id, ts) VALUES (1, 0)", failDelete)
 	clk.Advance(time.Minute)
-	if _, err := s.Prune(t.Context(), DefaultRetention); err == nil {
+	if _, err := s.Prune(t.Context()); err == nil {
 		t.Fatal("prune with a failing delete succeeded")
 	}
 	wantFinished(t, s, MaintenancePrune, &done)
@@ -144,7 +144,7 @@ func TestMaintenanceRecordErrorIsWrapped(t *testing.T) {
 	if err := s.Rollup(t.Context()); err == nil || !strings.HasPrefix(err.Error(), "record rollup completion: ") {
 		t.Fatalf("Rollup error = %v, want prefix %q", err, "record rollup completion: ")
 	}
-	if _, err := s.Prune(t.Context(), DefaultRetention); err == nil || !strings.HasPrefix(err.Error(), "record prune completion: ") {
+	if _, err := s.Prune(t.Context()); err == nil || !strings.HasPrefix(err.Error(), "record prune completion: ") {
 		t.Fatalf("Prune error = %v, want prefix %q", err, "record prune completion: ")
 	}
 }

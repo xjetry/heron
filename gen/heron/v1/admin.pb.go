@@ -10759,7 +10759,8 @@ type ListAlertEventsRequest struct {
 	NodeId int64 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// 0 表示从最新事件开始，否则只返回小于此 id 的事件。
 	BeforeId int64 `protobuf:"varint,2,opt,name=before_id,json=beforeId,proto3" json:"before_id,omitempty"`
-	// 0 取 100，超过 500 按 500 返回。
+	// 0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断。翻页用上一页最后一条的 id 作 before_id，
+	// 返回条数少于 limit 即已到底——截断会让这条判断失真。
 	Limit         uint32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -12590,7 +12591,8 @@ type ListOperationsRequest struct {
 	OwnerId int64 `protobuf:"varint,1,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`
 	// 非空时只列这个 request_id 的记录。
 	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// 1–500，0 取 100，超过 500 按 500。
+	// 返回按提交时刻从新到旧的最新条数。0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断：
+	// 这里没有翻页游标，截断会让调用方误以为已经拿全。
 	Limit uint32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	// 非 UNSPECIFIED 时只列这种主体的记录。
 	Principal OperationPrincipal `protobuf:"varint,4,opt,name=principal,proto3,enum=heron.v1.OperationPrincipal" json:"principal,omitempty"`

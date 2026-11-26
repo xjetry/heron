@@ -73,6 +73,7 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		"tcp_active_opens_ps": {MeanMax, Float}, "tcp_passive_opens_ps": {MeanMax, Float},
 		"tcp_out_segs_ps": {Mean, Float}, "tcp_retrans_segs_ps": {Mean, Float},
 		"disk_max_used_pct": {Mean, Float},
+		"cpu_softirq_pct":   {MeanMax, Float},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))

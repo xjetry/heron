@@ -29,7 +29,7 @@ func validateMetrics(m *heronv1.Metrics) error {
 		name string
 		v    *float64
 	}{
-		{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct},
+		{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct}, {"cpu_softirq_pct", m.CpuSoftirqPct},
 		{"load1", m.Load1}, {"load5", m.Load5}, {"load15", m.Load15},
 		{"load1_per_core", m.Load1PerCore},
 		{"tcp_active_opens_ps", m.TcpActiveOpensPs}, {"tcp_passive_opens_ps", m.TcpPassiveOpensPs},
@@ -40,11 +40,11 @@ func validateMetrics(m *heronv1.Metrics) error {
 			return fmt.Errorf("%s: must be a finite non-negative number", f.name)
 		}
 	}
-	// 三个占比各自独立，都以 100 为上界；disk_*_bps 是无符号整数，负数与非有限数由类型本身排除。
+	// CPU 各占比各自以 100 为上界；disk_*_bps 是无符号整数，负数与非有限数由类型本身排除。
 	for _, p := range []struct {
 		name string
 		v    *float64
-	}{{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct}} {
+	}{{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct}, {"cpu_softirq_pct", m.CpuSoftirqPct}} {
 		if p.v != nil && *p.v > 100 {
 			return fmt.Errorf("%s: must not exceed 100", p.name)
 		}

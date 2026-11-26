@@ -1759,7 +1759,8 @@ message ListAlertEventsRequest {
   int64 node_id = 1;
   // 0 表示从最新事件开始，否则只返回小于此 id 的事件。
   int64 before_id = 2;
-  // 0 取 100，超过 500 按 500 返回。
+  // 0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断。翻页用上一页最后一条的 id 作 before_id，
+  // 返回条数少于 limit 即已到底——截断会让这条判断失真。
   uint32 limit = 3;
 }
 message ListAlertEventsResponse { repeated AlertEvent events = 1; }
@@ -2012,7 +2013,8 @@ message ListOperationsRequest {
   int64 owner_id = 1;
   // 非空时只列这个 request_id 的记录。
   string request_id = 2;
-  // 1–500，0 取 100，超过 500 按 500。
+  // 返回按提交时刻从新到旧的最新条数。0 取 100；超过 500 返回 InvalidArgument 并点名 limit，不截断：
+  // 这里没有翻页游标，截断会让调用方误以为已经拿全。
   uint32 limit = 3;
   // 非 UNSPECIFIED 时只列这种主体的记录。
   OperationPrincipal principal = 4;

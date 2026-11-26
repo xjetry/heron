@@ -464,7 +464,7 @@ describe("NodeDetail", () => {
     expect(charts[5]).toHaveAttribute("data-labels", "按核负载均值");
     expect(charts[9]).toHaveAttribute("data-labels", "读均值,写均值");
     expect(charts[9]).toHaveAttribute("data-unit", "bytes/s");
-    expect(charts[10]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
+    expect(charts[10]).toHaveAttribute("data-labels", "steal 均值,iowait 均值,softirq 均值");
     expect(charts[10]).toHaveAttribute("data-unit", "percent");
     expect(screen.getByText(/db-01\.internal/)).toBeInTheDocument();
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };
