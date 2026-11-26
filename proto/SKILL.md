@@ -30,9 +30,9 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 1. 用 `ListNodes`、`ListProbeTasks`、`ListAlertRules` 读取授权范围；用 `ListNotifyChannelRefs` 取得渠道 id、名称、类型，不读地址、模板或密钥。指定节点凭据不能调用全站设置、备份与存储统计。
 2. 调 `ExecuteChange`，给出一种 change 和 `preview: true`。修改已有配置需 `updateMask`，节点路径如 `note,publicRemark,tags`，探测路径如 `task.target`，告警路径如 `rule.enabled`。JSON FieldMask 是逗号分隔的 lowerCamelCase 字符串，例如 `"updateMask":"note,trafficResetDay"`，不是 paths 对象。
 3. 查看 `operation.beforeJson` / `afterJson`。执行相同变更，设 `preview: false`，附上预览返回的 `expectedVersion` 和唯一 `requestId`。版本过时返回 `aborted`，重新读取和预览，不盲目覆盖。
-4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询回执，`operation.id` 是跨重试和恢复稳定的回执标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
+4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询这次写入的操作记录，`operation.id` 是跨重试和恢复稳定的记录标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
 
-首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不落审计，不在重试中重放。`createNode` 与 `updateNode.billing` 一样接受 `billing`（价格、币种、周期、到期日、自动续期，同一处校验），也接受 `rented`（已出租开关，缺失即 false）：看到价格与到期信息时一步建档，不必建完再改。续费后用 `renewNodeBilling`（`{"nodeId":"42"}`）把到期日按计费周期推后，规则与自动续期相同（未过期恰推后一个周期，已过期步进到不早于 hub 时区的今天）；节点须有周期与到期日，不必开自动续期；推后日期由 hub 计算，不要自己算好再经 `updateNode` 写入。丢失秘密后查询回执，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
+首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不进操作记录，不在重试中重放。`createNode` 与 `updateNode.billing` 一样接受 `billing`（价格、币种、周期、到期日、自动续期，同一处校验），也接受 `rented`（已出租开关，缺失即 false）：看到价格与到期信息时一步建档，不必建完再改。续费后用 `renewNodeBilling`（`{"nodeId":"42"}`）把到期日按计费周期推后，规则与自动续期相同（未过期恰推后一个周期，已过期步进到不早于 hub 时区的今天）；节点须有周期与到期日，不必开自动续期；推后日期由 hub 计算，不要自己算好再经 `updateNode` 写入。丢失秘密后查询操作记录，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
 
 `ExecuteChange.createNode` 与 `rotateNodeToken` 的 `result.token` 是带 `heron_install_` 前缀的一次性安装凭据，不是运行 token，也不是管理接口的 `HERON_TOKEN`。在目标主机用 `heron-agent register --hub URL --key KEY --config PATH` 注册；它向 `POST /heron.v1.AgentService/Register` 发送 `{"key":"安装凭据"}`，用返回的运行 `token` 写入配置。直接调用 Register 时由请求体 key 授权，不需要管理 bearer。认领保留节点 ID、名称和公开范围，不消费窗口名额；安装凭据不能 Report，运行 token 只能作为 Report 的 bearer，不能再次 Register。
 
@@ -40,7 +40,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 指定节点授权同时约束读写；普通标签不扩权。显式包含未授权节点、全站和动态标签规则不能由指定节点凭据编辑。创建和经自己注册窗口接入的节点自动纳入范围，不增加操作权限。注册窗口互不覆盖；吊销凭据或去掉注册权限会关闭其窗口，过期的凭据开的窗口不可认领。尚未下发的更新在下发时按凭据当时的授权重判：吊销、过期、编辑后不再有更新权限或节点移出范围，都会撤下；已下发更新不能据此撤回。管理员可在面板编辑授权，明文不变，下一个请求即按新授权。
 
-详细差异在后续写入时清理超过 90 天的记录，幂等回执永久保留。配置备份保存授权与回执，恢复时合并回执历史，并清除所有注册窗口和节点更新任务。回执描述原事务，不保证当前配置仍未变化。
+每次成功写入都在同一事务里留一条操作记录：`principal`（`OPERATION_PRINCIPAL_API_TOKEN` 是 token，面板会话与 hub 自身各有一种）、`source`（来源地址）、`method`（经 ExecuteChange 写入的是 `ExecuteChange`）、`action`、对象（`resourceId`，以文本标识的对象在 `resourceKey`）与改动前后的对象快照；快照不含任何凭据。token 调 `ListOperations` 只看得到自己的记录，可按 `requestId`、`action` 过滤，`ownerId` 只能给 0 或自己的 id。详细差异在后续写入时清理超过 90 天的记录，其余字段（含幂等用的 requestId）永久保留。配置备份保存授权与操作记录，恢复时合并记录历史，并清除所有注册窗口和节点更新任务。记录描述原事务，不保证当前配置仍未变化。
 
 例如只修改节点备注：
 
