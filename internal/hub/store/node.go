@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
+	"github.com/xjetry/heron/internal/hub/calendar"
 	"github.com/xjetry/heron/internal/netaddr"
 	"github.com/xjetry/heron/internal/probelimit"
 )
@@ -48,13 +50,15 @@ type Billing struct {
 	AutoRenew bool
 }
 
-// NewNode 是建节点的完整输入：名字、计费，以及已出租开关（规则见 Node 类型注释），在建的时候就能定，不再走
+// NewNode 是建节点的完整输入：名字、计费与计费时区，以及已出租开关（规则见 Node 类型注释），在建的时候就能定，不再走
 // "先建再改"两步。Billing 的合法组合由 api 的 billingOf 校验过；价格与币种的格式 insertNode 仍按 CheckPriceCurrency
-// 复查，其余原样落库。
+// 复查，计费时区按 checkBillingTimezone 裁决，其余原样落库。
 type NewNode struct {
 	Name    string
 	Billing Billing
-	Rented  bool
+	// BillingTimezone 是计费时区（见 Node.BillingTimezone），空串即沿用 hub 的 --timezone。
+	BillingTimezone string
+	Rented          bool
 }
 
 // NodeEdit 是 UpdateNode 整体替换的可编辑字段；调用方已做校验与清洗。
@@ -63,14 +67,17 @@ type NodeEdit struct {
 	Public bool
 	Note   string
 	// PublicRemark 是站长写给访客的一行说明，与 Note 同随 UpdateNode 整体替换；空串即没有。
-	PublicRemark      string
-	TrafficResetDay   int
-	TrafficQuotaBytes uint64
-	TrafficQuotaMode  string
-	OfflineGraceS     int // 0 写 NULL，读侧取 TTL
-	Billing           Billing
-	CountryPin        string // 手动指定的国家，空串表示不指定（回落到查得值）
-	Maintenance       bool   // 维护状态
+	PublicRemark    string
+	TrafficResetDay int
+	// TrafficResetMinute 与 BillingTimezone 的含义见 Node 的同名字段；取值由 UpdateNodeTasks 裁决。
+	TrafficResetMinute int
+	BillingTimezone    string
+	TrafficQuotaBytes  uint64
+	TrafficQuotaMode   string
+	OfflineGraceS      int // 0 写 NULL，读侧取 TTL
+	Billing            Billing
+	CountryPin         string // 手动指定的国家，空串表示不指定（回落到查得值）
+	Maintenance        bool   // 维护状态
 	// Rented 是已出租开关（规则见 Node 类型注释），与 Maintenance 互斥；冲突在 UpdateNodeTasks 裁决。
 	Rented bool
 	// IPv4Pin 与 IPv6Pin 是手填的出口地址，空串即未填。存储层自己裁决取值（UpdateNodeTasks），调用方不必先校验。
@@ -99,11 +106,16 @@ type Node struct {
 	SortOrder    int32
 	// Position 是节点在全部节点里按 (sort_order, id) 升序的名次，从 1 起，在 queryNodes 里随读算出：
 	// where 条件（标签交集、无标签、公开、监控范围）只筛行，不改名次。
-	Position          uint32
-	CreatedAt         time.Time
-	LastSeenAt        time.Time // 零值表示从未上报
-	LastSource        string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
-	TrafficResetDay   int       // 周期重置日 1–31，存配置的原值（短月的钳位只在 traffic 算边界时发生），列默认 1
+	Position        uint32
+	CreatedAt       time.Time
+	LastSeenAt      time.Time // 零值表示从未上报
+	LastSource      string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
+	TrafficResetDay int       // 周期重置日 1–31，存配置的原值（短月的钳位只在 traffic 算边界时发生），列默认 1
+	// TrafficResetMinute 是重置时刻：计费时区里当地零点起的分钟数 [0, 1439]，列默认 0（00:00）。
+	TrafficResetMinute int
+	// BillingTimezone 是计费时区（IANA 名）：流量周期边界与到期日的日界都按它算。空串是缺省——沿用 hub 的
+	// --timezone，不是放宽；解析在 traffic.BillingZone。
+	BillingTimezone   string
 	TrafficQuotaBytes uint64
 	TrafficQuotaMode  string
 	OfflineGraceS     int // 0 表示列为 NULL，读侧取 TTL。
@@ -259,6 +271,80 @@ func checkTrafficResetDay(day int) error {
 	return nil
 }
 
+// node.traffic_reset_minute 的取值范围：计费时区里当地零点起的分钟数，00:00–23:59。列默认 0（00:00），建节点不写这一列。
+// 范围由 checkTrafficResetMinute 在写入口（UpdateNodeTasks）与快照恢复预检（validateSnapshotNodes）裁决，库里不设
+// CHECK。0 是合法的 00:00，所以协议层缺省的 0 就是缺省的重置时刻，不像重置日那样被拒绝。
+const MaxTrafficResetMinute = calendar.MinutesPerDay - 1
+
+// TrafficResetMinuteError 是重置时刻越界，Got 是原值；文案点名协议字段与期望取值，协议层原样作为 InvalidArgument 返回。
+type TrafficResetMinuteError struct{ Got int }
+
+func (e TrafficResetMinuteError) Error() string {
+	return fmt.Sprintf("traffic_reset_minute must be between 0 and %d (minutes after local midnight in billing_timezone, 00:00–23:59, e.g. 510 for 08:30); got %d", MaxTrafficResetMinute, e.Got)
+}
+
+func checkTrafficResetMinute(minute int) error {
+	if minute < 0 || minute > MaxTrafficResetMinute {
+		return TrafficResetMinuteError{Got: minute}
+	}
+	return nil
+}
+
+// LoadBillingZone 加载一个非空的计费时区名，是"合法的计费时区"唯一的判定：写入口（insertNode、UpdateNodeTasks）、快照
+// 恢复预检与读侧的解析（traffic.BillingZone）都经它，库里存下的名字读侧一定加载得出同一个时区。
+//
+// 接受 time.LoadLocation 能加载、且有区域含义能交给浏览器 Intl 的 IANA 名。time.LoadLocation 另外接受的三类拒绝：
+// 空串（它当作 UTC；对计费时区而言空串是"沿用 hub 时区"，由调用方先行处理）、Local（宿主机的时区，换一台机器含义就
+// 变）、tzdata 的编码目录前缀 posix/ 与 right/（Linux 的系统 tzdata 里能加载，Intl 不认）。
+//
+// 名字按 hub 运行平台的 tzdata 加载（系统 tzdata，缺席时用嵌入的 time/tzdata）。macOS 的文件系统不区分大小写，
+// asia/shanghai 这样的写法在那里也能加载、在 Linux 上不能；面板只提供浏览器给出的规范名，这一差异只影响手写的 API 调用。
+func LoadBillingZone(name string) (*time.Location, error) {
+	if name == "" || name == "Local" || strings.HasPrefix(name, "posix/") || strings.HasPrefix(name, "right/") {
+		return nil, BillingTimezoneError{Got: name}
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, BillingTimezoneError{Got: name}
+	}
+	return loc, nil
+}
+
+// BillingTimezoneError 是计费时区不是可加载的 IANA 名，Got 是原值；文案点名协议字段与期望取值，协议层原样作为
+// InvalidArgument 返回。
+type BillingTimezoneError struct{ Got string }
+
+func (e BillingTimezoneError) Error() string {
+	return fmt.Sprintf("billing_timezone must be empty (use the hub's --timezone) or an IANA time zone name such as Asia/Shanghai or UTC; got %q", e.Got)
+}
+
+// checkBillingTimezone 是写入口与快照恢复预检对 node.billing_timezone 的裁决。空串放行，但它是缺省（沿用 hub 的
+// --timezone）而不是放宽：读侧 traffic.BillingZone 把空串解析成 hub 时区，不会把它当成"不限时区"或 UTC。
+func checkBillingTimezone(name string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := LoadBillingZone(name)
+	return err
+}
+
+// TrafficSchedule 是节点的周期配置原值：重置日、重置时刻与计费时区名（空串即 hub 时区）。账本按它算边界
+// （traffic.ScheduleOf），告警引擎与流量报告从 Node.TrafficSchedule 取同一组值。
+type TrafficSchedule struct {
+	Day      int
+	Minute   int
+	Timezone string
+}
+
+// DefaultTrafficSchedule 是三列的列默认值：建节点不写重置日与重置时刻，计费时区默认空串。账本对尚未登记周期规则的
+// 节点取它，与直接读库得到的相同。
+var DefaultTrafficSchedule = TrafficSchedule{Day: DefaultTrafficResetDay, Minute: 0, Timezone: ""}
+
+// TrafficSchedule 是节点的周期配置原值。
+func (n Node) TrafficSchedule() TrafficSchedule {
+	return TrafficSchedule{Day: n.TrafficResetDay, Minute: n.TrafficResetMinute, Timezone: n.BillingTimezone}
+}
+
 // AddressPinError 是手填的出口地址不是该族的公网单播地址。IPv4 指出是哪一族，Got 是原文；字段路径与文案由协议层给出。
 type AddressPinError struct {
 	IPv4 bool
@@ -331,10 +417,10 @@ func (s *Store) NetworkDetections(ctx context.Context) (map[int64]*heronv1.Netwo
 // selectNodes 是节点行唯一的读取语句：node 先在内层 SELECT 上按 (sort_order, id) 算全序名次，再 LEFT JOIN
 // node_facts。窗口函数在内层计算，先于外层 where 过滤——名次属于全部节点，where（标签交集、无标签、公开、
 // 监控范围）只筛行，不重排名次。
-const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
+const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.traffic_reset_minute, n.billing_timezone, n.offline_grace_s,
 	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark, n.traffic_quota_bytes, n.traffic_quota_mode, n.ipv4_pin, n.ipv6_pin, n.rented,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics, f.execution
-	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, offline_grace_s,
+	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, traffic_reset_minute, billing_timezone, offline_grace_s,
 		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark, traffic_quota_bytes, traffic_quota_mode, ipv4_pin, ipv6_pin, rented,
 		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
 	LEFT JOIN node_facts f ON f.node_id = n.id`
@@ -352,7 +438,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var network, diagnostics, execution sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
-		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &grace,
+		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &n.TrafficResetMinute, &n.BillingTimezone, &grace,
 			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark, &n.TrafficQuotaBytes, &n.TrafficQuotaMode, &n.IPv4Pin, &n.IPv6Pin, &n.Rented,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics, &execution); err != nil {
 			return nil, err
@@ -488,7 +574,7 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 	return err == nil, err
 }
 
-// UpdateNode 整体替换可编辑字段（含标签集合），不存在"不改"的取值。billingChanged 报告计费五项与写入前的库内值是否不同，
+// UpdateNode 整体替换可编辑字段（含标签集合），不存在"不改"的取值。billingChanged 报告计费五项或计费时区与写入前的库内值是否不同，
 // 调用方据它决定是否立即做一次到期扫描。库内值在同一个写事务里读出，RenewExpiry 也经单写协程，读与写之间插不进
 // 一次推后，所以它就是这次写入实际覆盖掉的值。表单若带着推后之前的到期日提交，库内值已是推后的日期，两者不同，
 // 调用方随即重新扫描、再推后一次。
@@ -498,7 +584,9 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 }
 
 type NodeUpdateResult struct {
+	// BillingChanged 表示计费五项或计费时区变了：两者都改变到期日的评估（日期本身或"今天"）。
 	BillingChanged bool
+	// TrafficChanged 表示配额、配额口径或周期规则（重置日、重置时刻、计费时区）变了。
 	TrafficChanged bool
 	// RentedChanged 表示这次更新翻转了已出租开关（规则见 Node 类型注释）；nodeops 据它立刻重跑到期扫描，告警侧据它撤回或恢复离线告警。
 	RentedChanged bool
@@ -519,12 +607,18 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		e.TrafficQuotaMode = "sum"
 	}
 	err = s.writeChange(ctx, ChangeTarget{Action: ActionUpdateNode, ResourceID: id}, func(tx *sql.Tx) error {
-		// 节点名、重置日与手填出口地址同一个准入口径：写入口只有这一个（UpdateNode 与 ExecuteChange 都经它），
-		// 检查放在这里，任何调用方都绕不开。
+		// 节点名、周期规则（重置日、重置时刻、计费时区）与手填出口地址同一个准入口径：写入口只有这一个（UpdateNode 与
+		// ExecuteChange 都经它），检查放在这里，任何调用方都绕不开。
 		if err := checkShortName(e.Name); err != nil {
 			return err
 		}
 		if err := checkTrafficResetDay(e.TrafficResetDay); err != nil {
+			return err
+		}
+		if err := checkTrafficResetMinute(e.TrafficResetMinute); err != nil {
+			return err
+		}
+		if err := checkBillingTimezone(e.BillingTimezone); err != nil {
 			return err
 		}
 		if err := CheckPriceCurrency(e.Billing.Price, e.Billing.Currency); err != nil {
@@ -541,10 +635,10 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		var old Billing
 		var oldQuota uint64
 		var oldMode string
-		var oldDay int
+		var oldSchedule TrafficSchedule
 		var oldRented bool
-		err = tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day, rented FROM node WHERE id = ?", id).
-			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew, &oldQuota, &oldMode, &oldDay, &oldRented)
+		err = tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day, traffic_reset_minute, billing_timezone, rented FROM node WHERE id = ?", id).
+			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew, &oldQuota, &oldMode, &oldSchedule.Day, &oldSchedule.Minute, &oldSchedule.Timezone, &oldRented)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -558,17 +652,19 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 			return err
 		}
 		b := e.Billing
-		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
+		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, traffic_reset_minute = ?, billing_timezone = ?, offline_grace_s = NULLIF(?, 0),
 			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ?, traffic_quota_bytes = ?, traffic_quota_mode = ?, ipv4_pin = ?, ipv6_pin = ?, rented = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, v4, v6, e.Rented, id); err != nil {
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.TrafficResetMinute, e.BillingTimezone, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, v4, v6, e.Rented, id); err != nil {
 			return err
 		}
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
 			return err
 		}
 		result, err = s.nodeScopesAfterUpdate(ctx, tx, []int64{id})
-		result.BillingChanged = old != b
-		result.TrafficChanged = oldQuota != e.TrafficQuotaBytes || oldMode != e.TrafficQuotaMode || oldDay != e.TrafficResetDay
+		schedule := TrafficSchedule{Day: e.TrafficResetDay, Minute: e.TrafficResetMinute, Timezone: e.BillingTimezone}
+		// 计费时区同时决定到期日的日界：换了它，days_left 与到期告警的"今天"随之变，与计费五项变化同样要立刻重扫。
+		result.BillingChanged = old != b || oldSchedule.Timezone != e.BillingTimezone
+		result.TrafficChanged = oldQuota != e.TrafficQuotaBytes || oldMode != e.TrafficQuotaMode || oldSchedule != schedule
 		result.RentedChanged = oldRented != e.Rented
 		return err
 	})
@@ -862,9 +958,13 @@ func insertNode(tx *sql.Tx, spec NewNode, tokenHash []byte, createdAt int64, pub
 	if err := CheckPriceCurrency(spec.Billing.Price, spec.Billing.Currency); err != nil {
 		return 0, NewNodeTasks{}, err
 	}
-	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public, price, currency, billing_cycle, expires_on, auto_renew, rented)
-		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ?, ?, ? FROM node`, spec.Name, tokenHash, createdAt, public,
-		spec.Billing.Price, spec.Billing.Currency, spec.Billing.Cycle, spec.Billing.ExpiresOn, spec.Billing.AutoRenew, spec.Rented)
+	// 计费时区与 UpdateNodeTasks、快照恢复预检同一判定（checkBillingTimezone）。
+	if err := checkBillingTimezone(spec.BillingTimezone); err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public, price, currency, billing_cycle, expires_on, auto_renew, billing_timezone, rented)
+		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ? FROM node`, spec.Name, tokenHash, createdAt, public,
+		spec.Billing.Price, spec.Billing.Currency, spec.Billing.Cycle, spec.Billing.ExpiresOn, spec.Billing.AutoRenew, spec.BillingTimezone, spec.Rented)
 	if err != nil {
 		return 0, NewNodeTasks{}, err
 	}

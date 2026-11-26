@@ -2131,15 +2131,15 @@ type Node struct {
 	// 主机静态信息；从未上报则缺失。
 	Facts          *Facts `protobuf:"bytes,8,opt,name=facts,proto3" json:"facts,omitempty"`
 	FactsUpdatedAt *int64 `protobuf:"varint,9,opt,name=facts_updated_at,json=factsUpdatedAt,proto3,oneof" json:"facts_updated_at,omitempty"`
-	// 周期重置日 1–31：周期在 hub 时区该日的第一个时刻（通常是零点，零点因夏令时跳过时取跳变后的时刻）重置。当月不足
+	// 周期重置日 1–31：周期在计费时区（billing_timezone）里该日的重置时刻（traffic_reset_minute）重置。当月不足
 	// 该日（如 31 遇到 4 月或 2 月）时在当月最后一日重置，不顺延到次月一日，之后的月份仍按原日号，每年恰好 12 个周期；
-	// 这里回显的始终是配置的原值。改动后周期起点按新日子重算，当前周期用量随之按分钟桶重算
-	// （口径见 Traffic.period_rx）。
+	// 这里回显的始终是配置的原值。重置时刻因夏令时拨快而不存在时取跳变的那一刻（本地读数第一次越过它的时刻），因拨慢而
+	// 出现两次时取第一次。改动后周期起点按新规则重算，当前周期用量随之按分钟桶重算（口径见 Traffic.period_rx）。
 	TrafficResetDay uint32 `protobuf:"varint,10,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
 	// 离线告警宽限期（秒）；缺失表示取 HERON_OFFLINE_AFTER。
 	// HERON_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
 	OfflineGraceS *uint32 `protobuf:"varint,11,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
-	// 计费与到期；五项都没填时缺失。days_left 由 hub 按 --timezone 的今天算出。
+	// 计费与到期；五项都没填时缺失。days_left 由 hub 按计费时区（billing_timezone）的今天算出。
 	Billing *Billing `protobuf:"bytes,12,opt,name=billing,proto3" json:"billing,omitempty"`
 	// 最近一次上报的来源地址：hub 在 Report 上看到的对端，按 --trusted-proxies 解析 X-Forwarded-For，不读其它旁路头，
 	// 也不采信 agent 自报。IPv4 点分、IPv6 压缩形式、不带区域标识；空串表示 hub 没有记录到来源：从未上报，或最近一次
@@ -2192,9 +2192,17 @@ type Node struct {
 	// 已出租：出租出去的机器不装 agent，所有权仍在站长手里。为真时节点只属于"已出租"一种状态、不参与
 	// agent 在线更新、离线与到期规则都不评估；与 maintenance 互斥（同真 → InvalidArgument）。随 UpdateNode 整体替换，
 	// CreateNode 也接受：买来就租出去的机器要能直接登记。
-	Rented        bool `protobuf:"varint,28,opt,name=rented,proto3" json:"rented,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Rented bool `protobuf:"varint,28,opt,name=rented,proto3" json:"rented,omitempty"`
+	// 重置时刻：计费时区里当地零点起的分钟数，0–1439（00:00–23:59，如 08:30 是 510）；周期在重置日的这一时刻开始
+	// （规则见 traffic_reset_day）。新节点为 0（00:00）。
+	TrafficResetMinute uint32 `protobuf:"varint,29,opt,name=traffic_reset_minute,json=trafficResetMinute,proto3" json:"traffic_reset_minute,omitempty"`
+	// 计费时区（IANA 名，如 UTC、America/New_York）：流量周期的边界（traffic_reset_day 与 traffic_reset_minute 按它的
+	// 日历与墙钟）与到期日的日界（billing.days_left、到期告警、自动续期与 RenewNodeBilling 的"今天"）都按它算。空串是
+	// 缺省——沿用 hub 的 --timezone（GetSettings.timezone），不是"不限时区"，也不是 UTC。服务商按 UTC 或别的时区结算时
+	// 填它，周期边界与服务商的重置对齐。维护静默、流量报告的投递时刻与面板按日历切的时段仍按 hub 时区。
+	BillingTimezone string `protobuf:"bytes,30,opt,name=billing_timezone,json=billingTimezone,proto3" json:"billing_timezone,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Node) Reset() {
@@ -2423,6 +2431,20 @@ func (x *Node) GetRented() bool {
 	return false
 }
 
+func (x *Node) GetTrafficResetMinute() uint32 {
+	if x != nil {
+		return x.TrafficResetMinute
+	}
+	return 0
+}
+
+func (x *Node) GetBillingTimezone() string {
+	if x != nil {
+		return x.BillingTimezone
+	}
+	return ""
+}
+
 // 出口地址的显示值，与 NetworkInfo 同字段号。
 type NodeNetwork struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2612,14 +2634,17 @@ func (x *ListNodesRequest) GetKnownRevision() string {
 type ListNodesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Nodes []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	// 节点资料版本，不透明字符串，只比较相等。覆盖 Node 除 last_seen_at 外的全部字段（含按 hub 时区今天算出的
-	// billing.days_left），以及调用方 token 的节点可见范围；last_seen_at 是读取时刻的值，它的变化不改变版本，实时值从
+	// 节点资料版本，不透明字符串，只比较相等。覆盖 Node 除 last_seen_at 外的全部字段（含按各节点计费时区的今天算出的
+	// billing.days_left）与 hub_today，以及调用方 token 的节点可见范围；last_seen_at 是读取时刻的值，它的变化不改变版本，实时值从
 	// GetSnapshot 取。hub 重启后版本必然不同，即便资料没变。版本是全站的一个计数，不按凭据与条件区分：只拿同一凭据、
 	// 同一组 tags / untagged 上次的响应来比；限定节点范围的 token 会看到范围外节点的改动也让版本变化（只知道"有改动"，
 	// 看不到内容）。
 	Revision string `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	// 为真时 nodes 为空：known_revision 与 revision 相同。
-	Unchanged     bool `protobuf:"varint,3,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
+	Unchanged bool `protobuf:"varint,3,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
+	// hub 时区（--timezone）的今天，YYYY-MM-DD，与 revision 出自同一时刻、版本覆盖它。面板续费日历的"今天"格子按它；
+	// 每个节点的到期剩余天数按各自的计费时区（billing.days_left），同一时刻可能与这里差一天。
+	HubToday      string `protobuf:"bytes,4,opt,name=hub_today,json=hubToday,proto3" json:"hub_today,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2675,6 +2700,13 @@ func (x *ListNodesResponse) GetUnchanged() bool {
 	return false
 }
 
+func (x *ListNodesResponse) GetHubToday() string {
+	if x != nil {
+		return x.HubToday
+	}
+	return ""
+}
+
 type CreateNodeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 去首尾空白后 1–64 个字符，控制字符被剔除。
@@ -2683,9 +2715,12 @@ type CreateNodeRequest struct {
 	Billing *Billing `protobuf:"bytes,2,opt,name=billing,proto3" json:"billing,omitempty"`
 	// 已出租，缺失即 false。与 UpdateNodeRequest.rented 同一语义；CreateNodeRequest 没有 maintenance，
 	// 新建节点不会同时落入两种状态。
-	Rented        bool `protobuf:"varint,3,opt,name=rented,proto3" json:"rented,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Rented bool `protobuf:"varint,3,opt,name=rented,proto3" json:"rented,omitempty"`
+	// 计费时区，选填：缺失即空串（沿用 hub 的 --timezone）。取值约束与 UpdateNodeRequest.billing_timezone 相同，同一处校验；
+	// 与 billing 一起给出时，新节点的 days_left 与到期扫描一开始就按它。重置日与重置时刻不在创建时接受，取缺省（1 日 00:00）。
+	BillingTimezone string `protobuf:"bytes,4,opt,name=billing_timezone,json=billingTimezone,proto3" json:"billing_timezone,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateNodeRequest) Reset() {
@@ -2737,6 +2772,13 @@ func (x *CreateNodeRequest) GetRented() bool {
 		return x.Rented
 	}
 	return false
+}
+
+func (x *CreateNodeRequest) GetBillingTimezone() string {
+	if x != nil {
+		return x.BillingTimezone
+	}
+	return ""
 }
 
 type CreateNodeResponse struct {
@@ -2833,9 +2875,16 @@ type UpdateNodeRequest struct {
 	// （%eth0）、不是 IPv4 映射写法；IPv4 文本返回 InvalidArgument。
 	Ipv6Pin string `protobuf:"bytes,15,opt,name=ipv6_pin,json=ipv6Pin,proto3" json:"ipv6_pin,omitempty"`
 	// 已出租，整体替换：缺失即 false。与 maintenance 同真被拒绝（InvalidArgument，点名两个字段）。
-	Rented        bool `protobuf:"varint,16,opt,name=rented,proto3" json:"rented,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Rented bool `protobuf:"varint,16,opt,name=rented,proto3" json:"rented,omitempty"`
+	// 重置时刻，整体替换：缺失即 0（00:00）。0–1439（当地零点起的分钟数），越界返回 InvalidArgument 点名字段与范围。
+	// 改动让周期起点移动时，当前周期用量按分钟桶重算（同 traffic_reset_day）。
+	TrafficResetMinute uint32 `protobuf:"varint,17,opt,name=traffic_reset_minute,json=trafficResetMinute,proto3" json:"traffic_reset_minute,omitempty"`
+	// 计费时区，整体替换：缺失即空串，沿用 hub 的 --timezone（含义见 Node.billing_timezone）。非空时必须是 hub 能加载的
+	// IANA 时区名（如 UTC、Asia/Shanghai、America/New_York），Local 与 posix/、right/ 前缀的写法不接受；不合法返回
+	// InvalidArgument 点名字段。改动让周期起点移动时当前周期用量按分钟桶重算，days_left 与到期告警随之按新时区的今天。
+	BillingTimezone string `protobuf:"bytes,18,opt,name=billing_timezone,json=billingTimezone,proto3" json:"billing_timezone,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UpdateNodeRequest) Reset() {
@@ -2978,6 +3027,20 @@ func (x *UpdateNodeRequest) GetRented() bool {
 		return x.Rented
 	}
 	return false
+}
+
+func (x *UpdateNodeRequest) GetTrafficResetMinute() uint32 {
+	if x != nil {
+		return x.TrafficResetMinute
+	}
+	return 0
+}
+
+func (x *UpdateNodeRequest) GetBillingTimezone() string {
+	if x != nil {
+		return x.BillingTimezone
+	}
+	return ""
 }
 
 type UpdateNodeResponse struct {
@@ -4301,11 +4364,8 @@ func (*GetTrafficRequest) Descriptor() ([]byte, []int) {
 type GetTrafficResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// hub 墙钟，Unix 秒。
-	Now   int64          `protobuf:"varint,1,opt,name=now,proto3" json:"now,omitempty"`
-	Nodes []*NodeTraffic `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	// hub 的 --timezone（IANA 名）：reset_day 与周期零点都按此时区判定；
-	// period_start / next_reset_at 是 Unix 秒，本身无歧义。
-	Timezone      string `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	Now           int64          `protobuf:"varint,1,opt,name=now,proto3" json:"now,omitempty"`
+	Nodes         []*NodeTraffic `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4352,13 +4412,6 @@ func (x *GetTrafficResponse) GetNodes() []*NodeTraffic {
 		return x.Nodes
 	}
 	return nil
-}
-
-func (x *GetTrafficResponse) GetTimezone() string {
-	if x != nil {
-		return x.Timezone
-	}
-	return ""
 }
 
 type NodeTraffic struct {
@@ -7673,7 +7726,7 @@ func (x *Settings) GetTrafficReport() *TrafficReport {
 }
 
 // 周期流量报告：按 hub 的 --timezone 日历，在选定的周期把全部节点当前计费周期的已提交用量、配额占比与距下次重置的
-// 天数汇成一条消息，投递到选定的渠道。
+// 天数汇成一条消息，投递到选定的渠道。每个节点的计费周期与距重置的天数按节点自己的计费时区（Node.billing_timezone）。
 type TrafficReport struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 总开关。为 true 时 daily、weekly、monthly 至少一项为 true，否则 InvalidArgument 点名 settings.traffic_report。
@@ -8262,8 +8315,9 @@ func (*GetSettingsRequest) Descriptor() ([]byte, []int) {
 type GetSettingsResponse struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Settings *Settings              `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
-	// hub 实际生效的 --timezone（IANA 名），与 GetTraffic.timezone、PublicSite.timezone 同一个值：流量周期、到期日、
-	// 维护静默与面板按日历切的时段（晚高峰 20:00–24:00 等）都按它判定，客户端不得改用浏览器本地时区。
+	// hub 实际生效的 --timezone（IANA 名），与 PublicSite.timezone 同一个值：维护静默与面板按日历切的时段（晚高峰
+	// 20:00–24:00 等）按它判定，没设计费时区的节点的流量周期与到期日也按它（设了的按 Node.billing_timezone，每个节点的
+	// 周期时区见 Traffic.timezone），客户端不得改用浏览器本地时区。
 	// 只读：它是启动参数，不是可保存的设置，所以放在响应里而不在 Settings，UpdateSettings 的读改写不经过它。
 	Timezone      string `protobuf:"bytes,2,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -12915,7 +12969,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x0erequest_source\x18\x02 \x01(\tR\rrequestSource\"&\n" +
 	"\x14RevokeSessionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x17\n" +
-	"\x15RevokeSessionResponse\"\xa3\b\n" +
+	"\x15RevokeSessionResponse\"\x80\t\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -12951,7 +13005,9 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\bipv4_pin\x18\x19 \x01(\tR\aipv4Pin\x12\x19\n" +
 	"\bipv6_pin\x18\x1a \x01(\tR\aipv6Pin\x12/\n" +
 	"\anetwork\x18\x1b \x01(\v2\x15.heron.v1.NodeNetworkR\anetwork\x12\x16\n" +
-	"\x06rented\x18\x1c \x01(\bR\x06rentedB\x0f\n" +
+	"\x06rented\x18\x1c \x01(\bR\x06rented\x120\n" +
+	"\x14traffic_reset_minute\x18\x1d \x01(\rR\x12trafficResetMinute\x12)\n" +
+	"\x10billing_timezone\x18\x1e \x01(\tR\x0fbillingTimezoneB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"c\n" +
@@ -12965,18 +13021,20 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x10ListNodesRequest\x12\x12\n" +
 	"\x04tags\x18\x01 \x03(\tR\x04tags\x12\x1a\n" +
 	"\buntagged\x18\x02 \x01(\bR\buntagged\x12%\n" +
-	"\x0eknown_revision\x18\x03 \x01(\tR\rknownRevision\"s\n" +
+	"\x0eknown_revision\x18\x03 \x01(\tR\rknownRevision\"\x90\x01\n" +
 	"\x11ListNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.heron.v1.NodeR\x05nodes\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x1c\n" +
-	"\tunchanged\x18\x03 \x01(\bR\tunchanged\"l\n" +
+	"\tunchanged\x18\x03 \x01(\bR\tunchanged\x12\x1b\n" +
+	"\thub_today\x18\x04 \x01(\tR\bhubToday\"\x97\x01\n" +
 	"\x11CreateNodeRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12+\n" +
 	"\abilling\x18\x02 \x01(\v2\x11.heron.v1.BillingR\abilling\x12\x16\n" +
-	"\x06rented\x18\x03 \x01(\bR\x06rented\"N\n" +
+	"\x06rented\x18\x03 \x01(\bR\x06rented\x12)\n" +
+	"\x10billing_timezone\x18\x04 \x01(\tR\x0fbillingTimezone\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.heron.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xc1\x04\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x9e\x05\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -12995,7 +13053,9 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x12traffic_quota_mode\x18\r \x01(\x0e2\x1a.heron.v1.TrafficQuotaModeR\x10trafficQuotaMode\x12\x19\n" +
 	"\bipv4_pin\x18\x0e \x01(\tR\aipv4Pin\x12\x19\n" +
 	"\bipv6_pin\x18\x0f \x01(\tR\aipv6Pin\x12\x16\n" +
-	"\x06rented\x18\x10 \x01(\bR\x06rentedB\x12\n" +
+	"\x06rented\x18\x10 \x01(\bR\x06rented\x120\n" +
+	"\x14traffic_reset_minute\x18\x11 \x01(\rR\x12trafficResetMinute\x12)\n" +
+	"\x10billing_timezone\x18\x12 \x01(\tR\x0fbillingTimezoneB\x12\n" +
 	"\x10_offline_grace_s\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.heron.v1.NodeR\x04node\"2\n" +
@@ -13067,11 +13127,10 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\ametrics\x18\x05 \x01(\v2\x11.heron.v1.MetricsR\ametrics\x12+\n" +
 	"\atraffic\x18\x06 \x01(\v2\x11.heron.v1.TrafficR\atrafficB\x0f\n" +
 	"\r_last_seen_at\"\x13\n" +
-	"\x11GetTrafficRequest\"o\n" +
+	"\x11GetTrafficRequest\"c\n" +
 	"\x12GetTrafficResponse\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12+\n" +
-	"\x05nodes\x18\x02 \x03(\v2\x15.heron.v1.NodeTrafficR\x05nodes\x12\x1a\n" +
-	"\btimezone\x18\x03 \x01(\tR\btimezone\"g\n" +
+	"\x05nodes\x18\x02 \x03(\v2\x15.heron.v1.NodeTrafficR\x05nodesJ\x04\b\x03\x10\x04R\btimezone\"g\n" +
 	"\vNodeTraffic\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +

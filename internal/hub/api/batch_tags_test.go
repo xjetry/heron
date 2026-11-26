@@ -140,7 +140,7 @@ func TestBatchNodeTagsPreservesOtherDataAndIsIdempotent(t *testing.T) {
 		if !slices.Equal(n.Tags, want) {
 			t.Fatalf("node %d tags=%v want=%v", n.ID, n.Tags, want)
 		}
-		a, b := nodeProto(n, h.svc.today()), nodeProto(before[i], h.svc.today())
+		a, b := nodeProto(n, h.clk.Now(), h.svc.cfg.Location), nodeProto(before[i], h.clk.Now(), h.svc.cfg.Location)
 		a.Tags, b.Tags = nil, nil
 		if !proto.Equal(a, b) {
 			t.Fatalf("non-tag data changed: %v -> %v", b, a)

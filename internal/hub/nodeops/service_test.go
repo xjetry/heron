@@ -31,7 +31,7 @@ type fakes struct {
 	mu        sync.Mutex
 	calls     []call
 	exists    map[int64]bool
-	resetDays map[int64]int
+	schedules map[int64]store.TrafficSchedule
 	pins      map[int64][2]string
 
 	// 下面几项在用例开始前设好，之后只读。
@@ -48,7 +48,7 @@ type fakes struct {
 
 func newFakes(t *testing.T, ids ...int64) (*fakes, *bytes.Buffer) {
 	t.Helper()
-	f := &fakes{exists: map[int64]bool{}, resetDays: map[int64]int{}, pins: map[int64][2]string{}}
+	f := &fakes{exists: map[int64]bool{}, schedules: map[int64]store.TrafficSchedule{}, pins: map[int64][2]string{}}
 	for _, id := range ids {
 		f.exists[id] = true
 	}
@@ -78,10 +78,15 @@ func (f *fakes) log() []call {
 }
 
 func (f *fakes) resetDay(id int64) (int, bool) {
+	c, ok := f.schedule(id)
+	return c.Day, ok
+}
+
+func (f *fakes) schedule(id int64) (store.TrafficSchedule, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, ok := f.resetDays[id]
-	return d, ok
+	c, ok := f.schedules[id]
+	return c, ok
 }
 
 type fakeCreds struct{ f *fakes }
@@ -173,11 +178,11 @@ func (a fakeAlerts) Forget(id int64) { a.f.record("alerts.Forget", id) }
 
 type fakeTraffic struct{ f *fakes }
 
-func (tr fakeTraffic) SetResetDay(id int64, day int) {
-	tr.f.record("traffic.SetResetDay", id)
+func (tr fakeTraffic) SetSchedule(id int64, c store.TrafficSchedule) {
+	tr.f.record("traffic.SetSchedule", id)
 	tr.f.mu.Lock()
 	defer tr.f.mu.Unlock()
-	tr.f.resetDays[id] = day
+	tr.f.schedules[id] = c
 }
 
 func (tr fakeTraffic) Commit(_ context.Context, id int64) (traffic.Entry, error) {
@@ -199,7 +204,7 @@ func (s fakeState) Forget(id int64) {
 	s.f.record("state.Forget", id)
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
-	delete(s.f.resetDays, id)
+	delete(s.f.schedules, id)
 	delete(s.f.pins, id)
 }
 
@@ -240,36 +245,39 @@ func TestUpdateCommitsMemoryOnlyAfterStoreAndScansOutsideLock(t *testing.T) {
 	}{
 		{"neither", false, false, false, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true},
+			{"traffic.SetSchedule", 7, true}, {"state.SetAddressPins", 7, true},
 		}},
 		{"billing", true, false, false, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true},
+			{"traffic.SetSchedule", 7, true}, {"state.SetAddressPins", 7, true},
 			{"alerts.SweepExpiry", 0, false},
 		}},
 		{"rented", false, false, true, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true},
+			{"traffic.SetSchedule", 7, true}, {"state.SetAddressPins", 7, true},
 			{"alerts.SweepExpiry", 0, false},
 		}},
 		{"traffic", false, true, false, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true}, {"traffic.Commit", 7, true},
+			{"traffic.SetSchedule", 7, true}, {"state.SetAddressPins", 7, true}, {"traffic.Commit", 7, true},
 			{"alerts.EvaluateTrafficNode", 7, false},
 		}},
 		{"both", true, true, false, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true}, {"traffic.Commit", 7, true},
+			{"traffic.SetSchedule", 7, true}, {"state.SetAddressPins", 7, true}, {"traffic.Commit", 7, true},
 			{"alerts.SweepExpiry", 0, false}, {"alerts.EvaluateTrafficNode", 7, false},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _ := newFakes(t, 7)
 			f.updateResult = store.NodeUpdateResult{BillingChanged: tc.billing, TrafficChanged: tc.traffc, RentedChanged: tc.rented}
-			if err := f.svc.Update(t.Context(), 7, store.NodeEdit{TrafficResetDay: 15, IPv4Pin: "8.8.8.8"}); err != nil {
+			if err := f.svc.Update(t.Context(), 7, store.NodeEdit{TrafficResetDay: 15, TrafficResetMinute: 510, BillingTimezone: "UTC", IPv4Pin: "8.8.8.8"}); err != nil {
 				t.Fatal(err)
 			}
 			requireCalls(t, f.log(), tc.want...)
+			if got, want := func() store.TrafficSchedule { c, _ := f.schedule(7); return c }(), (store.TrafficSchedule{Day: 15, Minute: 510, Timezone: "UTC"}); got != want {
+				t.Fatalf("published schedule %+v, want %+v", got, want)
+			}
 			if day, _ := f.resetDay(7); day != 15 {
 				t.Fatalf("reset day = %d, want 15", day)
 			}
@@ -348,7 +356,7 @@ func TestUpdateScanFailuresAreLoggedNotReturned(t *testing.T) {
 // Delete 在锁内提交，提交之后在锁外依次清上报侧与告警；Forget 是同一条链。
 func TestDeleteRunsForgetChainAfterCommitOutsideLock(t *testing.T) {
 	f, _ := newFakes(t, 7)
-	f.resetDays[7] = 15
+	f.schedules[7] = store.TrafficSchedule{Day: 15}
 	if err := f.svc.Delete(t.Context(), 7); err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +426,7 @@ func TestConcurrentUpdateAndDeleteSerialize(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := names(f.log())
-	if i, j := slices.Index(got, "traffic.SetResetDay"), slices.Index(got, "state.Forget"); i < 0 || j < 0 || i > j {
+	if i, j := slices.Index(got, "traffic.SetSchedule"), slices.Index(got, "state.Forget"); i < 0 || j < 0 || i > j {
 		t.Fatalf("forget did not follow the update's memory write: %v", got)
 	}
 	if day, ok := f.resetDay(7); ok {
@@ -446,8 +454,9 @@ func TestUpdateAfterDeleteIsNotFoundAndRebuildsNothing(t *testing.T) {
 	}
 }
 
-// 建节点不取节点编辑锁；带计费才在建成之后扫描一次，建节点失败不扫描。
-func TestCreateSweepsOnlyWithBillingAfterCommit(t *testing.T) {
+// 建节点在节点编辑锁内提交并登记周期规则（计费时区取建节点时给的值，重置日与重置时刻取列默认值），与 Delete 不交错；
+// 带计费才在建成之后、锁外扫描一次；建节点失败既不登记也不扫描。
+func TestCreateRegistersScheduleAndSweepsOnlyWithBilling(t *testing.T) {
 	billing := store.Billing{ExpiresOn: "2026-01-02"}
 	for _, tc := range []struct {
 		name    string
@@ -455,21 +464,31 @@ func TestCreateSweepsOnlyWithBillingAfterCommit(t *testing.T) {
 		err     error
 		want    []call
 	}{
-		{"no billing", store.Billing{}, nil, []call{{"creds.CreateNode", 0, false}}},
-		{"billing", billing, nil, []call{{"creds.CreateNode", 0, false}, {"alerts.SweepExpiry", 0, false}}},
-		{"limit", billing, store.ErrNodeLimit, []call{{"creds.CreateNode", 0, false}}},
+		{"no billing", store.Billing{}, nil, []call{{"creds.CreateNode", 0, true}, {"traffic.SetSchedule", 1, true}}},
+		{"billing", billing, nil, []call{{"creds.CreateNode", 0, true}, {"traffic.SetSchedule", 1, true}, {"alerts.SweepExpiry", 0, false}}},
+		{"limit", billing, store.ErrNodeLimit, []call{{"creds.CreateNode", 0, true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _ := newFakes(t)
 			f.createErr = tc.err
-			id, tok, err := f.svc.Create(t.Context(), store.NewNode{Name: "n", Billing: tc.billing})
+			id, tok, err := f.svc.Create(t.Context(), store.NewNode{Name: "n", Billing: tc.billing, BillingTimezone: "UTC"})
 			if !errors.Is(err, tc.err) {
 				t.Fatalf("err = %v, want %v", err, tc.err)
 			}
-			if tc.err == nil && (id != 1 || tok != "token") {
+			requireCalls(t, f.log(), tc.want...)
+			got, ok := f.schedule(1)
+			if tc.err != nil {
+				if ok {
+					t.Fatalf("a failed create registered a schedule %+v", got)
+				}
+				return
+			}
+			if id != 1 || tok != "token" {
 				t.Fatalf("created (%d, %q), want (1, token)", id, tok)
 			}
-			requireCalls(t, f.log(), tc.want...)
+			if want := (store.TrafficSchedule{Day: store.DefaultTrafficResetDay, Timezone: "UTC"}); got != want {
+				t.Fatalf("registered schedule %+v, want %+v", got, want)
+			}
 		})
 	}
 }

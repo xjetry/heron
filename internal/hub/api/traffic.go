@@ -16,7 +16,8 @@ import (
 func trafficProto(e traffic.Entry, n store.Node) *heronv1.Traffic {
 	out := &heronv1.Traffic{
 		TotalRx: uint64(e.TotalRx), TotalTx: uint64(e.TotalTx), PeriodRx: uint64(e.PeriodRx), PeriodTx: uint64(e.PeriodTx),
-		PeriodStart: e.PeriodStart.Unix(), NextResetAt: e.NextReset.Unix(), ResetDay: uint32(e.ResetDay),
+		PeriodStart: e.PeriodStart.Unix(), NextResetAt: e.NextReset.Unix(), ResetDay: uint32(e.Schedule.Day),
+		ResetMinute: uint32(e.Schedule.Minute), Timezone: e.Schedule.Zone.String(), PreviousPeriodStart: e.PreviousStart.Unix(),
 	}
 	out.QuotaBytes, out.QuotaMode = n.TrafficQuotaBytes, enumFor(trafficQuotaModes, n.TrafficQuotaMode)
 	used, pct, has := traffic.Quota(e, n.TrafficQuotaBytes, n.TrafficQuotaMode)
@@ -33,7 +34,7 @@ func (s *Service) GetTraffic(ctx context.Context, _ *connect.Request[heronv1.Get
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := &heronv1.GetTrafficResponse{Now: s.clk.Now().Unix(), Timezone: s.traffic.Zone().String()}
+	out := &heronv1.GetTrafficResponse{Now: s.clk.Now().Unix()}
 	for _, n := range nodes {
 		out.Nodes = append(out.Nodes, &heronv1.NodeTraffic{NodeId: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID), n)})
 	}

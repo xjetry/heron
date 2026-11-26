@@ -85,7 +85,7 @@ func TestAgentScopeAndDiagnosticsThroughHTTP(t *testing.T) {
 	if err := h.book.Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	reloaded := traffic.New(h.store, h.clk, h.book.Zone(), slog.Default())
+	reloaded := traffic.New(h.store, h.clk, h.book.HubZone(), slog.Default())
 	if err := reloaded.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}

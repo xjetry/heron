@@ -289,6 +289,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV55Config(t, cfg)
 			removeV52Config(t, cfg)
 			removeV51Config(t, cfg)
 			removeV50Config(t, cfg)
@@ -369,6 +370,12 @@ func removeV44Config(t *testing.T, config *sql.DB) {
 func removeV47Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE api_token DROP COLUMN expires_at")
+}
+
+// 55 给 node 加了重置时刻与计费时区两列，在配置层。
+func removeV55Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node DROP COLUMN billing_timezone; ALTER TABLE node DROP COLUMN traffic_reset_minute")
 }
 
 // 52 给 probe_task 加了 HTTP 状态码判据两列，在配置层。
@@ -522,6 +529,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV55Config(t, cfg)
 	removeV52Config(t, cfg)
 	removeV51Config(t, cfg)
 	removeV50Config(t, cfg)
@@ -927,11 +935,12 @@ func TestRestoreRejectsNodeWithInvalidPriceCurrency(t *testing.T) {
 	}
 }
 
-// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据，v53 快照与当前版本
-// 结构相同，改 schema_version 即得到一份 v53 快照。
+// 早于 54 的快照先经迁移 54 规范化再过预检：小写币种恢复成大写，不因预检被拒。54 只改数据、55 只在 node 上加两列，
+// 撤掉这两列（removeV55Config）再改 schema_version 即得到一份 v53 快照。
 func TestRestoreNormalizesPriceCurrencyOfV53Snapshot(t *testing.T) {
 	t.Parallel()
 	config, metrics := restoreSnapshots(t)
+	removeV55Config(t, restoreDB(t, config))
 	restoreExec(t, restoreDB(t, config), "UPDATE node SET price='5', currency=' usd ' WHERE id=1; UPDATE snapshot_meta SET schema_version=53")
 	restoreExec(t, restoreDB(t, metrics), "UPDATE snapshot_meta SET schema_version=53")
 	path := restoreTarget(t)

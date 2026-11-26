@@ -170,7 +170,7 @@ type ruleScopeQueries struct{ head, tags, nodes string }
 // 白名单列同时决定预览和审计，不从原始请求或响应复制内容；凭据哈希只进入版本摘要。
 var changeKinds = map[ChangeKind]changeKindSpec{
 	ChangeNode: {
-		row:       `SELECT id,name,public,note,traffic_reset_day,offline_grace_s,price,currency,billing_cycle,expires_on,auto_renew,country_pin,maintenance,public_remark,traffic_quota_bytes,traffic_quota_mode,ipv4_pin,ipv6_pin,rented FROM node WHERE id=?`,
+		row:       `SELECT id,name,public,note,traffic_reset_day,traffic_reset_minute,billing_timezone,offline_grace_s,price,currency,billing_cycle,expires_on,auto_renew,country_pin,maintenance,public_remark,traffic_quota_bytes,traffic_quota_mode,ipv4_pin,ipv6_pin,rented FROM node WHERE id=?`,
 		relations: []snapshotQuery{{"tags", `SELECT t.name FROM node_tag n JOIN tag t ON t.id=n.tag_id WHERE n.node_id=? ORDER BY t.name_fold`}},
 		secret:    "SELECT hex(token_hash) FROM node WHERE id=?",
 		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='node'",

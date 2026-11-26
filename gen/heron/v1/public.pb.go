@@ -74,6 +74,7 @@ type PublicSite struct {
 	AdminPath string `protobuf:"bytes,6,opt,name=admin_path,json=adminPath,proto3" json:"admin_path,omitempty"`
 	// hub 实际生效的 --timezone（IANA 名），与 AdminService.GetSettings 的 timezone 同一个值。公开页与主题按它切日历时段
 	// （如晚高峰 20:00–24:00），不按访客浏览器的时区：同一条线路的"晚间"对所有访客是同一段时间。主题 SDK 桥接原样转交。
+	// 节点的流量周期与到期剩余天数按节点自己的计费时区（PublicNode.traffic.timezone），可能与它不同。
 	Timezone      string `protobuf:"bytes,7,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -442,7 +443,8 @@ type PublicBilling struct {
 	BillingCycle BillingCycle `protobuf:"varint,3,opt,name=billing_cycle,json=billingCycle,proto3,enum=heron.v1.BillingCycle" json:"billing_cycle,omitempty"`
 	// 到期日 YYYY-MM-DD；空表示没有到期日。
 	ExpiresOn string `protobuf:"bytes,4,opt,name=expires_on,json=expiresOn,proto3" json:"expires_on,omitempty"`
-	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
+	// 到期日减去今天的天数，今天按节点的计费时区（与同一节点的 PublicNode.traffic.timezone 相同）取日历日；负数是已过期的天数。
+	// 没有到期日、或库里的到期日无法解析时缺失。
 	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

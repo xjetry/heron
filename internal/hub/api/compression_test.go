@@ -247,6 +247,7 @@ func TestSnapshotStringFieldsAreAudited(t *testing.T) {
 		"nodes.name":                      "管理员写入；非公开节点的名字正是要保护的内容",
 		"nodes.metrics.boot_id":           "agent 写入，准入只收 UUID（ingest.validateBootID）",
 		"nodes.metrics.net_counter_epoch": "agent 写入，准入只收小写十六进制摘要（agentwire.ValidateCounterEpoch）",
+		"nodes.traffic.timezone":          "hub 写入：管理员设的计费时区（写入口按 store.LoadBillingZone 只收能加载的 IANA 名）或 hub 的 --timezone",
 	}
 	var found []string
 	var walk func(prefix string, md protoreflect.MessageDescriptor, seen map[protoreflect.FullName]bool)

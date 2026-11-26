@@ -80,6 +80,32 @@ var migrations = map[int]func(*sql.Tx) error{
 	52: execAll(migrationV52Config),
 	53: migrateV53Metrics,
 	54: migrateV54Config,
+	55: execAll(append(append([]string{}, migrationV55Config...), migrationV55Trigger...)),
+}
+
+// v55：节点的重置时刻与计费时区两列（含义见 schema.go 的 ddlNode），只在配置层，迁移与配置快照共用。旧行取列默认值
+// ——00:00 与空串（沿用 hub 的 --timezone），周期边界与到期日界与升级前逐一相同。
+// 回滚边界同其它迁移：写入后 schema 54 的二进制不能直接启动，回退须恢复升级前的自动备份。
+var migrationV55Config = []string{
+	`ALTER TABLE node ADD COLUMN traffic_reset_minute INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE node ADD COLUMN billing_timezone TEXT NOT NULL DEFAULT ''`,
+}
+
+// 两列都出现在 Node 里，改动要推进节点资料版本（ddlNodeListRevision）：重建 node 的更新触发器，WHEN 条件在 v46 的
+// 基础上加这两列。触发器属于运行态，配置快照不带，所以与 migrationV55Config 分开。
+var migrationV55Trigger = []string{
+	`DROP TRIGGER node_list_revision_node_update`,
+	`CREATE TRIGGER node_list_revision_node_update AFTER UPDATE ON node WHEN
+  OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.sort_order IS NOT NEW.sort_order OR OLD.public IS NOT NEW.public
+  OR OLD.note IS NOT NEW.note OR OLD.offline_grace_s IS NOT NEW.offline_grace_s OR OLD.traffic_reset_day IS NOT NEW.traffic_reset_day
+  OR OLD.created_at IS NOT NEW.created_at OR OLD.price IS NOT NEW.price OR OLD.currency IS NOT NEW.currency
+  OR OLD.billing_cycle IS NOT NEW.billing_cycle OR OLD.expires_on IS NOT NEW.expires_on OR OLD.auto_renew IS NOT NEW.auto_renew
+  OR OLD.last_source IS NOT NEW.last_source OR OLD.country IS NOT NEW.country OR OLD.country_ip IS NOT NEW.country_ip
+  OR OLD.country_pin IS NOT NEW.country_pin OR OLD.maintenance IS NOT NEW.maintenance OR OLD.public_remark IS NOT NEW.public_remark
+  OR OLD.traffic_quota_bytes IS NOT NEW.traffic_quota_bytes OR OLD.traffic_quota_mode IS NOT NEW.traffic_quota_mode
+  OR OLD.ipv4_pin IS NOT NEW.ipv4_pin OR OLD.ipv6_pin IS NOT NEW.ipv6_pin OR OLD.rented IS NOT NEW.rented
+  OR OLD.traffic_reset_minute IS NOT NEW.traffic_reset_minute OR OLD.billing_timezone IS NOT NEW.billing_timezone
+BEGIN UPDATE node_list_revision SET revision = revision + 1 WHERE id = 1; END`,
 }
 
 // metricDDLV53 冻结引入最满盘使用率时的指标表 DDL：v43 的列加上末尾一列。以后再追加指标必须新开迁移，不能改这里。

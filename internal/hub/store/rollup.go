@@ -465,24 +465,38 @@ const (
 	evaluationRead
 )
 
-// readFamily 在 db 上的一个只读事务里完成 queryFamily 的计数与聚合，i 是已校验的级别下标，窗口已对齐。
+// readFamily 在 db 上的一个只读事务里完成 queryFamily 的计数与聚合（readFamilyTx），i 是已校验的级别下标，窗口已对齐。
 // scan 与 summarize 只用这个事务，持着它再取别的读连接会违反读池不互等的约束（见 readPoolFor）。
 //
-// scanCap 为正时，各级计数累计读到的源行数不得超过它：每级 LIMIT 取 min(剩余额度, 剩余封顶)+1，两个余量都随层递减，
-// 累计超过即返回 errScanCapped。事务由本函数帧的 defer 回滚，返回即归还连接；调用方据此在返回之后才去取另一个池，
-// 所以封顶重跑不能与这次尝试同在一个持事务的函数帧里。scanCap 为 0 不封顶。
+// scanCap 为正时，各级计数累计读到的源行数不得超过它（scanBudget），超过即返回 errScanCapped。事务由本函数帧的 defer
+// 回滚，返回即归还连接；调用方据此在返回之后才去取另一个池，所以封顶重跑不能与这次尝试同在一个持事务的函数帧里。
+// scanCap 为 0 不封顶。
 func readFamily[T any](ctx context.Context, db *sql.DB, scanCap int64, f *family, shape queryShape, i int, from, to, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	return readFamilyTx(ctx, tx, newScanBudget(scanCap), f, shape, i, from, to, step, scan, summarize)
+}
+
+// scanBudget 是一个读事务在封顶池上还能读的源行数（见 readFamily 的 scanCap）。同一事务里的多次 readFamilyTx 共用一份
+// （NetBytesBetween 的中段与两端），所以封顶约束的是整个事务的读量，不是每一次读。capped 为假不封顶。
+type scanBudget struct {
+	left   int64
+	capped bool
+}
+
+func newScanBudget(scanCap int64) *scanBudget { return &scanBudget{left: scanCap, capped: scanCap > 0} }
+
+// readFamilyTx 在调用方的只读事务 tx 里做一次逐级拼接的计数与聚合：各级计数按 min(剩余额度, 剩余封顶)+1 取 LIMIT，
+// 两个余量都随层递减；额度按本次读计（每次读各有一份 quotaRowsPerSeries × seriesLimit），封顶从 budget 扣减。
+func readFamilyTx[T any](ctx context.Context, tx *sql.Tx, budget *scanBudget, f *family, shape queryShape, i int, from, to, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	var sources []string
 	args := []any{step}
 	// watermarks 记录参与本次查询的各粗级水位，只在超额时随错误带出。
 	var watermarks []LevelWatermark
 	remaining := quotaRowsPerSeries * shape.seriesLimit
-	capLeft := scanCap
 	for ; i >= 0; i-- {
 		query := f.rangeSQL(i, shape)
 		levelArgs := append(append([]any{}, shape.keyArgs...), from, to)
@@ -505,8 +519,8 @@ func readFamily[T any](ctx context.Context, db *sql.DB, scanCap int64, f *family
 			count += " AND ts < ?"
 		}
 		limit := remaining
-		if scanCap > 0 {
-			limit = min(limit, capLeft)
+		if budget.capped {
+			limit = min(limit, budget.left)
 		}
 		countArgs := append(append([]any{}, levelArgs...), limit+1)
 		var n int64
@@ -518,9 +532,9 @@ func readFamily[T any](ctx context.Context, db *sql.DB, scanCap int64, f *family
 		if remaining < 0 {
 			return nil, ReadQuotaError{Quota: quotaRowsPerSeries * shape.seriesLimit, Series: shape.seriesLimit, Watermarks: watermarks}
 		}
-		if scanCap > 0 {
-			capLeft -= n
-			if capLeft < 0 {
+		if budget.capped {
+			budget.left -= n
+			if budget.left < 0 {
 				return nil, errScanCapped
 			}
 		}

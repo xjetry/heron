@@ -741,7 +741,7 @@ func TestNextSweepAt(t *testing.T) {
 		{"2026-09-24T23:50:00", 5, midnight},
 		{"2026-09-24T23:00:00", 7, midnight}, // 退避恰好落在日界上
 	} {
-		if got := nextSweepAt(at(c.start), loc, c.failures); !got.Equal(c.want) {
+		if got := nextSweepAt(at(c.start), []*time.Location{loc}, c.failures); !got.Equal(c.want) {
 			t.Errorf("nextSweepAt(%s, %d failures) = %s, want %s", c.start, c.failures, got.Format(time.RFC3339), c.want.Format(time.RFC3339))
 		}
 	}

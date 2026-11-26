@@ -27,8 +27,10 @@ type memStore struct {
 	entered  chan struct{}
 	recs     map[int64]store.TrafficRecord
 	days     map[int64]int
-	fail     error
-	writes   int
+	// schedules 是完整的周期配置，覆盖 days 里同一节点的重置日。
+	schedules map[int64]store.TrafficSchedule
+	fail      error
+	writes    int
 	// bytesBetween 应答 NetBytesBetween；nil 时恒为 0。ranges 记录每次查询的节点与区间。
 	bytesBetween func(nodeID int64, from, to time.Time) (int64, int64, error)
 	ranges       []byteRange
@@ -102,7 +104,20 @@ func (m *memStore) WriteTraffic(_ context.Context, recs []store.TrafficRecord) (
 	return written, nil
 }
 
-func (m *memStore) TrafficResetDays(context.Context) (map[int64]int, error) { return m.days, nil }
+// TrafficSchedules 由 days 给出重置日（重置时刻 00:00、计费时区空），schedules 里有的节点以它为准。
+func (m *memStore) TrafficSchedules(context.Context) (map[int64]store.TrafficSchedule, error) {
+	out := map[int64]store.TrafficSchedule{}
+	for id, day := range m.days {
+		out[id] = store.TrafficSchedule{Day: day}
+	}
+	for id, c := range m.schedules {
+		out[id] = c
+	}
+	return out, nil
+}
+
+// sched 是只有重置日、重置时刻 00:00 的周期规则。
+func sched(day int, loc *time.Location) Schedule { return Schedule{Day: day, Zone: loc} }
 
 var shanghai = mustZone("Asia/Shanghai")
 
@@ -150,8 +165,8 @@ func TestFirstReportOnlySetsBaseline(t *testing.T) {
 	if want := time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai); !e.PeriodStart.Equal(want) {
 		t.Fatalf("period start %v, want %v", e.PeriodStart, want)
 	}
-	if want := time.Date(2026, 10, 1, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) || e.ResetDay != 1 {
-		t.Fatalf("next reset %v day %d, want %v day 1", e.NextReset, e.ResetDay, want)
+	if want := time.Date(2026, 10, 1, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) || e.Schedule.Day != 1 {
+		t.Fatalf("next reset %v day %d, want %v day 1", e.NextReset, e.Schedule.Day, want)
 	}
 }
 
@@ -253,10 +268,10 @@ func TestPeriodBoundaries(t *testing.T) {
 		{time.Date(2026, 1, 3, 12, 0, 0, 0, shanghai), 5, time.Date(2025, 12, 5, 0, 0, 0, 0, shanghai), time.Date(2026, 1, 5, 0, 0, 0, 0, shanghai)},
 	}
 	for _, c := range cases {
-		if got := PeriodStart(c.now, c.day, shanghai); !got.Equal(c.wantStart) {
+		if got := PeriodStart(c.now, sched(c.day, shanghai)); !got.Equal(c.wantStart) {
 			t.Errorf("PeriodStart(%v, %d) = %v, want %v", c.now, c.day, got, c.wantStart)
 		}
-		if got := NextResetAfter(c.wantStart, c.day, shanghai); !got.Equal(c.next) {
+		if got := NextResetAfter(c.wantStart, sched(c.day, shanghai)); !got.Equal(c.next) {
 			t.Errorf("NextResetAfter(%v, %d) = %v, want %v", c.wantStart, c.day, got, c.next)
 		}
 	}
@@ -284,10 +299,10 @@ func TestPeriodBoundariesClampToMonthEnd(t *testing.T) {
 		{d(2026, 4, 15), 40, d(2026, 3, 31), d(2026, 4, 30)},
 	}
 	for _, c := range cases {
-		if got := PeriodStart(c.now, c.day, shanghai); !got.Equal(c.wantStart) {
+		if got := PeriodStart(c.now, sched(c.day, shanghai)); !got.Equal(c.wantStart) {
 			t.Errorf("PeriodStart(%v, %d) = %v, want %v", c.now, c.day, got, c.wantStart)
 		}
-		if got := NextResetAfter(c.wantStart, c.day, shanghai); !got.Equal(c.next) {
+		if got := NextResetAfter(c.wantStart, sched(c.day, shanghai)); !got.Equal(c.next) {
 			t.Errorf("NextResetAfter(%v, %d) = %v, want %v", c.wantStart, c.day, got, c.next)
 		}
 	}
@@ -297,8 +312,8 @@ func TestPeriodBoundariesClampToMonthEnd(t *testing.T) {
 func TestEveryResetDayYieldsTwelvePeriodsAYear(t *testing.T) {
 	for day := 1; day <= 31; day++ {
 		var months []time.Month
-		for at := PeriodStart(time.Date(2026, 1, 1, 0, 0, 0, 0, shanghai), day, shanghai); at.Year() <= 2026; at = NextResetAfter(at, day, shanghai) {
-			if got := PeriodStart(at, day, shanghai); !got.Equal(at) {
+		for at := PeriodStart(time.Date(2026, 1, 1, 0, 0, 0, 0, shanghai), sched(day, shanghai)); at.Year() <= 2026; at = NextResetAfter(at, sched(day, shanghai)) {
+			if got := PeriodStart(at, sched(day, shanghai)); !got.Equal(at) {
 				t.Fatalf("day %d: boundary %v is not its own period start (%v)", day, at, got)
 			}
 			if at.Year() == 2026 {
@@ -330,15 +345,15 @@ func TestPeriodBoundaryOnSkippedMidnightIsTheFirstInstantOfThatDay(t *testing.T)
 		{"America/Havana", 8, time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC), "2026-03-08 01:00:00 -0400"},
 	} {
 		loc := mustZone(c.zone)
-		got := PeriodStart(c.now, c.day, loc)
+		got := PeriodStart(c.now, sched(c.day, loc))
 		if s := got.Format("2006-01-02 15:04:05 -0700"); s != c.wantString {
 			t.Errorf("%s PeriodStart(%v, %d) = %s, want %s", c.zone, c.now, c.day, s, c.wantString)
 		}
-		if !PeriodStart(got, c.day, loc).Equal(got) {
+		if !PeriodStart(got, sched(c.day, loc)).Equal(got) {
 			t.Errorf("%s: boundary %v is not its own period start", c.zone, got)
 		}
-		prev := PeriodStart(got.Add(-time.Nanosecond), c.day, loc)
-		if next := NextResetAfter(prev, c.day, loc); !next.Equal(got) {
+		prev := PeriodStart(got.Add(-time.Nanosecond), sched(c.day, loc))
+		if next := NextResetAfter(prev, sched(c.day, loc)); !next.Equal(got) {
 			t.Errorf("%s: NextResetAfter(%v) = %v, want %v", c.zone, prev, next, got)
 		}
 	}
@@ -376,14 +391,14 @@ func TestResetDayMovedLaterRecomputesThePeriodFromBuckets(t *testing.T) {
 	b, clk := newBook(t, st) // 9 月 15 日 12:00，周期起点 9 月 1 日
 	b.Account(1, counters("b1", 0, 0), nil)
 	b.Account(1, counters("b1", 500, 700), nil)
-	b.SetResetDay(1, 10)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 10})
 	e, _ := b.Get(1)
 	start := time.Date(2026, 9, 10, 0, 0, 0, 0, shanghai)
 	if !e.PeriodStart.Equal(start) || e.PeriodRx != 120 || e.PeriodTx != 30 || e.TotalRx != 500 || e.TotalTx != 700 {
 		t.Fatalf("after moving the reset day later: %+v", e)
 	}
-	if want := time.Date(2026, 10, 10, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) || e.ResetDay != 10 {
-		t.Fatalf("next reset %v day %d, want %v day 10", e.NextReset, e.ResetDay, want)
+	if want := time.Date(2026, 10, 10, 0, 0, 0, 0, shanghai); !e.NextReset.Equal(want) || e.Schedule.Day != 10 {
+		t.Fatalf("next reset %v day %d, want %v day 10", e.NextReset, e.Schedule.Day, want)
 	}
 	b.Get(1)
 	queried(t, st, byteRange{1, start, clk.Now()})
@@ -400,7 +415,7 @@ func TestResetDayMovedEarlierExtendsThePeriod(t *testing.T) {
 	if _, err := b.Adjust(context.Background(), 1, 900, 700); err != nil {
 		t.Fatal(err)
 	}
-	b.SetResetDay(1, 20)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 20})
 	e, _ := b.Get(1)
 	start := time.Date(2026, 8, 20, 0, 0, 0, 0, shanghai)
 	if !e.PeriodStart.Equal(start) || e.PeriodRx != 980 || e.PeriodTx != 720 || e.TotalRx != 5800 || e.TotalTx != 5600 {
@@ -422,26 +437,26 @@ func TestResetDaySwitchAcrossMonthEndClampRecomputesThePeriod(t *testing.T) {
 	st.days[1] = 31
 	b, clk := newBook(t, st) // 9 月 15 日 12:00
 	sep30 := time.Date(2026, 9, 30, 0, 0, 0, 0, shanghai)
-	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug31) || !e.NextReset.Equal(sep30) || e.ResetDay != 31 || e.PeriodRx != 100 {
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug31) || !e.NextReset.Equal(sep30) || e.Schedule.Day != 31 || e.PeriodRx != 100 {
 		t.Fatalf("reset day 31 in September: %+v", e)
 	}
 	queried(t, st)
 
-	b.SetResetDay(1, 30)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 30})
 	aug30 := time.Date(2026, 8, 30, 0, 0, 0, 0, shanghai)
 	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug30) || !e.NextReset.Equal(sep30) || e.PeriodRx != 140 || e.PeriodTx != 110 {
 		t.Fatalf("after switching 31 -> 30: %+v", e)
 	}
 	queried(t, st, byteRange{1, aug30, aug31})
 
-	b.SetResetDay(1, 31)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 31})
 	if e, _ := b.Get(1); !e.PeriodStart.Equal(aug31) || !e.NextReset.Equal(sep30) || e.PeriodRx != 40 || e.PeriodTx != 10 || e.TotalRx != 5000 {
 		t.Fatalf("after switching 30 -> 31: %+v", e)
 	}
 	queried(t, st, byteRange{1, aug30, aug31}, byteRange{1, aug31, clk.Now()})
 
 	clk.Advance(16 * 24 * time.Hour) // 10 月 1 日 12:00：9 月 30 日的钳位边界已过，10 月回到 31 日
-	if e, _ := b.Get(1); !e.PeriodStart.Equal(sep30) || !e.NextReset.Equal(time.Date(2026, 10, 31, 0, 0, 0, 0, shanghai)) || e.ResetDay != 31 {
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(sep30) || !e.NextReset.Equal(time.Date(2026, 10, 31, 0, 0, 0, 0, shanghai)) || e.Schedule.Day != 31 {
 		t.Fatalf("after the clamped September boundary: %+v", e)
 	}
 }
@@ -459,7 +474,7 @@ func TestTimezoneChangeRealignsAClampedPeriodStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
-	if e, _ := b.Get(1); !e.PeriodStart.Equal(want) || !e.NextReset.Equal(time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)) || e.PeriodRx != 70 || e.PeriodTx != 30 || e.ResetDay != 31 {
+	if e, _ := b.Get(1); !e.PeriodStart.Equal(want) || !e.NextReset.Equal(time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)) || e.PeriodRx != 70 || e.PeriodTx != 30 || e.Schedule.Day != 31 {
 		t.Fatalf("after moving the hub to UTC: %+v", e)
 	}
 	queried(t, st, byteRange{1, want, clk.Now()})
@@ -495,7 +510,7 @@ func TestBucketReadFailureStartsLaterPeriodFromZeroAndRetriesExtension(t *testin
 	st.recs[1] = store.TrafficRecord{NodeID: 1, BootID: "b1", Baseline: []store.TrafficCounter{{Rx: 1000, Tx: 1000}}, TotalRx: 5000, TotalTx: 5000, PeriodRx: 100, PeriodTx: 100, PeriodStart: old}
 	st.days[1] = 1
 	b, _ := newBook(t, st)
-	b.SetResetDay(1, 20)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 20})
 	if e, _ := b.Get(1); !e.PeriodStart.Equal(old) || e.PeriodRx != 100 || e.PeriodTx != 100 {
 		t.Fatalf("failed extension changed the entry: %+v", e)
 	}
@@ -506,7 +521,7 @@ func TestBucketReadFailureStartsLaterPeriodFromZeroAndRetriesExtension(t *testin
 	}
 	queried(t, st, byteRange{1, start, old}, byteRange{1, start, old})
 	fail = errors.New("db down again")
-	b.SetResetDay(1, 10)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 10})
 	later := time.Date(2026, 9, 10, 0, 0, 0, 0, shanghai)
 	if e, _ := b.Get(1); !e.PeriodStart.Equal(later) || e.PeriodRx != 0 || e.PeriodTx != 0 || e.TotalRx != 5000 {
 		t.Fatalf("failed recompute did not restart the period from zero: %+v", e)
@@ -631,12 +646,12 @@ func TestLoadRestoresBaselineSoRestartDeltaCoversTheGap(t *testing.T) {
 func TestSetResetDayMovesTheNextBoundaryAndViewCoversUnknownNodes(t *testing.T) {
 	b, _ := newBook(t, newMem())
 	b.Account(1, counters("b1", 0, 0), nil) // 周期起点 9 月 1 日
-	b.SetResetDay(1, 20)
-	if e, _ := b.Get(1); e.ResetDay != 20 || !e.NextReset.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai)) || !e.PeriodStart.Equal(time.Date(2026, 8, 20, 0, 0, 0, 0, shanghai)) {
+	b.SetSchedule(1, store.TrafficSchedule{Day: 20})
+	if e, _ := b.Get(1); e.Schedule.Day != 20 || !e.NextReset.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, shanghai)) || !e.PeriodStart.Equal(time.Date(2026, 8, 20, 0, 0, 0, 0, shanghai)) {
 		t.Fatalf("after changing the day: %+v", e)
 	}
 	v := b.View(2)
-	if v.ResetDay != store.DefaultTrafficResetDay || v.HasBaseline() || v.TotalRx != 0 || !v.PeriodStart.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)) {
+	if v.Schedule.Day != store.DefaultTrafficResetDay || v.HasBaseline() || v.TotalRx != 0 || !v.PeriodStart.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)) {
 		t.Fatalf("view of an unknown node: %+v", v)
 	}
 	if _, ok := b.Get(2); ok {
@@ -647,12 +662,12 @@ func TestSetResetDayMovesTheNextBoundaryAndViewCoversUnknownNodes(t *testing.T) 
 func TestForgetDropsTheEntry(t *testing.T) {
 	b, _ := newBook(t, newMem())
 	b.Account(1, counters("b1", 0, 0), nil)
-	b.SetResetDay(1, 9)
+	b.SetSchedule(1, store.TrafficSchedule{Day: 9})
 	b.Forget(1)
 	if _, ok := b.Get(1); ok {
 		t.Fatal("entry survived Forget")
 	}
-	if b.View(1).ResetDay != store.DefaultTrafficResetDay {
+	if b.View(1).Schedule.Day != store.DefaultTrafficResetDay {
 		t.Fatal("reset day survived Forget")
 	}
 }

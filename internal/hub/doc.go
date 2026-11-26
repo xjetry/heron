@@ -9,8 +9,9 @@
 //	nodeops.Service.mu（节点编辑锁）
 //	  → alert.Engine.writeMu（UpdateScope）→ probe.Registry.writeMu（UpdateScope 的 mutate 里的 UpdateNode、
 //	    BatchUpdateNodeTags）→ probe.Registry.mu
-//	  → auth.Auth.mutMu（DeleteNode）
-//	  → traffic.Book.writeMu → traffic.Book.mu（Commit）；traffic.Book.mu（SetResetDay）
+//	  → auth.Auth.mutMu（DeleteNode、CreateNode）→ probe.Registry.writeMu → probe.Registry.mu（建节点经
+//	    auth.NodeCreator 落库并发布）
+//	  → traffic.Book.writeMu → traffic.Book.mu（Commit）；traffic.Book.mu（SetSchedule）
 //	  → ingest.Service.mu（SetAddressPins）
 //	auth.Auth.mutMu → probe.Registry.writeMu → probe.Registry.mu（建节点经 auth.NodeCreator 落库并发布）
 //	alert.Engine.writeMu → traffic.Book.mu（流量评估读 Committed）；→ alert.Queue（flush 时 Enqueue，不阻塞）

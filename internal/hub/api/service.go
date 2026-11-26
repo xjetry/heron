@@ -83,8 +83,8 @@ type Config struct {
 	// HubVersion 原样经 GetSnapshotResponse.hub_version 下发。空串（装配时没传）与 dev 一样
 	// 被面板当作非正式版本：给出 latest 安装命令、不标落后节点。
 	HubVersion string
-	// Location 是 hub 的 --timezone，days_left 按它的日历日算，GetSettings.timezone 下发它的名字；New 要求非 nil，
-	// 且与 Deps.Traffic 的时区是同一个对象。
+	// Location 是 hub 的 --timezone，GetSettings.timezone 下发它的名字，维护静默按它判定；节点没设计费时区时 days_left
+	// 也按它的日历日算（alert.NodeToday）。New 要求非 nil，且与 Deps.Traffic 的 hub 时区是同一个对象。
 	Location *time.Location
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
@@ -217,10 +217,10 @@ func New(cfg Config, deps Deps) *Service {
 	if deps.Log == nil {
 		panic("api.Deps.Log must be set")
 	}
-	// days_left、静默窗口与 GetSettings.timezone 读 cfg.Location，GetTraffic.timezone 与周期边界读账本的时区；面板把
-	// 这几个值放在同一张日历上，两者必须是 serve 装配的同一个 *time.Location，否则周期与日界按不同的区各算各的。
-	if deps.Traffic.Zone() != cfg.Location {
-		panic("api.Config.Location must be the traffic book's zone")
+	// 没设计费时区的节点，days_left 回落到 cfg.Location、周期边界回落到账本的 hub 时区（traffic.BillingZone）；同一节点
+	// 的到期日界与周期必须按同一个区算，所以两者必须是 serve 装配的同一个 *time.Location。
+	if deps.Traffic.HubZone() != cfg.Location {
+		panic("api.Config.Location must be the traffic book's hub zone")
 	}
 	return &Service{
 		cfg: cfg, store: deps.Store, auth: deps.Auth, live: deps.Live, nodes: deps.Nodes, traffic: deps.Traffic, probes: deps.Probes,
@@ -233,9 +233,6 @@ func New(cfg Config, deps Deps) *Service {
 		updateLocal: update.NewClient("hub"), updateSource: update.NewOfficialSource(),
 	}
 }
-
-// today 是 hub 时区（--timezone）的今天，days_left 以它为基准。
-func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Location) }
 
 // Handler 是 AdminService 的挂载点。三个 connect 处理器挂同一个 Service 与同一个鉴权拦截器，只差解码预算与响应压缩；
 // 请求按路径分给它们：UploadTheme 走大预算，compressed 里的过程走可压缩的那个，其余走小预算、不压缩的那个。生成的
