@@ -2,6 +2,7 @@ package alert
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -237,5 +238,25 @@ func TestSendNowDoesNotConsumeRateOrRecord(t *testing.T) {
 	stop()
 	if !ds[0].OK || calls.Load() != 3 {
 		t.Fatalf("delivery=%+v calls=%d", ds[0], calls.Load())
+	}
+}
+
+// 样例阶段只有 firing 与 recovered：CheckSamplePhase 是唯一判定，协议层与 Sample 都调用它，错误点名 transition 字段。
+func TestSamplePhaseIsFiringOrRecovered(t *testing.T) {
+	for _, phase := range []store.Transition{store.TransitionFiring, store.TransitionRecovered} {
+		must(t, CheckSamplePhase(phase))
+	}
+	err := CheckSamplePhase("pending")
+	var field FieldError
+	if !errors.As(err, &field) || field.Path != "transition" || field.Detail() != `must be one of firing, recovered; got "pending"` {
+		t.Fatalf("err = %v", err)
+	}
+	f := newFixture(t)
+	node, err := f.st.GetNode(t.Context(), f.ids[0])
+	must(t, err)
+	r := offline()
+	r.ChannelIDs = []int64{queueChannel(t, f, "http://127.0.0.1:1").ID}
+	if _, err := f.e.Sample(t.Context(), r, node, "pending"); !errors.As(err, &field) || field.Path != "transition" {
+		t.Fatalf("Sample with phase pending: err = %v", err)
 	}
 }

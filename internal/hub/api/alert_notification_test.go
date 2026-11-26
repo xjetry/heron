@@ -146,7 +146,7 @@ func TestAlertNotificationValidation(t *testing.T) {
 		{"no_channels", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule.ChannelIds = nil }, connect.CodeInvalidArgument, "rule.channel_ids must name between 1 and 16 saved notify channels"},
 		{"unsaved_channel", func(r *heronv1.PreviewAlertNotificationRequest) { r.Rule.ChannelIds = []int64{c.Id, 99} }, connect.CodeNotFound, "rule.channel_ids: notify channel 99 does not exist"},
 		{"node", func(r *heronv1.PreviewAlertNotificationRequest) { r.NodeId = 99 }, connect.CodeNotFound, "node 99 does not exist"},
-		{"transition", func(r *heronv1.PreviewAlertNotificationRequest) { r.Transition = "pending" }, connect.CodeInvalidArgument, `transition must be one of firing, recovered; got "pending"`},
+		{"transition", func(r *heronv1.PreviewAlertNotificationRequest) { r.Transition = "pending" }, connect.CodeInvalidArgument, `invalid_argument: transition must be one of firing, recovered; got "pending"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := &heronv1.PreviewAlertNotificationRequest{Rule: offlineDraft(c.Id), NodeId: node, Transition: "firing"}

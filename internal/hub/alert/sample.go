@@ -19,7 +19,16 @@ type Sample struct {
 	Channels []store.NotifyChannel
 }
 
-// Sample 给出规则 r 对节点 n 在 phase（firing 或 recovered）阶段会发出的消息。
+// CheckSamplePhase 是样例阶段的唯一判定：只有 firing 与 recovered 两个阶段有消息可发。错误是路径为 transition 的
+// FieldError；协议层在解析规则与查节点之前调用它，Sample 自己也调用，不另写一份比较。
+func CheckSamplePhase(phase store.Transition) error {
+	if phase != store.TransitionFiring && phase != store.TransitionRecovered {
+		return oneOf("transition", string(phase), string(store.TransitionFiring), string(store.TransitionRecovered))
+	}
+	return nil
+}
+
+// Sample 给出规则 r 对节点 n 在 phase（firing 或 recovered，见 CheckSamplePhase）阶段会发出的消息。
 //
 // 消息与真实投递同形：摘要由各种类评估用的同一个文案函数写出，观测由规则自己的阈值、提前天数与节点的配置推出（见
 // sampleEvent），消息由 eventMessage 组装——与 Queue.message 给单事件批次的同一个函数。r 先过 CheckRule，与保存同一套
@@ -29,8 +38,8 @@ type Sample struct {
 // 临时给出的地址——出站目标只来自保存时经过 CheckChannel 的配置。重复的 id 合并（与 store 保存规则时同一口径），
 // 合并后须有 1 到 SampleChannelLimit 个。
 func (e *Engine) Sample(ctx context.Context, r store.AlertRule, n store.Node, phase store.Transition) (Sample, error) {
-	if phase != store.TransitionFiring && phase != store.TransitionRecovered {
-		return Sample{}, fmt.Errorf("sample phase must be firing or recovered, got %q", phase)
+	if err := CheckSamplePhase(phase); err != nil {
+		return Sample{}, err
 	}
 	if err := CheckRule(r); err != nil {
 		return Sample{}, err

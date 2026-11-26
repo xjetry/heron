@@ -154,12 +154,14 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv
 	return connect.NewResponse(&heronv1.SaveAlertRuleResponse{Rule: ruleProto(saved)}), nil
 }
 
-// alertSample 是预览与试投递共同的输入处理：规则经 ruleFromProto，节点须存在，阶段只有 firing 与 recovered，
-// 样例由 alert.Engine.Sample 给出（渠道只能是已保存的，见那里）。
+// alertSample 是预览与试投递共同的输入处理：阶段经 alert.CheckSamplePhase，规则经 ruleFromProto，节点须存在，
+// 样例由 alert.Engine.Sample 给出（渠道只能是已保存的，见那里）。阶段是请求的顶层字段，不在 rule 之下，所以先单独
+// 判定并按顶层路径翻译，不交给 Sample 的错误走 operationError（那会把它挂到 rule. 前缀下）。
 func (s *Service) alertSample(ctx context.Context, rule *heronv1.AlertRule, nodeID int64, transition string) (alert.Sample, error) {
 	phase := store.Transition(transition)
-	if phase != store.TransitionFiring && phase != store.TransitionRecovered {
-		return alert.Sample{}, invalid("transition must be one of %s, %s; got %q", store.TransitionFiring, store.TransitionRecovered, transition)
+	var field alert.FieldError
+	if err := alert.CheckSamplePhase(phase); errors.As(err, &field) {
+		return alert.Sample{}, invalid("%s %s", field.Path, field.Detail())
 	}
 	r, err := ruleFromProto(rule)
 	if err != nil {
