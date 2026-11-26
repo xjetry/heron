@@ -21,9 +21,9 @@ func trafficMinuteRows(nodeID int64, from, to int64, rx, tx float64) []metric.Ro
 	return rows
 }
 
-// 三小时的分钟行，上卷到 1h 水位 +2h、5m 水位 +2h15m 后，像 Prune 那样删掉各级已冻结的细行：首个小时只剩 1h 行，
-// 第二个小时只剩 1h 行，第三个小时前 15 分钟只剩 5m 行、之后还有 1m 行。整小时的中段读小时级；端点所在的那一小时逐级
-// 细分到仍完整的一级：第三个小时里 5m 完整、2:15 起 1m 也完整，端点 2:17 逐分钟分开；首个小时的细级都已清理，整块归到
+// 三小时的分钟行，上卷到 1h 水位 +2h、5m 水位 +2h55m 后，像 Prune 那样删掉各级已冻结的细行：首个小时只剩 1h 行，
+// 第二个小时只剩 1h 行，第三个小时前 55 分钟只剩 5m 行、之后还有 1m 行。整小时的中段读小时级；端点所在的那一小时逐级
+// 细分到仍完整的一级：第三个小时里 5m 完整、2:55 起 1m 也完整，端点 2:57 逐分钟分开；首个小时的细级都已清理，整块归到
 // 它起始的一侧。
 func TestNetBytesBetweenSumsAcrossLevels(t *testing.T) {
 	t.Parallel()
@@ -31,17 +31,17 @@ func TestNetBytesBetweenSumsAcrossLevels(t *testing.T) {
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
 	id, _, _ := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	clk.SetWall(time.Unix(base+3*3600, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: trafficMinuteRows(id, base, base+3*3600, 10, 1)}); err != nil {
 		t.Fatal(err)
 	}
-	clk.SetWall(time.Unix(base+2*3600+20*60, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := watermark(t, s, "1h"); got != base+2*3600 {
 		t.Fatalf("1h watermark = %d, want %d", got, base+2*3600)
 	}
-	frozen := base + 2*3600 + 15*60
+	frozen := base + 2*3600 + 55*60
 	if got := watermark(t, s, "5m"); got != frozen {
 		t.Fatalf("5m watermark = %d, want %d", got, frozen)
 	}
@@ -60,10 +60,10 @@ func TestNetBytesBetweenSumsAcrossLevels(t *testing.T) {
 		from, to int64
 		rx, tx   int64
 	}{
-		// 首个小时细级已清理、起点 0:30 在它中间：整块归到它起始的一侧（区间之外）；中段一小时；末端 2:00–2:17 逐分钟。
-		{"first hour pruned, last hour by minute", 30 * 60, 2*3600 + 17*60, 600 + 170, 60 + 17},
-		{"last hour on a 5-minute boundary", 3600, 2*3600 + 15*60, 600 + 150, 60 + 15},
-		{"rest of the last hour", 2*3600 + 17*60, 3 * 3600, 430, 43},
+		// 首个小时细级已清理、起点 0:30 在它中间：整块归到它起始的一侧（区间之外）；中段一小时；末端 2:00–2:57（前 55 分钟 5m、后 2 分钟 1m）。
+		{"first hour pruned, last hour by minute", 30 * 60, 2*3600 + 57*60, 600 + 570, 60 + 57},
+		{"last hour on a 5-minute boundary", 3600, 2*3600 + 55*60, 600 + 550, 60 + 55},
+		{"rest of the last hour", 2*3600 + 57*60, 3 * 3600, 30, 3},
 		// 首个小时只剩小时行：起点在它中间的区间不计入它，起点在整点上的区间计入整小时。
 		{"inside a pruned hour", 20 * 60, 40 * 60, 0, 0},
 		{"from the start of a pruned hour", 0, 40 * 60, 600, 60},
@@ -78,12 +78,12 @@ func TestNetBytesBetweenSumsAcrossLevels(t *testing.T) {
 			t.Errorf("%s [%d, %d) = %d / %d, want %d / %d", c.name, c.from, c.to, rx, tx, c.rx, c.tx)
 		}
 	}
-	// 相邻两段在同一个快照里互补：端点 2:17 两侧逐分钟分开，相加等于整段，不重不漏。
-	left, _, _ := s.NetBytesBetween(ctx, id, at(3600), at(2*3600+17*60))
-	right, _, _ := s.NetBytesBetween(ctx, id, at(2*3600+17*60), at(3*3600))
+	// 相邻两段在同一个快照里互补：端点 2:57 两侧逐分钟分开，相加等于整段，不重不漏。
+	left, _, _ := s.NetBytesBetween(ctx, id, at(3600), at(2*3600+57*60))
+	right, _, _ := s.NetBytesBetween(ctx, id, at(2*3600+57*60), at(3*3600))
 	whole, _, _ := s.NetBytesBetween(ctx, id, at(3600), at(3*3600))
 	if left+right != whole {
-		t.Errorf("split at 2:17: %d + %d != %d", left, right, whole)
+		t.Errorf("split at 2:57: %d + %d != %d", left, right, whole)
 	}
 }
 
@@ -121,10 +121,10 @@ func TestNetBytesBetweenSplitsNonHourBoundariesByMinute(t *testing.T) {
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
 	id, _, _ := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	clk.SetWall(time.Unix(base+6*3600+20*60, 0))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: variedMinuteRows(id, base, base+6*3600)}); err != nil {
 		t.Fatal(err)
 	}
-	clk.SetWall(time.Unix(base+6*3600+20*60, 0))
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}

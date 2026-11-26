@@ -67,7 +67,7 @@ const ddlNode = `CREATE TABLE node (
   -- 周期规则的后两项（重置日是 traffic_reset_day）：重置时刻是计费时区里当地零点起的分钟数（0–1439，默认 00:00）；
   -- 计费时区是 IANA 名，空串是缺省——沿用 hub 的 --timezone，不是放宽（读侧 traffic.BillingZone 解析成 hub 时区）。
   -- 流量周期边界与到期日的日界都按计费时区算。取值由写入口（insertNode、UpdateNodeTasks）与快照恢复预检
-  -- （validateSnapshotNodes）裁决，库里不设 CHECK。列序与迁移 55 的 ADD COLUMN 结果一致。
+  -- （validateSnapshotNodes）裁决，库里不设 CHECK。列序与迁移 57 的 ADD COLUMN 结果一致。
   traffic_reset_minute INTEGER NOT NULL DEFAULT 0,
   billing_timezone TEXT NOT NULL DEFAULT ''
 )`
@@ -210,7 +210,7 @@ func schemaStatements() []string {
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
 		ddlSilenceRule, ddlSilenceRuleByRule,
-		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlOperationByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
 		ddlHubCoordination, seedHubCoordination, ddlCleanupJob, ddlNodeListRevision, seedNodeListRevision)
 	// 触发器挂在 node、node_facts、node_tag、tag、api_token、api_token_node 上，放在全部建表之后。
 	return append(out, ddlNodeListRevisionTriggers...)
@@ -730,21 +730,38 @@ const ddlAPITokenNode = `CREATE TABLE api_token_node (
   PRIMARY KEY (token_id, node_id)
 ) WITHOUT ROWID`
 
+// operation 是操作记录（change.go）：类型化变更的回执、会话直调的写与 hub 自身对用户可见配置的修改，同一张表、同一个
+// 查询面。(owner_key, request_id) 是幂等键：owner_key 是 API token 的身份（token_hash 的十六进制）或固定的
+// 'session'、'system'；request_id 在 ExecuteChange 是调用方给的，其余由 newRecordID 生成、与调用方的键不相交。
 const ddlOperation = `CREATE TABLE operation (
   owner_key TEXT NOT NULL,
   owner_id INTEGER NOT NULL,
   request_id TEXT NOT NULL,
+  -- 只有 ExecuteChange 的回执非空：幂等比对用的请求摘要。
   request_hash TEXT NOT NULL,
   action TEXT NOT NULL,
   resource_id INTEGER NOT NULL,
   before_json TEXT NOT NULL,
   after_json TEXT NOT NULL,
   committed_at INTEGER NOT NULL,
+  -- 主体种类（PrincipalKind）。没有默认值：每个写者都显式给出，漏写即违反 NOT NULL，不会被默认成某个主体。
+  principal TEXT NOT NULL CHECK (principal IN ('session', 'api_token', 'system')),
+  -- 会话主体的会话 id（ListSessions 的 id）；其余主体与迁移 56 之前的会话回执为空串。
+  session_id TEXT NOT NULL,
+  -- 请求来源（auth.SourceText）；系统主体与迁移 56 之前的回执为空串。
+  source TEXT NOT NULL,
+  -- AdminService 方法名；系统主体为空串，迁移 56 之前的回执都来自 ExecuteChange。
+  method TEXT NOT NULL,
+  -- 以文本标识的对象或多个对象的 JSON 数组；其余为空串。
+  resource_key TEXT NOT NULL,
   PRIMARY KEY (owner_key, request_id)
 ) WITHOUT ROWID`
 
 const ddlOperationByOwner = `CREATE INDEX operation_by_owner ON operation(owner_id,committed_at DESC,request_id)`
 const ddlOperationDetailsByTime = `CREATE INDEX operation_details_by_time ON operation(committed_at) WHERE before_json!='' OR after_json!=''`
+
+// 会话的 ListOperations 不按 owner 过滤，按提交时刻倒序读全部记录。
+const ddlOperationByTime = `CREATE INDEX operation_by_time ON operation(committed_at DESC,request_id)`
 
 // setting 是全站设置的键值表（公开页外观等）。值可达 128 KiB（logo 的 data: URL），不用 WITHOUT ROWID：
 // 那种表把整行放进主键 B 树，SQLite 文档建议其行不超过页大小的约 1/20。

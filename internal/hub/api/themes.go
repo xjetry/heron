@@ -158,6 +158,13 @@ func (s *Service) ListThemeReleases(ctx context.Context, req *connect.Request[he
 	return connect.NewResponse(out), nil
 }
 
+// themeReleaseClient 是读公开 GitHub 发行版的那一半出站：生产是 theme.GitHubClient（目的地址与大小都有界），用例换成
+// 不出网的替身。
+type themeReleaseClient interface {
+	Releases(ctx context.Context, repositoryOrReleaseURL string) ([]theme.GitHubRelease, error)
+	Download(ctx context.Context, repository, tag string, assetID int64) ([]byte, theme.GitHubSource, error)
+}
+
 func (s *Service) InstallThemeRelease(ctx context.Context, req *connect.Request[heronv1.InstallThemeReleaseRequest]) (*connect.Response[heronv1.InstallThemeReleaseResponse], error) {
 	if err := s.acquireThemeInstall(); err != nil {
 		return nil, err

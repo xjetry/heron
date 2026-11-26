@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -109,7 +110,7 @@ func withSource(p *ProcFS, dev string, names ...string) *ProcFS {
 }
 
 // 限额夹具：quota 2 核、cpuset 8 核、宿主 16 核，有效核数取较小者 2。
-// /proc/stat 带 steal 列（8 个计数器）：真根路径就会把 steal/iowait 报出来。
+// /proc/stat 带 steal 列（8 个计数器）：真根路径就会把 steal/iowait/softirq 报出来。
 func limitedFS() fstest.MapFS {
 	return fstest.MapFS{
 		"proc/stat":                           {Data: statLines("cpu  100 0 50 800 20 0 10 5 0 0\n", 16)},
@@ -120,7 +121,7 @@ func limitedFS() fstest.MapFS {
 	}
 }
 
-// 有限额时 cpu_pct 是 Δusage_usec / (有效核数 × Δt)，steal/iowait 不设置，Facts 报有效核数。
+// 有限额时 cpu_pct 是 Δusage_usec / (有效核数 × Δt)，steal/iowait/softirq 不设置，Facts 报有效核数。
 func TestCgroupLimitedCPUFollowsUsageNotProcStat(t *testing.T) {
 	fsys := limitedFS()
 	clk := clock.NewFake(time.Unix(0, 0))
@@ -136,8 +137,8 @@ func TestCgroupLimitedCPUFollowsUsageNotProcStat(t *testing.T) {
 	if m.CpuPct == nil || m.GetCpuPct() != 50 {
 		t.Fatalf("cpu_pct set %v = %v, want Δusage 2000000 / (2 cores × 2000000 µs) = 50", m.CpuPct != nil, m.GetCpuPct())
 	}
-	if m.CpuStealPct != nil || m.CpuIowaitPct != nil {
-		t.Fatalf("steal/iowait are host-wide counters, must be unset under a limit: %v/%v", m.GetCpuStealPct(), m.GetCpuIowaitPct())
+	if m.CpuStealPct != nil || m.CpuIowaitPct != nil || m.CpuSoftirqPct != nil {
+		t.Fatalf("steal/iowait/softirq are host-wide counters, must be unset under a limit: %v/%v/%v", m.GetCpuStealPct(), m.GetCpuIowaitPct(), m.GetCpuSoftirqPct())
 	}
 	if f := c.Facts(c.Identify()); f.GetCpuCores() != 2 {
 		t.Fatalf("Facts.cpu_cores = %d, want the effective 2 of min(quota 2, cpuset 8)", f.GetCpuCores())
@@ -204,8 +205,8 @@ func TestEnvUnlimitedStillUsesCpuStat(t *testing.T) {
 		if m.CpuPct == nil || m.GetCpuPct() != 25 {
 			t.Fatalf("%s: cpu_pct = %v, want cpu.stat diff 25 over 16 cores", name, m.GetCpuPct())
 		}
-		if m.CpuStealPct != nil || m.CpuIowaitPct != nil {
-			t.Fatalf("%s: steal/iowait must stay unset in the environment scope", name)
+		if m.CpuStealPct != nil || m.CpuIowaitPct != nil || m.CpuSoftirqPct != nil {
+			t.Fatalf("%s: steal/iowait/softirq must stay unset in the environment scope", name)
 		}
 		if f := c.Facts(c.Identify()); f.GetCpuCores() != 16 {
 			t.Fatalf("%s: Facts.cpu_cores = %d, want 16 from cpuinfo/cpuset", name, f.GetCpuCores())
@@ -435,4 +436,54 @@ func TestParseCgroupFiles(t *testing.T) {
 	if _, err := parseCPUStatUsage("user_usec 1\n"); err == nil {
 		t.Fatal("cpu.stat without usage_usec must fail")
 	}
+}
+
+// 两次 /proc/stat 夹具经 Collector 走一遍：softirq 与 cpu_pct 出自同一次差分；7 计数器的行没有 steal 只缺 steal，
+// 5 计数器的行连 softirq 也缺，cpu_pct 与 iowait 照报。
+func TestCollectorReportsSoftirqFromProcStat(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		softirq, steal      *float64
+	}{
+		// 每例 Δtotal 都是 100、Δidle + Δiowait = 45 + 5：cpu_pct 50、iowait 5。
+		// 八个计数：user 25、system 10、irq 3、softirq 10、steal 2。
+		{"eight counters", "cpu  100 0 50 800 20 6 30 4 0 0\n", "cpu  125 0 60 845 25 9 40 6 0 0\n", ptr(10.0), ptr(2.0)},
+		// 七个计数：user 27、system 10、irq 3、softirq 10。
+		{"seven counters", "cpu  100 0 50 800 20 6 30\n", "cpu  127 0 60 845 25 9 40\n", ptr(10.0), nil},
+		// 五个计数：user 40、system 10。
+		{"five counters", "cpu  100 0 50 800 20\n", "cpu  140 0 60 845 25\n", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fsys := limitedFS()
+			delete(fsys, "sys/fs/cgroup/cpu.max")
+			delete(fsys, "sys/fs/cgroup/cpuset.cpus.effective")
+			delete(fsys, "sys/fs/cgroup/cpu.stat")
+			fsys["proc/stat"] = &fstest.MapFile{Data: statLines(tc.first, 16)}
+			clk := clock.NewFake(time.Unix(0, 0))
+			c := &Collector{Host: hostProc(fsys, noDisk), Clock: clk}
+			if m, _ := c.Metrics(c.Identify()); m.CpuSoftirqPct != nil {
+				t.Fatal("first sample has nothing to diff against; softirq must be absent")
+			}
+			fsys["proc/stat"] = &fstest.MapFile{Data: statLines(tc.second, 16)}
+			clk.Advance(2 * time.Second)
+			m, _ := c.Metrics(c.Identify())
+			if m.CpuPct == nil || m.GetCpuPct() != 50 || m.CpuIowaitPct == nil || m.GetCpuIowaitPct() != 5 {
+				t.Fatalf("cpu_pct/iowait = %v/%v, want 50/5 from the same diff", m.GetCpuPct(), m.GetCpuIowaitPct())
+			}
+			if !samePtr(m.CpuSoftirqPct, tc.softirq) || !samePtr(m.CpuStealPct, tc.steal) {
+				t.Fatalf("softirq/steal = %v/%v, want %v/%v", fmtFloat(m.CpuSoftirqPct), fmtFloat(m.CpuStealPct), fmtFloat(tc.softirq), fmtFloat(tc.steal))
+			}
+		})
+	}
+}
+
+func ptr(v float64) *float64 { return &v }
+
+func samePtr(a, b *float64) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+
+func fmtFloat(v *float64) string {
+	if v == nil {
+		return "absent"
+	}
+	return strconv.FormatFloat(*v, 'g', -1, 64)
 }

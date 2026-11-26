@@ -90,6 +90,8 @@ var Columns = []Column{
 	// （ingest.normalizeDiskMax，不带逐盘列表时退回根盘），这里只读字段、不自己再推一遍。disk_used 与 disk_used_pct
 	// 仍只是根盘：两种口径并存，根盘曲线不因哪块盘最满而换主语。
 	{"disk_max_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetDiskMaxUsedPct(), m.DiskMaxUsedPct != nil }},
+	// softirq 与 steal、iowait 同一次差分、同一口径，同样保留峰值：网络突发造成的软中断尖峰会被分钟均值抹平。
+	{"cpu_softirq_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuSoftirqPct(), m.CpuSoftirqPct != nil }},
 }
 
 // UsedPercent 是容量类读数的使用率，百分比。同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，
@@ -196,6 +198,19 @@ type Row struct {
 	CoverageStart int64
 	// Coverage 是读取历史桶得到的三个独立计数，nil 表示该列未知。
 	Coverage Coverage
+}
+
+// LatestMinute 是墙钟读数为 now 时，分钟桶起点（Row.TS、ProbeRow.TS）最晚可能取到的合法值：当前分钟的起点再加一个
+// 桶长。分钟桶按收到上报时的墙钟归属（live 的 Observe 与 AddProbe 都取不晚于读钟时刻的分钟），正常运行时最晚的桶就是
+// 当前仍开着的那一分钟（退出时 Drain 连它一起刷出）。多留的一个桶长给不足一分钟的向后校时：NTP 在分钟边界附近把墙钟
+// 往回拨几秒时，刚打点的桶比校时后的当前分钟晚一分钟，那仍是真实数据。起点晚于它的桶只可能是墙钟曾超前一分钟以上时
+// 打的点——它标的那一分钟还没到，数据其实属于更早的真实时刻。
+//
+// live 的刷出与 store 的写入口、时钟超前检查共用这一个上界：live 不把这样的桶一直留到它标的时刻到来、再与那一分钟的
+// 真实数据相加，store 拒绝写入这样的行、删除已经写进库的这种行。三处取同一个值，写入口接受的行才不会被检查删掉。
+func LatestMinute(now time.Time) int64 {
+	s := now.Unix()
+	return s - s%60 + 60
 }
 
 type Coverage struct {

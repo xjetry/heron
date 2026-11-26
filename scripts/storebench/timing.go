@@ -24,7 +24,7 @@ import (
 )
 
 // 面板的历史查询参数（web/src/components/History.tsx）：maxPoints 恒为 HISTORY_MAX_POINTS = 1000；窗口右端
-// to = (⌊now/60⌋ + 1) × 60（useTimeWindow），左端 from = to − 跨度；api 层按 store.ChooseLevel(from, to, maxPoints) 选级与步长
+// to = (⌊now/60⌋ + 1) × 60（useTimeWindow），左端 from = to − 跨度；api 层按 Store.ChooseLevel(from, to, maxPoints) 选级与步长
 // （internal/hub/api/history.go）。面板的跨度是 1h / 6h / 24h / 7d / 30d，这里取其中 6h、7d、30d 三档；365d 不是面板的档位，
 // 是 API 允许的最长窗口（400 天）以内的一年历史，同用 maxPoints 1000，使四档可比。
 const panelMaxPoints = 1000
@@ -256,14 +256,15 @@ func (b *bench) open(ctx context.Context, cond string, now time.Time, hooks bool
 		return nil, err
 	}
 	tracker.reset(hooks)
-	st, err := store.Open(path, clock.NewFake(now), errorLogger(), store.RequireCurrentSchema)
+	clk := clock.NewFake(now)
+	st, err := store.Open(path, clk, errorLogger(), store.RequireCurrentSchema)
 	if err != nil {
 		os.Remove(path)
 		return nil, err
 	}
 	s := &session{path: path, st: st}
 	if cond == "writes" {
-		s.w = startWriter(ctx, st, b.m, b.cfg.writePeriod)
+		s.w = startWriter(ctx, st, clk, b.m, b.cfg.writePeriod)
 		// 等第一批写完再开始被测操作：此后写入按周期持续进行，操作开始时写入已在稳态。
 		if err := s.w.waitFirst(ctx); err != nil {
 			s.close()
@@ -469,7 +470,7 @@ func (b *bench) query(ctx context.Context, cond string) error {
 	for rep := range b.cfg.reps {
 		for _, w := range queryWindows {
 			from := to - w.Span
-			lv, step := store.ChooseLevel(from, to, panelMaxPoints)
+			lv, step := s.st.ChooseLevel(from, to, panelMaxPoints)
 			for _, fam := range families {
 				key := fam + "/" + w.Name
 				r := results[key]
@@ -531,7 +532,7 @@ func (b *bench) prune(ctx context.Context, cond string, hooks bool) error {
 		var deleted int64
 		sample, w, err := s.measure(ctx, func() error {
 			var err error
-			deleted, err = s.st.Prune(ctx, store.DefaultRetention)
+			deleted, err = s.st.Prune(ctx)
 			return err
 		})
 		if err == nil {
@@ -589,10 +590,17 @@ func (r *opResult) finish(writes []batchSample) {
 }
 
 // batchWriter 以固定周期经 WriteMinuteBatch 写分钟批：每节点一行指标、每 (节点, 任务) 一行探测，行内容来自 gen 的
-// 取值模型。ts 从生成时最新 1m 行之后的分钟起逐批 +60，所以每批都是新行（与生产刷出新分钟相同），且远在水位之后、
-// 不被拒绝；被拒行数照样计数并报告。
+// 取值模型。ts 从生成时刻所在的分钟起逐批 +60：首批与生成的最后一分钟同键、加法合并进去，其后每批都是新行（与生产
+// 刷出新分钟相同），且远在水位之后。
+//
+// 写入口拒绝起点晚于当前分钟加一个桶长的行（metric.LatestMinute），而写批的周期远短于一分钟，所以每批之前把会话
+// 时钟推进到这一分钟闭合后半秒——生产刷出它的时刻（ingest 的 nextFlushAt）；会话时钟已经更晚（prune 拨到生成时刻
+// 之后一天）就不动。被测操作在开始时读一次时钟。上卷会话从 End + RollupLag 起，第 k 批把时钟推到 End + 240 + 60k 秒
+// 再加半秒，k 不超过 5 时 ceiling 对齐到 5 分钟都是 End；被测上卷在第 2 或第 3 批开始时开始（nextBatch），推进的仍是
+// 那一个 5m 桶与一个 1h 桶（checkRollup 核对）。被拒行数照样计数并报告。
 type batchWriter struct {
 	st     *store.Store
+	clk    *clock.Fake
 	m      genManifest
 	period time.Duration
 	r      *rand.Rand
@@ -617,9 +625,9 @@ type batchSample struct {
 	Err      string
 }
 
-func startWriter(ctx context.Context, st *store.Store, m genManifest, period time.Duration) *batchWriter {
+func startWriter(ctx context.Context, st *store.Store, clk *clock.Fake, m genManifest, period time.Duration) *batchWriter {
 	ctx, cancel := context.WithCancel(ctx)
-	w := &batchWriter{st: st, m: m, period: period, r: rand.New(rand.NewPCG(m.Config.Seed, 3)), ts: m.Now - m.Now%60,
+	w := &batchWriter{st: st, clk: clk, m: m, period: period, r: rand.New(rand.NewPCG(m.Config.Seed, 3)), ts: m.Now - m.Now%60,
 		first: make(chan struct{}), starting: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{}), started: time.Now()}
 	prof := rand.New(rand.NewPCG(m.Config.Seed, 1))
 	for range m.NodeIDs {
@@ -659,6 +667,9 @@ func (w *batchWriter) loop(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		batch := w.batch()
+		if flushed := time.Unix(w.ts+60, 500_000_000); flushed.After(w.clk.Now()) {
+			w.clk.Advance(flushed.Sub(w.clk.Now()))
+		}
 		select {
 		case <-w.starting:
 		default:

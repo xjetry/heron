@@ -78,7 +78,7 @@ func nullableUnix(t time.Time) any {
 func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, now time.Time, limit int, grant *TokenGrant, expiresAt time.Time) (APIToken, error) {
 	var out APIToken
 	g := grantOrDefault(grant)
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionCreateAPIToken}, func(tx *sql.Tx) error {
 		if err := checkShortName(name); err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, grant *TokenGrant, expiresAt time.Time, expectedVersion string) (APIToken, error) {
 	g := grantOrDefault(grant)
 	var out APIToken
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionUpdateAPIToken, ResourceID: id}, func(tx *sql.Tx) error {
 		if err := checkShortName(name); err != nil {
 			return err
 		}
@@ -262,7 +262,7 @@ func (s *Store) APITokenByHash(ctx context.Context, hash [32]byte) (APIToken, To
 
 func (s *Store) DeleteAPIToken(ctx context.Context, id int64) (bool, error) {
 	var found bool
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionDeleteAPIToken, ResourceID: id}, func(tx *sql.Tx) error {
 		for _, q := range []string{"DELETE FROM api_token_node WHERE token_id = ?", "DELETE FROM register_window WHERE owner_id = ?"} {
 			if _, err := tx.Exec(q, id); err != nil {
 				return err

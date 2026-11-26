@@ -140,9 +140,9 @@ func withTelegramBase(base string) harnessOption {
 }
 
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
-// retention 与 serve 传给 api.Config 的是同一个字段：接错保留期不会影响这个夹具本身的任何行为（它不跑
-// RunMaintenance），只会在存储健康的判定与 GetStorageStatsResponse.retention_s 上露出来，所以留给调用方传入，
-// 默认测试用 store.DefaultRetention，需要钉住"判定用的是配置保留期"的用例可以传入不同的值。
+// retention 与 serve 一样经 store.WithRetention 交给 Store：这个夹具不跑 RunMaintenance，保留期只在存储健康的判定、
+// GetStorageStatsResponse.retention_s 与历史查询的选级上露出来，所以留给调用方传入，默认测试用 store.DefaultRetention，
+// 需要钉住"判定用的是配置保留期"的用例可以传入不同的值。
 func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention store.Retention, opts ...harnessOption) *harness {
 	t.Helper()
 	deps := harnessDeps{authLog: slog.Default(), log: slog.Default(), config: func(*Config) {}}
@@ -151,7 +151,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	dbPath := filepath.Join(t.TempDir(), "t.db")
-	st, err := store.Open(dbPath, clk, slog.Default(), store.MigrateSchema)
+	st, err := store.Open(dbPath, clk, slog.Default(), store.MigrateSchema, store.WithRetention(retention))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 		t.Fatal(err)
 	}
 	hb := &stubHeartbeat{}
-	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: hb, TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
+	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: hb, TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
 	ops := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: in, Log: slog.Default()})
 	svc := New(cfg, Deps{Store: st, Auth: a, Live: l, Nodes: ops, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: deps.log})
@@ -769,6 +769,7 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 		b.Add(&heronv1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
 		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, CoverageStart: base, Bucket: b})
 	}
+	h.clk.SetWall(time.Unix(base+600, 0))
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
 	}
@@ -840,18 +841,20 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 		}
 	}
 
+	// 贴着 int64 上限的窗口照常受理。那里不会有数据：写入口拒绝晚于当前分钟的行；窗口对齐在上限处不溢出、能读出
+	// 那里的行，由 store 的 TestQueryMetricsReadsRowAtInt64Limit 用直接写表的行钉住。
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(7)})
 	ts := int64(math.MaxInt64 - math.MaxInt64%60)
-	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, CoverageStart: ts, Bucket: b}}}); err != nil {
-		t.Fatal(err)
+	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, CoverageStart: ts, Bucket: b}}}); err != nil || n != 1 {
+		t.Fatalf("near-limit row: rejected=%d err=%v, want it rejected as later than the current minute", n, err)
 	}
 	out, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: math.MaxInt64 - 60, To: math.MaxInt64}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Msg.Ts) != 1 || out.Msg.Ts[0] != ts || out.Msg.Series[0].Samples[0].GetMean() != 7 {
-		t.Fatalf("near-limit query lost its row: %v", out.Msg)
+	if len(out.Msg.Ts) != 0 {
+		t.Fatalf("near-limit query returned points for a row the write path rejected: %v", out.Msg)
 	}
 }
 
@@ -947,6 +950,8 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 		}
 	}
 	id, _ := h.createNode(t, "n")
+	// 窗口截止到现在，起点在各级保留期之内，级别只由跨度决定；过去窗口的选级见 history_past_window_test.go。
+	now := h.clk.Now().Unix()
 	for _, tc := range []struct {
 		span  int64
 		level string
@@ -954,7 +959,7 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 	}{
 		{6 * 3600, "1m", 60}, {6*3600 + 1, "5m", 300}, {7 * 86400, "5m", 900}, {7*86400 + 1, "1h", 3600},
 	} {
-		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: 0, To: tc.span}))
+		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: now - tc.span, To: now}))
 		if err != nil {
 			t.Fatal(err)
 		}

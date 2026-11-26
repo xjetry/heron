@@ -40,10 +40,12 @@ func v8Fixture(t *testing.T, dir string) string {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 		t.Fatal(err)
 	}
-	if freshVersion != 55 {
-		t.Fatalf("fixture user_version = %d, want 55; rebuild the v8 fixture for the new version", freshVersion)
+	if freshVersion != 57 {
+		t.Fatalf("fixture user_version = %d, want 57; rebuild the v8 fixture for the new version", freshVersion)
 	}
-	// 55 的两列被节点资料版本的更新触发器引用，SQLite 不许删被触发器引用的列：随 removeV46Revision 撤掉触发器之后再删。
+	// 57 的两列被节点资料版本的更新触发器引用，SQLite 不许删被触发器引用的列：随 removeV46Revision 撤掉触发器之后再删。
+	removeV56Config(t, raw)
+	removeV55Metrics(t, raw)
 	// 54 只规范化价格与币种的数据，没有结构可撤回。
 	removeV53Metrics(t, raw)
 	removeV52Config(t, raw)
@@ -53,7 +55,7 @@ func v8Fixture(t *testing.T, dir string) string {
 	removeV48Config(t, raw)
 	removeV47Config(t, raw)
 	removeV46Revision(t, raw)
-	removeV55Config(t, raw)
+	removeV57Config(t, raw)
 	removeV45Config(t, raw)
 	removeV44Config(t, raw)
 	removeV43Metrics(t, raw)

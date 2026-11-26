@@ -572,9 +572,21 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 				}
 			}
 		case 55:
-			// 与迁移 55 同源：重置时刻与计费时区两列只在配置层的 node 上；触发器不随快照（见 case 47）。
+			// 与迁移 55 同源：softirq 占比一列只在指标层，按冻结 DDL 重建后按列名搬运，旧行该列无读数。配置层无变化。
+			if layer == "metrics" {
+				if err := migrateV55Metrics(tx); err != nil {
+					return fmt.Errorf("migrate metrics snapshot to 55: %w", err)
+				}
+			}
+		case 56:
+			// 与迁移 56 同源：操作记录加五列，只在配置层。
 			if layer == "config" {
-				statements = migrationV55Config
+				statements = migrationV56Snapshot
+			}
+		case 57:
+			// 与迁移 57 同源：重置时刻与计费时区两列只在配置层的 node 上；触发器不随快照（见 case 47）。
+			if layer == "config" {
+				statements = migrationV57Config
 			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
@@ -801,6 +813,9 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		if err := validateSnapshotAPITokens(ctx, tx); err != nil {
 			return 0, err
 		}
+		if err := validateSnapshotOperations(ctx, tx); err != nil {
+			return 0, err
+		}
 		var unmatched int
 		if err := tx.QueryRowContext(ctx, `SELECT
 				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.snapshot_theme s WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
@@ -820,6 +835,24 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		return 0, fmt.Errorf("%s snapshot page_size=%d; expected page_size=%d", layer, size, pageSize)
 	}
 	return at.Int64, nil
+}
+
+// validateSnapshotOperations 核对操作记录的主体。恢复以 INSERT OR IGNORE 与目标库的记录取并集，OR IGNORE 对违反
+// principal 列 CHECK 的行同样只是跳过：不合规的记录在恢复里会静默消失，所以必须在这里拒绝整份快照。主体与幂等命名
+// 空间的对应同 recordOwner：会话与系统各用固定的 owner_key，其余是 API token 的身份。报错只点名 request_id，
+// 不带 owner_key（token 的身份是凭据哈希）。
+func validateSnapshotOperations(ctx context.Context, tx *sql.Tx) error {
+	var request, principal string
+	err := tx.QueryRowContext(ctx, `SELECT request_id, principal FROM config.operation WHERE NOT (
+		(principal = 'session' AND owner_key = 'session') OR (principal = 'system' AND owner_key = 'system') OR
+		(principal = 'api_token' AND owner_key NOT IN ('session', 'system'))) LIMIT 1`).Scan(&request, &principal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("config operation %q: principal %q is unknown or does not match its owner", request, principal)
 }
 
 func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {

@@ -124,8 +124,18 @@ func (f *family) rollupSQL(i int) string {
 // 同一事务推进水位。两族全部级别都成功后才记下 maintenance_state 的 rollup 完成时刻。levels 必须从细到粗：lowerUpto 取自刚完成的下级，
 // 按本级桶长对齐后限制上界，只消费下级已冻结的整桶。当前正常推进路径中，
 // 此上界与 ceiling 的对齐上界相同；min 显式保留两项约束，不替代处理顺序。
+//
+// 推进之前先按同一个时刻做时钟超前检查（repairClockAhead），ceiling 取自那个写事务里读的墙钟：检查保证每级水位不晚于
+// 本次的上界，rollupLevel 的 limit <= upto 分支因此只表示"没有新的整桶"，不会把超前的水位原样传给下一级当作 lowerUpto。
 func (s *Store) Rollup(ctx context.Context) error {
-	ceiling := s.clk.Now().Add(-RollupLag).Unix()
+	var ceiling int64
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		now := s.clk.Now()
+		ceiling = now.Add(-RollupLag).Unix()
+		return s.repairClockAhead(tx, now)
+	}); err != nil {
+		return fmt.Errorf("check rollup state against the wall clock: %w", err)
+	}
 	for _, f := range families {
 		lowerUpto := int64(math.MaxInt64)
 		for i := 1; i < len(levels); i++ {
@@ -142,6 +152,82 @@ func (s *Store) Rollup(ctx context.Context) error {
 		return fmt.Errorf("record rollup completion: %w", err)
 	}
 	return nil
+}
+
+// repairClockAhead 在调用方的写事务里检查两条"已持久化的时序状态不超前于墙钟"的不变式，违反即就地修复：
+//
+//   - 每族每个粗级的水位（rollup_state.upto_ts）不晚于 alignDown(now − RollupLag, 本级桶长)。Rollup 推进水位只推进到按当时
+//     墙钟算出的这个上界（rollupLevel 的 limit 不超过它），水位超过它只说明推进时的墙钟比现在快。
+//   - 1m 行的 ts 不晚于 metric.LatestMinute(now)。WriteMinuteBatch 按同一个上界拒绝更晚的行，库里更晚的行只可能是写入时
+//     墙钟比现在快打的点：它标的那一分钟还没到，留着就会在那一分钟到来后与真实数据在写入口相加（upsert 是加法合并）。
+//
+// 写入口的冻结检查与 Rollup 的推进都以水位为准，两处在用水位之前都先调用本函数：WriteMinuteBatch 在同一个事务里先查后读，
+// Rollup 在推进之前单独提交一次。rollup_state 的写者只有 rollupLevel 与本函数，前者推进不越过同一时刻算出的上界，
+// 后者只往回退，所以 Rollup 各片随后重读到的水位也不超前。
+//
+// 修复：超前的 1m 行直接删除。超前的水位退回上界，并删掉本级 ts ≥ 新水位的行：正常状态下粗级没有不早于水位的行
+// （rollupLevel 只在 [旧水位, 新水位) 里写桶），删掉即回到这个状态，之后由 Rollup 从细一级的整桶重算。重算是整桶覆盖写
+// （rollupSQL 的 INSERT OR REPLACE），本来就不累加到旧行上；必须删的是重算时已经没有源行的桶——它们的源行正是上面删掉
+// 的超前 1m 行，INSERT OR REPLACE 只覆盖重算产出的桶，清不掉这些桶。
+//
+// 退回后上下级的先后仍然成立：粗一级的上界 alignDown(c, 3600) 不晚于细一级的上界 alignDown(c, 300)，1h 水位因此不超过
+// 5m 的新水位，删掉的 5m 行都还没被 1h 消费。重算出原值的前提是 [新水位, 旧水位) 里带真实时刻的细级行还在：Prune 对
+// 细一级的截止点不晚于 now − 保留期（再与粗一级水位取较早者），墙钟超前 Δ 时这个 now 比真实时刻快 Δ；Δ 比细一级保留期
+// 至少小 RollupLag 加一个本级桶长时，截止点不晚于新水位，这段行不会被清掉。
+//
+// 只处理 node 表里的节点：已删节点在清理作业完成前留下的行对任何读者都不可见（family.live），上卷也不聚合它们，
+// 清理作业按主体整条删除，与 ts 无关。
+func (s *Store) repairClockAhead(tx *sql.Tx, now time.Time) error {
+	ceiling := now.Add(-RollupLag).Unix()
+	latest := metric.LatestMinute(now)
+	for _, f := range families {
+		for i := 1; i < len(levels); i++ {
+			var upto int64
+			if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i]).Scan(&upto); err != nil {
+				return err
+			}
+			bound := alignDown(ceiling, levels[i].Bucket)
+			if upto <= bound {
+				continue
+			}
+			if _, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", bound, f.states[i]); err != nil {
+				return err
+			}
+			res, err := tx.Exec(deleteFromSQL(f.tables[i], ">="), bound)
+			if err != nil {
+				return err
+			}
+			n, _ := res.RowsAffected()
+			s.log.Warn("rollup watermark was ahead of the wall clock, rolled back", "rollup_level", f.states[i], "watermark", upto,
+				"rolled_back_to", bound, "rolled_back", time.Duration(upto-bound)*time.Second, "rows_deleted", n)
+		}
+		// 正常运行时只走到这条读为止：它在每次写入与上卷时都跑。
+		var newest sql.NullInt64
+		if err := tx.QueryRow(newestRowSQL(f.tables[0])).Scan(&newest); err != nil {
+			return err
+		}
+		if !newest.Valid || newest.Int64 <= latest {
+			continue
+		}
+		res, err := tx.Exec(deleteFromSQL(f.tables[0], ">"), latest)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		s.log.Warn("minute rows ahead of the wall clock deleted", "table", f.tables[0], "newest", newest.Int64,
+			"latest_allowed", latest, "ahead", time.Duration(newest.Int64-latest)*time.Second, "rows_deleted", n)
+	}
+	return nil
+}
+
+// newestRowSQL 取 table 里现存节点的最新一行的 ts：每个节点经主键 (node_id, ts …) 倒序取一行，不扫描全部历史。
+func newestRowSQL(table string) string {
+	return "SELECT max((SELECT ts FROM " + table + " WHERE node_id = node.id ORDER BY ts DESC LIMIT 1)) FROM node"
+}
+
+// deleteFromSQL 删掉 table 里现存节点 ts op ? 的行：节点集合驱动主键 (node_id, ts …) 的范围查找，只碰要删的行。
+func deleteFromSQL(table, op string) string {
+	return "DELETE FROM " + table + " WHERE node_id IN (SELECT id FROM node) AND ts " + op + " ?"
 }
 
 // rollupSlice 限制每次占用写协程的历史跨度，让其他写请求能在追赶的片间提交。
@@ -209,8 +295,20 @@ const (
 	MinRetentionAlertEvents = 24 * time.Hour
 )
 
-// Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
-// 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
+// 保留期下限覆盖 RollupLag 加粗一级的桶长（5m 300 秒、1h 3600 秒）：Prune 按保留期的截止点因此不晚于 repairClockAhead
+// 退回后的粗一级水位（见 prune）。差值为负时无法转换为 uint64，编译即失败。
+const (
+	_ = uint64(MinRetentionM1 - RollupLag - 300*time.Second)
+	_ = uint64(MinRetentionM5 - RollupLag - 3600*time.Second)
+)
+
+// Validate 的下限与 Store.ChooseLevel 的两条选级下限配合：
+//   - 1m 至少六小时、5m 至少七天，与按跨度选级的阈值相同。截止到现在（to 不早于此刻）、按跨度落到某级的窗口，
+//     起点不早于 now − 该级阈值，也就不早于该级的保留截止点，保留期那条下限不会把它推到更粗的级：面板与公开页
+//     各档窗口的分辨率不随保留期配置变化。过去的窗口不受这条约束，由保留期那条下限选到仍有数据的级。
+//   - 粗级不短于细级：截止点随级别变粗不会变晚（cutoff），某级保有的时刻更粗的级也保有，
+//     选级取两条下限中较粗的一条时才一定落在窗口起点处仍有数据的级上（finestRetained）。
+//
 // 事件下限覆盖满队列的最坏投递时长，不能在正常重试完成前清掉事件。
 func (r Retention) Validate() error {
 	if r.AlertEvents < MinRetentionAlertEvents {
@@ -242,22 +340,54 @@ func (r Retention) ForLevel(name string) time.Duration {
 	return r.M1
 }
 
+// cutoff 是 lv 这一级在 now 时刻的保留截止点：prune 只删 ts < cutoff 的行（还受粗一级消费水位约束，只会更晚删），
+// 所以 ts >= cutoff 的行在 now 时刻一定还在。prune 与选级（finestRetained）都经它取截止点：选级据此断言
+// "选中的级在窗口起点处还没被删"，两处各算一份公式时，一边改了另一边不跟，就会选到起点处已清空的级。
+// 截止点对齐到本级桶长；各级桶长逐级整除（60 | 300 | 3600），保留期不随级别缩短时截止点随级别变粗不会变晚。
+func (r Retention) cutoff(lv Level, now int64) int64 {
+	return alignDown(now-int64(r.ForLevel(lv.Name)/time.Second), lv.Bucket)
+}
+
+// finestRetained 是在 now 时刻仍保有 ts 处数据的最细级下标。Validate 保证保留期随级别变粗不缩短，截止点随级别
+// 变粗不会变晚，所以这一级之上的更粗级同样保有 ts。ts 早于全部级别的截止点时返回最粗级：窗口里保留期之外的部分
+// 哪一级都没有行，查询照常返回其余部分，缺的分钟在覆盖汇总里是未知分钟。
+func (r Retention) finestRetained(ts, now int64) int {
+	for i, lv := range levels {
+		if ts >= r.cutoff(lv, now) {
+			return i
+		}
+	}
+	return len(levels) - 1
+}
+
+// Retention 是 Store 的生效保留期（Open 的 WithRetention 给定）。
+func (s *Store) Retention() Retention { return s.retention }
+
 // pruneSlice 限制每块删除覆盖的时间片（秒）；deleteRange 每次只处理一个节点，
 // 不把该节点的全部过期历史合并成一个写事务。
 var pruneSlice = map[string]int64{"1m": 86400, "5m": 7 * 86400, "1h": 30 * 86400}
 
-// Prune 删除各级保留期之外的行。每块一个短事务，按节点、按时间片：
+// Prune 按 Store 的生效保留期（Open 的 WithRetention）删除各级保留期之外的行。保留期只有这一份：
+// 选级（ChooseLevel）读的是同一个字段，删除的截止点与选级判定"某级是否仍保有窗口起点"用的是同一个 cutoff。
+func (s *Store) Prune(ctx context.Context) (int64, error) {
+	return s.prune(ctx, s.retention)
+}
+
+// prune 删除 r 下各级保留期之外的行。每块一个短事务，按节点、按时间片：
 // WHERE node_id = ? AND ts >= ? AND ts < ? 走主键。节点集合取自表本身而不是
 // node 表：已删节点若留有孤儿行，也要随保留期消失。全部表都清理完才记下 maintenance_state 的
-// prune 完成时刻；事件表的清理（PruneAlertEvents）不在其内。
-func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
+// prune 完成时刻；事件表的清理（PruneAlertEvents）不在其内。生产路径只经 Prune 以 s.retention 调用它。
+func (s *Store) prune(ctx context.Context, r Retention) (int64, error) {
 	now := s.clk.Now().Unix()
 	var total int64
 	for _, f := range families {
 		for i, lv := range levels {
-			cutoff := alignDown(now-int64(r.ForLevel(lv.Name)/time.Second), lv.Bucket)
-			// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
-			// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
+			cutoff := r.cutoff(lv, now)
+			// 初始化后写水位的只有 rollupLevel 与 repairClockAhead。rollupLevel 每片 end > upto，且与聚合原子提交，只让水位
+			// 前进；repairClockAhead 只把超前的水位退回 alignDown(now' − RollupLag, 粗级桶长)，墙钟不往回拨时 now' 不早于
+			// 这里的 now。保留期下限覆盖 RollupLag 加粗级桶长（保留期下限旁的编译期断言），按保留期的截止点因此不晚于退回后的水位，
+			// min 之后更不晚：这次读之后水位前进，至多延迟清理；水位被退回，也删不到退回后要重算的行。墙钟在两次读之间往回拨
+			// 的情形，即 repairClockAhead 所说的超前幅度前提。
 			if i+1 < len(levels) {
 				var consumed int64
 				if err := s.r.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i+1]).Scan(&consumed); err != nil {
@@ -332,18 +462,30 @@ func ceilDiv(n, d int64) int64 {
 	return q
 }
 
-// ChooseLevel 按窗口跨度选级，步长保持为桶长的整数倍。点数预算按
+// ChooseLevel 为窗口 [from, to) 选级与步长，管理端与公开端的三个历史查询都经它选级。级别取两条下限中较粗的一条：
+//   - 跨度：不超过 6 小时 1m，不超过 7 天 5m，否则 1h；
+//   - 保留期：此刻仍保有 from 处数据的最细级（finestRetained，截止点与 Prune 同一个 cutoff、同一份 s.retention）。
+//
+// 只看跨度不够：查询从选中的级往更细的级按水位拼接，不读更粗的级，过去的短窗口（十天前的两小时）按跨度落到
+// 已被清理的 1m，整段返回空，而同一段在 5m、1h 里有数据。截止到现在的窗口保留期那条不起作用（见 Validate），
+// 选级与只看跨度相同。
+func (s *Store) ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
+	return chooseLevel(from, to, maxPoints, s.retention.finestRetained(from, s.clk.Now().Unix()))
+}
+
+// chooseLevel 在不细于 levels[floor] 的前提下按跨度选级，步长保持为桶长的整数倍。点数预算按
 // QueryMetrics 对齐后的窗口计算，不能只限制原始跨度，以免首尾扩展后超限。
-func ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
+func chooseLevel(from, to int64, maxPoints int, floor int) (Level, int64) {
 	span := to - from
-	lv := levels[0]
+	i := 0
 	switch {
 	case span <= 6*3600:
 	case span <= 7*86400:
-		lv = levels[1]
+		i = 1
 	default:
-		lv = levels[2]
+		i = 2
 	}
+	lv := levels[max(i, floor)]
 	step := lv.Bucket
 	if maxPoints > 0 {
 		budget := int64(maxPoints)
@@ -584,12 +726,10 @@ func nextMaintenanceAt(wall time.Time) time.Time {
 
 // RunMaintenance 按分钟边界调度上卷、清理与已删主体的历史清理；一轮维护使用 Background，
 // 因而取消只在等待下一轮时生效，已开始的一轮会完成后再退出。
-// AlertEvents 为零会以现在为截止点删除此前全部事件，不能视作禁用清理。
-// 本入口拒绝非法装配，不依赖调用方记得校验；serve 的 Validate 另提供启动时的友好错误。
-func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
-	if err := r.Validate(); err != nil {
-		panic(err)
-	}
+// 保留期取 s.retention：Open 已用 Validate 拒绝非法值（AlertEvents 为零会以现在为截止点删除此前全部事件），
+// 所以这里不再校验；serve 的 Validate 另在打开库之前给出启动时的友好错误。
+func (s *Store) RunMaintenance(ctx context.Context) {
+	r := s.retention
 	for {
 		wall := s.clk.Now()
 		timer := time.NewTimer(nextMaintenanceAt(wall).Sub(wall))
@@ -601,7 +741,7 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 			if err := s.Rollup(context.Background()); err != nil {
 				s.log.Error("rollup failed", "err", err)
 				// 上卷失败只跳过时序行清理，保留未上卷的分钟行；Prune 的水位守卫仍独立生效。
-			} else if n, err := s.Prune(context.Background(), r); err != nil {
+			} else if n, err := s.Prune(context.Background()); err != nil {
 				s.log.Error("prune failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("pruned expired rows", "rows", n)

@@ -38,7 +38,7 @@ func TestSecurityResetClearsFactorsAndSessions(t *testing.T) {
 	var session [32]byte
 	session[0] = 1
 	now := time.Now()
-	if err := st.CommitAdminSecurity(t.Context(), before, `{"secret":"TEST","recovery":["digest"],"passkeys":[]}`, false, &session, now, now.Add(24*time.Hour), ""); err != nil {
+	if err := st.CommitAdminSecurity(t.Context(), 0, before, `{"secret":"TEST","recovery":["digest"],"passkeys":[]}`, false, &session, now, now.Add(24*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := runSecurityReset([]string{"--db", path, "--yes"}); err != nil {

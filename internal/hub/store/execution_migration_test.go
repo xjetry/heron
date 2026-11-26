@@ -98,7 +98,8 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	removeV55Config(t, cfg)
+	removeV57Config(t, cfg)
+	removeV56Config(t, cfg)
 	removeV52Config(t, cfg)
 	removeV51Config(t, cfg)
 	removeV50Config(t, cfg)
@@ -119,6 +120,7 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropSoftirqColumns(t, met)
 	dropFullestDiskColumns(t, met)
 	dropTCPRateColumns(t, met)
 	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {

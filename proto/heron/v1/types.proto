@@ -45,8 +45,10 @@ message Metrics {
   // 首样本、设备集合变化或任一设备计数回退时缺失，不伪造零值。
   optional uint64 disk_read_bps = 21;
   optional uint64 disk_write_bps = 22;
-  // steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
-  // 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
+  // steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分（softirq 见
+  // cpu_softirq_pct，同一次差分）。cpu_pct 把 iowait 计为空闲、把 steal 计为忙碌：iowait 在 cpu_pct 之外，
+  // steal 是 cpu_pct 里可以单独看的部分。任意计数回退或 Δtotal = 0 时这几项一起缺失；来源没有该计数时
+  // （darwin、内核不提供该列）只缺该项。CPU 范围是执行环境（cgroup）时 cpu_pct 改由本环境用量得出，这几项是全机计数，不设置。
   optional double cpu_steal_pct = 23;
   optional double cpu_iowait_pct = 24;
   // 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
@@ -71,6 +73,10 @@ message Metrics {
   //     与逐盘采集出现之前的磁盘口径相同，不比那时更差；逐盘采集失败由诊断的 DISK_MOUNTS 点名。
   //   - 两者都没有（根盘读不出）时缺失，不是 0。
   optional double disk_max_used_pct = 30;
+  // 软中断（softirq）占全部 CPU tick 的百分比，与 cpu_steal_pct、cpu_iowait_pct 同一次差分、同一组缺失条件。
+  // 网络收发包处理主要记在这里，转发、代理一类节点的 CPU 瓶颈常在此。softirq 不计为空闲，是 cpu_pct 里可以单独看的部分。
+  // /proc/stat 首行不足 7 个计数（2.6 之前的内核）时缺失；darwin 不设置。
+  optional double cpu_softirq_pct = 31;
 }
 
 // 一张计入网络合计的网卡的内核累计计数，与同一请求的 Metrics 同一次采样。

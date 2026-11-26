@@ -29,7 +29,7 @@ var samplesPerMinute = int(time.Minute / defaultReportInterval)
 // nodeProfile 是一个节点在整个时间轴上的典型读数。逐行的值在典型值附近抖动：和 = 样本数 × 典型值 × [0.9, 1.1]，
 // 峰值 = 典型值 × [1, 1.5]（百分比封顶 100）。抖动不改变字节档，只让 REAL 和不落在整数上。
 type nodeProfile struct {
-	// container 为真表示 LXC 一类的环境范围节点：agent 的 CPU 走 cgroup，不报 steal / iowait；负载范围不是宿主，load1 与
+	// container 为真表示 LXC 一类的环境范围节点：agent 的 CPU 走 cgroup，不报 steal / iowait / softirq；负载范围不是宿主，load1 与
 	// load1_per_core 不报；容器里没有整盘设备计数，磁盘速率不报（internal/agent/collect/collect.go）。这些列 n = 0，
 	// 和与峰值落库为 0，各占 0 字节。
 	container bool
@@ -58,6 +58,7 @@ type nodeProfile struct {
 	tcpPassiveOpens float64 // 被动接入 次/秒，对数均匀 [0.05, 50]
 	tcpOutSegs      float64 // 发出段 段/秒，对数均匀 [20, 5000]
 	tcpRetransSegs  float64 // 重传段 段/秒 = 发出段 × [1e-4, 2e-2]
+	softirq         float64 // 百分比，对数均匀 [0.05, 5]：REAL，和与峰值各 8 字节
 }
 
 func logUniform(r *rand.Rand, lo, hi float64) float64 {
@@ -114,6 +115,8 @@ func newProfile(r *rand.Rand, containerFrac float64) nodeProfile {
 	p.tcpPassiveOpens = logUniform(r, 0.05, 50)
 	p.tcpOutSegs = logUniform(r, 20, 5000)
 	p.tcpRetransSegs = p.tcpOutSegs * logUniform(r, 1e-4, 2e-2)
+	// softirq 同理放在 TCP 之后：先前各字段的抽样不受影响。
+	p.softirq = logUniform(r, 0.05, 5)
 	return p
 }
 
@@ -178,6 +181,8 @@ func (p *nodeProfile) readings() ([]colReading, error) {
 			cr = colReading{level: p.tcpOutSegs}
 		case "tcp_retrans_segs_ps":
 			cr = colReading{level: p.tcpRetransSegs}
+		case "cpu_softirq_pct":
+			cr = colReading{level: p.softirq, absent: p.container, percent: true}
 		case "disk_max_used_pct":
 			// 模型里每个节点只有一块根盘，最满盘就是根盘（与 hub 在没有逐盘列表时的取值相同）；同一个典型值、同样各 8 字节。
 			cr = colReading{level: p.diskPct, percent: true}

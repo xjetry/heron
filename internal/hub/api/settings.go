@@ -459,12 +459,14 @@ func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[heronv
 	for _, t := range stats.Tables {
 		out.Tables = append(out.Tables, &heronv1.TableRows{Name: t.Name, Rows: uint64(t.Rows)})
 	}
-	// 标红只在 store.SeriesHealth.Staleness 一处判定，这里原样带上它的结论与判定用的原始数值。
+	// 标红只在 store.SeriesHealth.Staleness 一处判定，这里原样带上它的结论与判定用的原始数值。保留期取 Store 的
+	// 生效保留期，与维护循环清理、历史查询选级用的是同一份。
 	now := s.clk.Now()
+	retention := s.store.Retention()
 	for _, h := range stats.Series {
-		stale := h.Staleness(now, s.cfg.Retention)
+		stale := h.Staleness(now, retention)
 		out.Series = append(out.Series, &heronv1.SeriesTableHealth{
-			Table: h.Table, BucketS: uint32(h.Level.Bucket), RetentionS: uint64(s.cfg.Retention.ForLevel(h.Level.Name) / time.Second),
+			Table: h.Table, BucketS: uint32(h.Level.Bucket), RetentionS: uint64(retention.ForLevel(h.Level.Name) / time.Second),
 			OldestTs: h.Oldest, WatermarkTs: h.Watermark, OldestStale: stale.Oldest, WatermarkStale: stale.Watermark,
 		})
 	}

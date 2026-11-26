@@ -27,7 +27,7 @@ func TestTokenExpiryAppliesToEveryReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := WithPrincipal(t.Context(), tok)
+	ctx := tokenContext(t.Context(), tok)
 	if err := s.SetRegisterWindow(ctx, hash(2), clk.Now().Add(24*time.Hour), 100); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestEditNarrowingWithdrawsQueuedUpdate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := WithPrincipal(t.Context(), tok)
+			ctx := tokenContext(t.Context(), tok)
 			c := &Change{Operation: Operation{OwnerID: tok.ID, RequestID: "update", RequestHash: "x", ResourceID: node}, Action: ActionStartUpdate, Policy: permitPolicy{}}
 			if c.ExpectedVersion, err = s.ChangeVersion(ctx, c); err != nil {
 				t.Fatal(err)

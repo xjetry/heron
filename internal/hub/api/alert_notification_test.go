@@ -80,7 +80,7 @@ func TestPreviewAlertNotificationReportsTemplateErrorPerChannel(t *testing.T) {
 }
 
 // 试投递经出站客户端同步发出：摘要冠以 "[测试] "，其余字段是真实形态；失败的渠道逐个给出类别、状态码与原文。
-// 不写告警状态、事件与投递记录（任何表的行数都不变）。
+// 不写告警状态、事件与投递记录：除了这次调用自己的一条操作记录，任何表的行数都不变。
 func TestTestAlertNotificationSendsPrefixedSampleWithoutRecording(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")
@@ -122,8 +122,9 @@ func TestTestAlertNotificationSendsPrefixedSampleWithoutRecording(t *testing.T) 
 	if m != (received{Rule: "草稿", Node: "东京", Kind: "offline", Transition: "firing", Summary: "[测试] 节点 东京 离线 30s（规则 草稿）", Value: 30}) {
 		t.Fatalf("received=%+v", m)
 	}
+	before["operation"]++
 	if after := rowCounts(t, h.dbPath); !maps.Equal(before, after) {
-		t.Fatalf("test send wrote rows: before=%v after=%v", before, after)
+		t.Fatalf("test send wrote rows other than its operation record: before(+1 operation)=%v after=%v", before, after)
 	}
 }
 

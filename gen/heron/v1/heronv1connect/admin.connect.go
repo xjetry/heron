@@ -258,7 +258,10 @@ type AdminServiceClient interface {
 	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
 	// 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
 	ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error)
-	// API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+	// 操作记录：会话直调的写、API token 经 ExecuteChange 执行的变更，以及 hub 自身对用户可见配置的修改（自动续期），
+	// 同一条记录链、同一个查询面。会话看得到全部记录，可按 owner_id、principal、action、request_id 过滤；API token 只看
+	// 得到自己的（指定别人的 owner_id 返回 PermissionDenied）。按提交时刻倒序、同刻按 request_id 升序。快照只含白名单列，
+	// 不含任何凭据。保留期见 Operation。
 	ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error)
 	// 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
 	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
@@ -1399,7 +1402,10 @@ type AdminServiceHandler interface {
 	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
 	// 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
 	ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error)
-	// API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+	// 操作记录：会话直调的写、API token 经 ExecuteChange 执行的变更，以及 hub 自身对用户可见配置的修改（自动续期），
+	// 同一条记录链、同一个查询面。会话看得到全部记录，可按 owner_id、principal、action、request_id 过滤；API token 只看
+	// 得到自己的（指定别人的 owner_id 返回 PermissionDenied）。按提交时刻倒序、同刻按 request_id 升序。快照只含白名单列，
+	// 不含任何凭据。保留期见 Operation。
 	ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error)
 	// 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
 	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)

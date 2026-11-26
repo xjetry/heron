@@ -2,6 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
@@ -16,6 +17,7 @@ import { useNodeList } from "../api/useNodeList";
 import { withId } from "../lib/ids";
 import { dateTime, day } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
+import { OperationList } from "../components/OperationList";
 import { downloadText } from "../lib/download";
 import { EXPIRY_PRESETS, expiryText, isExpired, resolveExpiry, type ExpiryChoice } from "../lib/tokenExpiry";
 
@@ -35,14 +37,8 @@ function Operations({ ownerId }: { ownerId: bigint }) {
   return <section className="card" aria-label="操作记录">
     {gate.banner}
     <h2>最近操作</h2>
-    {gate.data.operations.length === 0 && <p className="muted">暂无已提交操作。</p>}
-    {gate.data.operations.map((o) => <details key={o.id}>
-      <summary>{o.action} #{String(o.resourceId)} · {dateTime(o.committedAt)}</summary>
-      <p>请求 ID：<code>{o.requestId}</code></p>
-      <p>操作 ID：<code>{o.id}</code></p>
-      <p>修改前</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{o.beforeJson || "详细记录已过保留期"}</pre>
-      <p>修改后</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{o.afterJson || "详细记录已过保留期"}</pre>
-    </details>)}
+    <OperationList operations={gate.data.operations} />
+    <p className="muted">全部主体的记录见<Link to="/operations">操作记录</Link>。</p>
   </section>;
 }
 

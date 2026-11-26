@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron/gen/heron/v1"
 	"github.com/xjetry/heron/internal/hub/auth"
+	"github.com/xjetry/heron/internal/hub/store"
 )
 
 func (s *Service) ListSessions(ctx context.Context, _ *connect.Request[heronv1.ListSessionsRequest]) (*connect.Response[heronv1.ListSessionsResponse], error) {
@@ -37,7 +38,7 @@ func (s *Service) RevokeSession(ctx context.Context, req *connect.Request[heronv
 	}
 	hash := [32]byte(raw)
 	// DELETE 不要求命中行：超时重试或另一设备已经撤销时，目标均已达成。
-	if err := s.store.DeleteSession(ctx, hash); err != nil {
+	if err := s.store.EndSession(ctx, store.ActionRevokeSession, hash); err != nil {
 		s.log.Error("revoking session failed", "err", err)
 		return nil, internalError("revoking session failed")
 	}

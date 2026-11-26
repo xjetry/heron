@@ -146,7 +146,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | 字段 | 单位 / 说明 |
 |---|---|
 | `cpuPct` | CPU 使用率，百分比 |
-| `cpuStealPct`、`cpuIowaitPct` | steal、iowait 占比，百分比 |
+| `cpuStealPct`、`cpuIowaitPct`、`cpuSoftirqPct` | steal、iowait、softirq 占比，百分比 |
 | `load1`、`load5`、`load15` | 负载 |
 | `load1PerCore` | 按核负载 |
 | `memUsed`、`memTotal` | 内存字节（字符串）；使用率 = memUsed / memTotal。`memTotal` 缺失或为 `"0"`、`memUsed` 缺失时没有使用率，按无读数显示，不要算成 0%（内置页同此口径） |
@@ -211,6 +211,7 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `tcp_out_segs_ps` | count/s | mean |
 | `tcp_retrans_segs_ps` | count/s | mean |
 | `disk_max_used_pct` | percent | mean |
+| `cpu_softirq_pct` | percent | mean、max |
 
 - `disk_used`、`disk_used_pct` 是根盘，`disk_max_used_pct` 是最满盘（与实时的 `diskMaxUsedPct` 同义）。
 - 平均网速 = `rx_bytes` / `tx_bytes` 的 `sum / stepS`（字节/秒）；采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`。

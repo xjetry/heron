@@ -88,6 +88,65 @@ func (Access) EnumDescriptor() ([]byte, []int) {
 	return file_heron_v1_access_proto_rawDescGZIP(), []int{0}
 }
 
+// Audit 声明方法的成功调用是否写操作记录（Operation，经 ListOperations 查询）。ACCESS_SESSION 与 ACCESS_CHANGE 的
+// 每个方法都必须显式声明 AUDIT_NONE 或 AUDIT_WRITE，ACCESS_CHANGE 只能是 AUDIT_WRITE；ACCESS_READ 与 ACCESS_LOGIN 的
+// 方法不得声明（保持 AUDIT_UNSPECIFIED）：READ 按定义无副作用，LOGIN 是认证本身——签发的会话连同来源记在会话表里
+// （ListSessions），失败与锁定走登录通知，不进操作记录。任一条不满足时 hub 在构造处理器时拒绝启动，新增方法不会以
+// "默认不记"随发布出去。
+type Audit int32
+
+const (
+	Audit_AUDIT_UNSPECIFIED Audit = 0
+	// 没有任何成功路径改变 hub 的持久状态或向外发出动作：只读（含读出凭据元数据、回显可能含密钥的内容、向外部
+	// 只读查询），或只在本会话的进程内留下短期授权（主题交互预览）。
+	Audit_AUDIT_NONE Audit = 1
+	// 有成功路径改变 hub 的持久状态或向外发出动作（发送测试通知、提交 hub 自身更新）。会话调用的每次成功恰好写一条
+	// 操作记录，持久状态的改动与记录在同一事务提交，业务拒绝不写；向外的动作先发出再写记录，记录写失败时回答
+	// Internal。ExecuteChange 由类型化变更的回执承担：执行写一条，预览与重放不写。
+	Audit_AUDIT_WRITE Audit = 2
+)
+
+// Enum value maps for Audit.
+var (
+	Audit_name = map[int32]string{
+		0: "AUDIT_UNSPECIFIED",
+		1: "AUDIT_NONE",
+		2: "AUDIT_WRITE",
+	}
+	Audit_value = map[string]int32{
+		"AUDIT_UNSPECIFIED": 0,
+		"AUDIT_NONE":        1,
+		"AUDIT_WRITE":       2,
+	}
+)
+
+func (x Audit) Enum() *Audit {
+	p := new(Audit)
+	*p = x
+	return p
+}
+
+func (x Audit) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Audit) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_access_proto_enumTypes[1].Descriptor()
+}
+
+func (Audit) Type() protoreflect.EnumType {
+	return &file_heron_v1_access_proto_enumTypes[1]
+}
+
+func (x Audit) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Audit.Descriptor instead.
+func (Audit) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_access_proto_rawDescGZIP(), []int{1}
+}
+
 var file_heron_v1_access_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
@@ -95,6 +154,14 @@ var file_heron_v1_access_proto_extTypes = []protoimpl.ExtensionInfo{
 		Field:         50001,
 		Name:          "heron.v1.access",
 		Tag:           "varint,50001,opt,name=access,enum=heron.v1.Access",
+		Filename:      "heron/v1/access.proto",
+	},
+	{
+		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
+		ExtensionType: (*Audit)(nil),
+		Field:         50003,
+		Name:          "heron.v1.audit",
+		Tag:           "varint,50003,opt,name=audit,enum=heron.v1.Audit",
 		Filename:      "heron/v1/access.proto",
 	},
 }
@@ -105,6 +172,8 @@ var (
 	//
 	// optional heron.v1.Access access = 50001;
 	E_Access = &file_heron_v1_access_proto_extTypes[0]
+	// optional heron.v1.Audit audit = 50003;
+	E_Audit = &file_heron_v1_access_proto_extTypes[1]
 )
 
 var File_heron_v1_access_proto protoreflect.FileDescriptor
@@ -117,8 +186,14 @@ const file_heron_v1_access_proto_rawDesc = "" +
 	"\fACCESS_LOGIN\x10\x01\x12\x0f\n" +
 	"\vACCESS_READ\x10\x02\x12\x12\n" +
 	"\x0eACCESS_SESSION\x10\x03\x12\x11\n" +
-	"\rACCESS_CHANGE\x10\x04:J\n" +
-	"\x06access\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\x0e2\x10.heron.v1.AccessR\x06accessB.Z,github.com/xjetry/heron/gen/heron/v1;heronv1b\x06proto3"
+	"\rACCESS_CHANGE\x10\x04*?\n" +
+	"\x05Audit\x12\x15\n" +
+	"\x11AUDIT_UNSPECIFIED\x10\x00\x12\x0e\n" +
+	"\n" +
+	"AUDIT_NONE\x10\x01\x12\x0f\n" +
+	"\vAUDIT_WRITE\x10\x02:J\n" +
+	"\x06access\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\x0e2\x10.heron.v1.AccessR\x06access:G\n" +
+	"\x05audit\x12\x1e.google.protobuf.MethodOptions\x18ӆ\x03 \x01(\x0e2\x0f.heron.v1.AuditR\x05auditB.Z,github.com/xjetry/heron/gen/heron/v1;heronv1b\x06proto3"
 
 var (
 	file_heron_v1_access_proto_rawDescOnce sync.Once
@@ -132,18 +207,21 @@ func file_heron_v1_access_proto_rawDescGZIP() []byte {
 	return file_heron_v1_access_proto_rawDescData
 }
 
-var file_heron_v1_access_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_heron_v1_access_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_heron_v1_access_proto_goTypes = []any{
 	(Access)(0),                        // 0: heron.v1.Access
-	(*descriptorpb.MethodOptions)(nil), // 1: google.protobuf.MethodOptions
+	(Audit)(0),                         // 1: heron.v1.Audit
+	(*descriptorpb.MethodOptions)(nil), // 2: google.protobuf.MethodOptions
 }
 var file_heron_v1_access_proto_depIdxs = []int32{
-	1, // 0: heron.v1.access:extendee -> google.protobuf.MethodOptions
-	0, // 1: heron.v1.access:type_name -> heron.v1.Access
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	1, // [1:2] is the sub-list for extension type_name
-	0, // [0:1] is the sub-list for extension extendee
+	2, // 0: heron.v1.access:extendee -> google.protobuf.MethodOptions
+	2, // 1: heron.v1.audit:extendee -> google.protobuf.MethodOptions
+	0, // 2: heron.v1.access:type_name -> heron.v1.Access
+	1, // 3: heron.v1.audit:type_name -> heron.v1.Audit
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	2, // [2:4] is the sub-list for extension type_name
+	0, // [0:2] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
@@ -157,9 +235,9 @@ func file_heron_v1_access_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_access_proto_rawDesc), len(file_heron_v1_access_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   0,
-			NumExtensions: 1,
+			NumExtensions: 2,
 			NumServices:   0,
 		},
 		GoTypes:           file_heron_v1_access_proto_goTypes,

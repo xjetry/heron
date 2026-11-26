@@ -728,15 +728,25 @@ func renewExpiryTx(tx *sql.Tx, id int64, cycle BillingCycle, from, to string, au
 // RenewExpiry 把自动续期推后的到期日写回，前提见 renewExpiryTx（开着自动续期、周期与旧到期日都没变）。条件不成立
 // 时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描按新值重算；节点已被删除时，没有要
 // 重算的对象。
+//
+// 推后由 hub 自身发起，记一条系统主体的 auto_renew_node 记录（systemContext）：触发这次扫描的请求（改计费的
+// UpdateNode）不是推后的主体，扫描也可能在维护循环里跑。条件不成立时连同记录一起回滚，不留"推后了"的假记录。
 func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, from, to string) (bool, error) {
-	var renewed bool
-	err := s.write(ctx, func(tx *sql.Tx) error {
-		var err error
-		renewed, err = renewExpiryTx(tx, id, cycle, from, to, true)
+	err := s.writeChange(systemContext(ctx), ChangeTarget{Action: ActionAutoRenewNode, ResourceID: id}, func(tx *sql.Tx) error {
+		renewed, err := renewExpiryTx(tx, id, cycle, from, to, true)
+		if err == nil && !renewed {
+			err = errNotRenewed
+		}
 		return err
 	})
-	return renewed, err
+	if errors.Is(err, errNotRenewed) {
+		return false, nil
+	}
+	return err == nil, err
 }
+
+// errNotRenewed 让条件不成立的自动续期整个事务回滚，只在 RenewExpiry 里出现，不出包。
+var errNotRenewed = errors.New("auto-renewal condition no longer holds")
 
 // RenewNodeBilling 把手动续期推后的到期日 to 写回，是"已续费"的类型化变更目标。cycle 与 from 是调用方算出 to
 // 所依据的周期与到期日，条件写见 renewExpiryTx（不要求开着自动续期）。节点不存在是 ErrNotFound，存在但周期或
@@ -798,12 +808,13 @@ func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country st
 // ReorderNodes 在写事务中验证 ids 恰是全部节点的一个排列，再整体更新顺序。
 // 部分列表可能让未列出的节点与列出的节点共用 sort_order，转而由 id 决定相对次序。
 func (s *Store) ReorderNodes(ctx context.Context, ids []int64) error {
-	return s.reorder(ctx, "node", ids)
+	return s.reorder(ctx, ActionReorderNodes, "node", ids)
 }
 
-// table 只来自本包固定调用点；完整集合校验和更新共用写事务，避免并发增删留下部分排列。
-func (s *Store) reorder(ctx context.Context, table string, ids []int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+// table 只来自本包固定调用点；完整集合校验和更新共用写事务，避免并发增删留下部分排列。action 是调用方的写目标：
+// 两张表的重排是两种操作，各自的快照读各自的全序。
+func (s *Store) reorder(ctx context.Context, action ChangeAction, table string, ids []int64) error {
+	return s.writeChange(ctx, ChangeTarget{Action: action}, func(tx *sql.Tx) error {
 		rows, err := tx.Query("SELECT id FROM " + table)
 		if err != nil {
 			return err
@@ -855,7 +866,7 @@ func (s *Store) MoveNodes(ctx context.Context, ids []int64, position uint32) err
 	if len(ids) == 0 {
 		return ErrEmptyMove
 	}
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionMoveNodes, ResourceKey: idsKey(ids)}, func(tx *sql.Tx) error {
 		ordered, err := scanIDs(tx.Query("SELECT id FROM node ORDER BY sort_order, id"))
 		if err != nil {
 			return err
