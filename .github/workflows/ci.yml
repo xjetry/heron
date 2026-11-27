@@ -3,16 +3,16 @@ on:
   push:
     branches: [main]
   pull_request:
-# 两个作业都运行第三方 action、pnpm 依赖的安装脚本与 Go 模块的代码，而 actions/checkout 默认把 job token 写进
+# 所有作业都运行第三方 action、pnpm 依赖的安装脚本与 Go 模块的代码，而 actions/checkout 默认把 job token 写进
 # .git/config，这些代码都读得到；它们不需要向本仓库写任何东西，所以 token 只读。仓库的默认设置目前也是只读，
 # 这里写明是不让工作流的安全边界依赖一条可在网页上改掉的仓库设置（与 release.yml 顶层 permissions: {} 同一理由）。
 permissions:
   contents: read
 jobs:
-  ci:
+  # 生成物核对、静态检查、发布规则脚本测试、前端校验与全平台编译；与下面的测试/端到端作业并行，缩短主干 CI 墙钟。
+  lint-and-build:
     runs-on: ubuntu-latest
-    # 冒烟里的等待都有上限，这一条兜住它们之外的挂起，不等到平台默认的 6 小时。
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -33,13 +33,86 @@ jobs:
       - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1
         with:
           setup_only: true
+      - run: |
+          make gen
+          status="$(git status --porcelain -- gen web/src/gen)" || exit $?
+          if [ -n "$status" ]; then printf '%s\n' "$status"; exit 1; fi
       # lint 里的 buf breaking 对照 BUF_AGAINST_REF：pull_request 的检出没有本地 main，对照 origin/main；push 到 main 时与本地 main（自己）比较。
-      - run: make ci
+      - run: make lint
         env:
           BUF_AGAINST_REF: ${{ github.event_name == 'pull_request' && 'origin/main' || 'main' }}
+      - run: make script-test
+      - run: make web-lint
+      - run: make web-test
+      - run: make web
+      - run: make build
+  # store 包覆盖全版本迁移、快照恢复与并发锁序，在 -race 下耗时最长，单独占一台运行器与其余 Go 包并行。
+  go-test-store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: CGO_ENABLED=1 go test -race -count=1 -timeout 20m ./internal/hub/store
+  # 除 store 外的全部 Go 包（含 deploy 替身脚本测试与真实内核网卡结构测试），与 go-test-store 合并覆盖完整的 make test + netstructure-live。
+  go-test-other:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: |
+          all=$(go list ./...) && [ -n "$all" ]
+          pkgs=$(printf '%s\n' "$all" | grep -vx github.com/xjetry/heron/deploy | grep -vx github.com/xjetry/heron/internal/hub/store)
+          CGO_ENABLED=1 go test -race -count=1 -timeout 20m $pkgs
+      - run: go test -count=1 -timeout 20m ./deploy/
       - run: make netstructure-live
+  web-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 12
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm --dir web exec playwright install --with-deps chromium firefox webkit
       - run: make web-e2e
+  e2e-and-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 12
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
       # 完整 E2E 在 amd64 运行器上实际运行 amd64、arm64 两个 agent。
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
         with:
