@@ -83,7 +83,7 @@ func (l *Live) Observe(nodeID int64, source string, m *heronv1.Metrics) (ts int6
 	defer l.mu.Unlock()
 	now, wall := l.clk.Mono(), l.clk.Now()
 	ts = minuteOf(wall)
-	if _, ok := l.coverage[nodeID]; !ok {
+	if prev, ok := l.coverage[nodeID]; !ok || prev > metric.LatestMinute(wall) {
 		l.coverage[nodeID] = ts
 	}
 	e := l.nodes[nodeID]

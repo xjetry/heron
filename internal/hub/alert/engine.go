@@ -750,15 +750,21 @@ func (e *Engine) pruneCandidates(ctx context.Context, ruleID int64, keep map[int
 // 落库值不晚于真实的最后上报：正常停机时全部刷出，二者相同；异常退出丢的是还没刷出的上报，存储正常时只有退出前约一个刷出周期
 // 之内的那些。偏早只让 SinceRecovery 偏小、更偏向判进窗口，而窗口内的宽限 max(节点宽限, flapGrace) 不小于窗口外的节点宽限，
 // 所以这个偏差只会推迟触发，不会让本该抑制的离线提前触发。
-func (e *Engine) offlineStart(entry live.Entry, seen bool, node store.Node) time.Time {
+// 墙钟曾偏快并被校回时，last_seen_at 或启动墙钟可能晚于当前墙钟；钳位到 wallNow，避免离线开始落在未来而漏判抖动窗口。
+func (e *Engine) offlineStart(entry live.Entry, seen bool, node store.Node, wallNow time.Time) time.Time {
+	var start time.Time
 	switch {
 	case seen:
-		return entry.LastSeenWall
+		start = entry.LastSeenWall
 	case !node.LastSeenAt.IsZero():
-		return node.LastSeenAt
+		start = node.LastSeenAt
 	default:
-		return e.startedWall
+		start = e.startedWall
 	}
+	if start.After(wallNow) {
+		return wallNow
+	}
+	return start
 }
 
 func (e *Engine) SweepOffline(ctx context.Context) error {
@@ -771,6 +777,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 		return err
 	}
 	now := e.clk.Mono()
+	wallNow := e.clk.Now()
 	var errs []error
 	if err := e.evaluateTraffic(ctx, cy, nodes, 0, 0); err != nil {
 		errs = append(errs, err)
@@ -809,7 +816,17 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			unseen := now - lastSeen
 			o := Observation{Reported: seen, Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL}
 			if !cur.recoveredAt.IsZero() {
-				o.Recovered, o.SinceRecovery = true, e.offlineStart(entry, seen, node).Sub(cur.recoveredAt)
+				recoveredAt := cur.recoveredAt
+				if recoveredAt.After(wallNow) {
+					recoveredAt = wallNow
+					e.mu.Lock()
+					if s, ok := e.states[k]; ok && s.recoveredAt.After(wallNow) {
+						s.recoveredAt = wallNow
+						e.states[k] = s
+					}
+					e.mu.Unlock()
+				}
+				o.Recovered, o.SinceRecovery = true, e.offlineStart(entry, seen, node, wallNow).Sub(recoveredAt)
 			}
 			next, tr := NextOffline(cur.state, o)
 			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), node.Maintenance, "", tr, offlineSummary(node, r, seen, unseen, tr), observedValue(unseen.Seconds())); err != nil {

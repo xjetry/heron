@@ -69,7 +69,9 @@ func coolDown(r store.AlertRule, cur stateEntry, now time.Time, next store.Alert
 	if tr == nil || *tr != store.TransitionFiring || r.CooldownS == 0 || cur.notifiedAt.IsZero() {
 		return next, tr
 	}
-	if now.Sub(cur.notifiedAt) < time.Duration(r.CooldownS)*time.Second {
+	// notifiedAt 晚于 now 说明墙钟曾偏快并被校回，不把它当成仍在冷却内，避免在落库修复前把触发压住 Δ + cooldown。
+	elapsed := now.Sub(cur.notifiedAt)
+	if elapsed >= 0 && elapsed < time.Duration(r.CooldownS)*time.Second {
 		return store.StatePending, nil
 	}
 	return next, tr
@@ -190,6 +192,10 @@ func (e *Engine) RecomputeBaselines(ctx context.Context, now time.Time) error {
 // 判定窗口起点)：判定窗口是 minute 之前的 for_minutes 个已闭合分钟，基线不含它。此后一小时里判定窗口只会后移，
 // 缓存的基线始终早于当时的判定窗口。
 func (e *Engine) recomputeBaseline(ctx context.Context, r store.AlertRule, nodeID int64, fingerprint string, accumulateFrom time.Time, minute time.Time) error {
+	// 墙钟曾偏快时 accumulateFrom 可能落在未来；钳位到当前分钟并随基线写回，避免重累积窗口空转 Δ。
+	if accumulateFrom.After(minute) {
+		accumulateFrom = minute
+	}
 	judgeStart := minute.Unix() - int64(r.ForMinutes)*60
 	from := judgeStart - int64(r.BaselineWindowS)
 	if !accumulateFrom.IsZero() {

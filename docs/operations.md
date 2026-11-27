@@ -191,7 +191,7 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 
 ## 墙钟
 
-分钟历史按 hub 收到上报时的墙钟归属，hub 主机需要 NTP 校时。墙钟快过之后被往回校（例如开机时 RTC 偏快、随后由 NTP 校正），hub 在下一次写入分钟数据或下一轮数据整理时自动清理快钟留下的痕迹：把推进到未来的数据整理水位退回按现在算的位置，删掉标在未来时刻的分钟数据（它们实际属于更早的时刻，无法还原到正确的分钟），之后的数据照常写入、照常整理。日志各记一条 Warn：`rollup watermark was ahead of the wall clock` 带回退幅度（`rolled_back`），`minute rows ahead of the wall clock deleted` 带删除行数。快钟期间的历史清理也按快钟的"现在"计算保留期，每一级最老的历史会多删掉与快出幅度等长的一段，删掉的无法找回。
+分钟历史按 hub 收到上报时的墙钟归属，hub 主机需要 NTP 校时。墙钟快过之后被往回校（例如开机时 RTC 偏快、随后由 NTP 校正），hub 在下一次写入分钟数据或下一轮数据整理时自动清理快钟留下的痕迹：把推进到未来的数据整理水位退回按现在算的位置，删掉标在未来时刻的分钟数据（它们实际属于更早的时刻，无法还原到正确的分钟），钳位指向未来的告警冷却/恢复/基线累积与节点最后上报时间戳，并删掉未来的流量报告发送标记；内存中的观测覆盖窗口也会同步拉回当前墙钟，之后的数据、观测覆盖、告警与报告照常运行。日志各记一条 Warn：`rollup watermark was ahead of the wall clock` 带回退幅度（`rolled_back`），`minute rows ahead of the wall clock deleted` 带删除行数，以及各状态表对应的超前修复 Warn。快钟期间的历史清理也按快钟的"现在"计算保留期，每一级最老的历史会多删掉与快出幅度等长的一段，删掉的无法找回。
 
 ## 排查
 

@@ -217,6 +217,56 @@ func (s *Store) repairClockAhead(tx *sql.Tx, now time.Time) error {
 		s.log.Warn("minute rows ahead of the wall clock deleted", "table", f.tables[0], "newest", newest.Int64,
 			"latest_allowed", latest, "ahead", time.Duration(newest.Int64-latest)*time.Second, "rows_deleted", n)
 	}
+	return s.repairClockAheadStates(tx, now)
+}
+
+// repairClockAheadStates 清理快钟落在告警状态、节点最后上报与流量报告发送标记上的未来时间戳：
+//   - alert_state.notified_at、alert_state.recovered_at、alert_baseline.accumulate_from、node.last_seen_at
+//     均以墙钟为基准参与冷却、抖动窗口或基线重累积下界；超过当前墙钟会把抑制或空窗拖长 Δ，钳位到当前墙钟即可。
+//   - maintenance_state 里的流量报告周期键（traffic_report.*）记录已发出的周期起点，超过当前墙钟会压住真实到来的周期，
+//     直接删除超前标记；不晚于当前墙钟的历史标记不动，仍维持同一期不补发的不变式。
+func (s *Store) repairClockAheadStates(tx *sql.Tx, now time.Time) error {
+	nowSec := now.Unix()
+	clamps := []struct {
+		query string
+		msg   string
+	}{
+		{
+			query: "UPDATE alert_state SET notified_at = ? WHERE notified_at > ?",
+			msg:   "alert state notified_at was ahead of the wall clock, clamped",
+		},
+		{
+			query: "UPDATE alert_state SET recovered_at = ? WHERE recovered_at IS NOT NULL AND recovered_at > ?",
+			msg:   "alert state recovered_at was ahead of the wall clock, clamped",
+		},
+		{
+			query: "UPDATE alert_baseline SET accumulate_from = ? WHERE accumulate_from > ?",
+			msg:   "alert baseline accumulate_from was ahead of the wall clock, clamped",
+		},
+		{
+			query: "UPDATE node SET last_seen_at = ? WHERE last_seen_at IS NOT NULL AND last_seen_at > ?",
+			msg:   "node last_seen_at was ahead of the wall clock, clamped",
+		},
+	}
+	for _, c := range clamps {
+		res, err := tx.Exec(c.query, nowSec, nowSec)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			s.log.Warn(c.msg, "clamped_to", nowSec, "rows_updated", n)
+		}
+	}
+	res, err := tx.Exec(
+		"DELETE FROM maintenance_state WHERE name IN (?, ?, ?) AND finished_at > ?",
+		ReportDaily, ReportWeekly, ReportMonthly, nowSec,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.log.Warn("traffic report delivery markers ahead of the wall clock deleted", "now", nowSec, "rows_deleted", n)
+	}
 	return nil
 }
 

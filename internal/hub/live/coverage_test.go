@@ -195,3 +195,53 @@ func TestObservationSealAndIrrevocableDecision(t *testing.T) {
 		}
 	})
 }
+
+// 墙钟曾快 8 小时并被校回：无论是启动时就快（opened/finalized/coverage 全在未来），还是运行中快钟只打了心跳
+// （readings 含未来读数），校回后下一次 Flush 把观测窗口拉回当前墙钟，随后完整的真实分钟恢复判定为 Observed=true。
+func TestObservationRecoversAfterFastClockCorrection(t *testing.T) {
+	t.Run("started under fast clock", func(t *testing.T) {
+		t0 := int64(1_700_000_040) // 对齐到分钟边界
+		fast := t0 + 8*3600
+		clk := clock.NewFake(time.Unix(fast-1, 0))
+		l := New(clk, time.Minute)
+		l.SetReceiving(true)
+		l.Observe(1, "source", &heronv1.Metrics{})
+		beatUntil(l, clk, time.Unix(fast+60, 0))
+		l.Flush()
+
+		// NTP 将墙钟校回真实时间 t0。
+		clk.SetWall(time.Unix(t0, 0))
+		l.Flush()
+
+		// 校回后的第一分钟为过渡分钟，第二分钟 [t0+60, t0+120) 应完整观测。
+		l.Observe(1, "source", &heronv1.Metrics{})
+		beatUntil(l, clk, time.Unix(t0+60, 0))
+		l.Flush()
+		l.Observe(1, "source", &heronv1.Metrics{})
+		beatUntil(l, clk, time.Unix(t0+120, 0))
+		r, ok := atMinute(l.Flush(), t0+60)
+		if !ok || !r.Observed {
+			t.Fatalf("minute after fast-clock correction = %+v (ok=%v), want Observed=true", r, ok)
+		}
+	})
+
+	t.Run("future readings without prior flush", func(t *testing.T) {
+		l, clk, base := coverageLive(t)
+		beatUntil(l, clk, time.Unix(base+30, 0))
+		// 墙钟突然跳快 8 小时并记入一次心跳，尚未 Flush 就被校回。
+		clk.SetWall(time.Unix(base+8*3600, 0))
+		l.ObservationHeartbeat()
+		clk.SetWall(time.Unix(base+60, 0))
+		l.Flush()
+
+		l.Observe(1, "source", &heronv1.Metrics{})
+		beatUntil(l, clk, time.Unix(base+120, 0))
+		l.Flush()
+		l.Observe(1, "source", &heronv1.Metrics{})
+		beatUntil(l, clk, time.Unix(base+180, 0))
+		r, ok := atMinute(l.Flush(), base+120)
+		if !ok || !r.Observed {
+			t.Fatalf("minute after future-reading purge = %+v (ok=%v), want Observed=true", r, ok)
+		}
+	})
+}

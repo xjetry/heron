@@ -3,6 +3,8 @@ package live
 import (
 	"context"
 	"time"
+
+	"github.com/xjetry/heron/internal/hub/metric"
 )
 
 const ObservationInterval = 2500 * time.Millisecond
@@ -74,15 +76,39 @@ func (l *Live) RunObservation(ctx context.Context) {
 }
 
 // sealObservations 只在 take 持锁时调用。封口读数参与全部尚未定案分钟的间隙与跳变检查；
-// 判定后保留下轮左边界之前最后一个读数及之后的读数，finalized 单调前进，回拨不会重开已定案分钟。
+// 判定后保留下轮左边界之前最后一个读数及之后的读数，finalized 单调前进，1 分钟以内的小幅回拨不会重开已定案分钟。
+// 墙钟曾快过超过 metric.LatestMinute 并被校回时，先前定案到未来的分钟、读数与窗口端点都属于超前墙钟，
+// 将观测状态拉回当前墙钟并以 seal 作为新左边界，使校回后的真实分钟恢复观测覆盖判定。
 func (l *Live) sealObservations(seal reading) map[int64]bool {
 	out := map[int64]bool{}
 	o := &l.observation
 	if o.opened.IsZero() {
 		return out
 	}
-	o.readings = append(o.readings, seal)
 	end := minuteOf(seal.wall)
+	latest := metric.LatestMinute(seal.wall)
+	ahead := (o.hasFinalized && o.finalized > latest) || o.opened.Unix() > latest
+	if !ahead {
+		for _, r := range o.readings {
+			if r.wall.Unix() > latest {
+				ahead = true
+				break
+			}
+		}
+	}
+	if ahead {
+		if o.opened.Unix() > latest {
+			o.opened = seal.wall
+		}
+		if !o.closed.IsZero() && o.closed.Unix() > latest {
+			o.closed = seal.wall
+		}
+		o.finalized = end - 60
+		o.hasFinalized = true
+		o.readings = []reading{seal}
+		return out
+	}
+	o.readings = append(o.readings, seal)
 	begin := minuteOf(o.opened) + 60
 	if o.hasFinalized {
 		begin = max(begin, o.finalized+60)

@@ -430,3 +430,104 @@ func TestClockAheadCheckIsANoOpWhenNothingIsAhead(t *testing.T) {
 		t.Fatalf("check logged a repair on a consistent database:\n%s", logs)
 	}
 }
+
+// 快钟留下的非指标状态（告警冷却/恢复/基线重累积、节点最后上报、流量报告发送标记）随 repairClockAhead 一起修复：
+// 指向未来的时间戳被钳位到当前墙钟，未来的流量报告周期标记被删除，不晚于当前墙钟的历史流量报告标记保持不动。
+func TestRepairClockAheadStates(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	future := t0.Add(8 * time.Hour).Unix()
+	past := t0.Add(-24 * time.Hour).Unix()
+
+	clk := clock.NewFake(t0)
+	s, logs := openLogged(t, filepath.Join(t.TempDir(), "t.db"), clk)
+	t.Cleanup(func() { s.Close() })
+	ctx := t.Context()
+
+	id, _, err := s.CreateNode(ctx, NewNode{Name: "n"}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := s.SaveAlertRule(ctx, AlertRule{
+		Name: "offline", Kind: KindOffline, Enabled: true, AllNodes: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleID := rule.ID
+
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		stmts := []struct {
+			q    string
+			args []any
+		}{
+			{"UPDATE node SET last_seen_at = ? WHERE id = ?", []any{future, id}},
+			{
+				"INSERT INTO alert_state (rule_id, node_id, state, since_at, recovered_at, notified_at) VALUES (?, ?, 'ok', ?, ?, ?)",
+				[]any{ruleID, id, past, future, future},
+			},
+			{
+				"INSERT INTO alert_baseline (rule_id, node_id, baseline_us, buckets, computed_at, task_fingerprint, accumulate_from) VALUES (?, ?, 1000, 0, ?, 'fp', ?)",
+				[]any{ruleID, id, past, future},
+			},
+			{"INSERT INTO maintenance_state (name, finished_at) VALUES (?, ?)", []any{string(ReportDaily), future}},
+			{"INSERT INTO maintenance_state (name, finished_at) VALUES (?, ?)", []any{string(ReportWeekly), past}},
+		}
+		for _, st := range stmts {
+			if _, err := tx.Exec(st.q, st.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	nowSec := t0.Unix()
+	var notifiedAt, recoveredAt, accumulateFrom, lastSeenAt int64
+	if err := s.r.QueryRow("SELECT notified_at, recovered_at FROM alert_state WHERE rule_id = ? AND node_id = ?", ruleID, id).Scan(&notifiedAt, &recoveredAt); err != nil {
+		t.Fatal(err)
+	}
+	if notifiedAt != nowSec || recoveredAt != nowSec {
+		t.Fatalf("alert_state notified_at=%d recovered_at=%d, want %d", notifiedAt, recoveredAt, nowSec)
+	}
+	if err := s.r.QueryRow("SELECT accumulate_from FROM alert_baseline WHERE rule_id = ? AND node_id = ?", ruleID, id).Scan(&accumulateFrom); err != nil {
+		t.Fatal(err)
+	}
+	if accumulateFrom != nowSec {
+		t.Fatalf("alert_baseline accumulate_from=%d, want %d", accumulateFrom, nowSec)
+	}
+	if err := s.r.QueryRow("SELECT last_seen_at FROM node WHERE id = ?", id).Scan(&lastSeenAt); err != nil {
+		t.Fatal(err)
+	}
+	if lastSeenAt != nowSec {
+		t.Fatalf("node last_seen_at=%d, want %d", lastSeenAt, nowSec)
+	}
+	sent, err := s.TrafficReportSent(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sent[ReportDaily]; ok {
+		t.Fatalf("future daily traffic report marker was not deleted: %v", sent)
+	}
+	if got, ok := sent[ReportWeekly]; !ok || got.Unix() != past {
+		t.Fatalf("past weekly traffic report marker = %v (ok=%v), want %d", got, ok, past)
+	}
+	logText := logs.String()
+	for _, want := range []string{
+		"alert state notified_at was ahead of the wall clock, clamped",
+		"alert state recovered_at was ahead of the wall clock, clamped",
+		"alert baseline accumulate_from was ahead of the wall clock, clamped",
+		"node last_seen_at was ahead of the wall clock, clamped",
+		"traffic report delivery markers ahead of the wall clock deleted",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Errorf("missing expected warn log %q in:\n%s", want, logText)
+		}
+	}
+}
