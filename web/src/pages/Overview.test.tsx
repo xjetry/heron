@@ -13,7 +13,7 @@ const snapshot = {
       traffic: { periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
       metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, diskMaxUsedPct: 80, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 3_725n } },
     { id: 2n, name: "never", online: false },
-    { id: 3n, name: "gone", online: false, lastSeenAt: 900_000n },
+    { id: 3n, name: "gone", online: true, lastSeenAt: 900_000n },
   ],
 };
 const nodes = [
@@ -27,6 +27,12 @@ const impl = { getSnapshot: async () => snapshot, listNodes: async () => ({ node
 const render = (over: Partial<typeof impl> = {}) => renderWithAdmin({ ...impl, ...over }, [{ path: "/", Component: Overview }], "/");
 
 afterEach(() => vi.useRealTimers());
+
+it("页头按实时状态汇总节点并提供添加节点入口", async () => {
+  render();
+  expect(await screen.findByText("4 个节点 · 1 个在线")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "添加节点" })).toHaveAttribute("href", "/register");
+});
 
 it("需要处理四张卡按同一判定计数并链到对应筛选", async () => {
   render();

@@ -4,17 +4,18 @@
 .public-layout { min-height: 100dvh; }
 .public-overview { letter-spacing: 0.02em; line-height: 1.5; }
 .public-overview .num { letter-spacing: 0; }
-.public-header { position: sticky; top: 0; z-index: 20; height: 48px; display: flex; align-items: center; gap: 16px; padding: 0 clamp(12px, 2vw, 24px); background: var(--card); border-bottom: 1px solid var(--line); }
-.public-header .brand { color: var(--fg); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.public-header .brand .logo, .public-header .heron-mark { height: 24px; width: auto; }
+.public-header { position: sticky; top: 0; z-index: 20; height: 64px; display: flex; align-items: center; gap: 18px; padding: 0 clamp(16px, 2.5vw, 32px); background: var(--card); border-bottom: 1px solid var(--line); }
+.public-header .brand { color: var(--fg); font-size: 16px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-header .brand .logo, .public-header .heron-mark { height: 28px; width: auto; }
 .public-header .live { font-size: 12px; white-space: nowrap; }
 .public-header .github-link { margin-left: auto; }
 .public-header .admin { color: var(--muted); font-size: 13px; }
-.public-layout .main { max-width: 1680px; padding: 20px clamp(16px, 2.5vw, 32px) 32px; }
+.public-header .admin:hover { color: var(--fg); }
+.public-layout .main { max-width: 1680px; padding: 28px clamp(16px, 2.5vw, 32px) 40px; }
 /* 汇总条（StatusSummary.tsx）。 */
-.summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; margin: 8px 0 16px; font-size: 13px; }
-.summary-count { font-size: 18px; }
-.segments { display: flex; height: 6px; width: min(320px, 100%); border-radius: 999px; overflow: hidden; background: var(--line); }
+.summary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 24px; margin: 4px 0 20px; font-size: 13px; }
+.summary-count { font-size: 22px; }
+.segments { display: flex; height: 8px; width: min(360px, 100%); border-radius: 999px; overflow: hidden; background: var(--line); }
 .segments > span { height: 100%; }
 .segments > [data-status="online"] { background: var(--status-online); }
 .segments > [data-status="maintenance"] { background: var(--status-maintenance); }
@@ -26,7 +27,7 @@
 /* 卡片视图（NodeCard.tsx）：1680px 的内容上限下五列，1px 边框分层，不用阴影与渐变。列宽下限 280px：页脚"本周期"
    一行要放下用量加口径说明（"4.5 MiB 下载 + 上传 · 未设配额"），再窄就折成两行；1440px 宽的窗口因此排四列而不是五列。 */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(280px, (100% - 64px) / 5)), 1fr)); gap: 16px; }
-.node-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 16px 18px 14px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }
+.node-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }
 .node-card:hover { border-color: var(--line-strong); }
 .node-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .node-card h2 { flex: 1; min-width: 0; margin: 0; font-size: 15px; }
@@ -122,7 +123,7 @@
 /* 手机版：墙降级为单列列表，组头吸顶；详情面板不渲染（StatusWall 按同一断点判断）。 */
 @media (max-width: 900px) {
   .wall-layout { grid-template-columns: minmax(0, 1fr); }
-  .wall-group > summary { position: sticky; top: 48px; z-index: 5; background: var(--bg); }
+  .wall-group > summary { position: sticky; top: 64px; z-index: 5; background: var(--bg); }
   .wall { display: block; }
   .tiles { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
   .tile { width: auto; }
@@ -140,4 +141,12 @@
   /* 宽屏上名称列靠 max-width: 0 吃掉其余列（不换行）剩下的宽度、放不下就截断；窄屏上剩下的只够几个字，改为折行显示全名。 */
   .compact-table :is(th, td) { padding-inline: 6px; }
   .compact-table td:first-child { max-width: none; white-space: normal; overflow-wrap: anywhere; padding-block: 6px; }
+}
+@media (max-width: 640px) {
+  .public-header { height: 56px; gap: 10px; padding: 0 12px; }
+  .public-header .brand { flex: 1; }
+  .public-header .live { display: none; }
+  .public-layout .main { padding: 20px 16px 32px; }
+  .summary-count { font-size: 20px; }
+  .wall-group > summary { top: 56px; }
 }

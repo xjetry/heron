@@ -13,10 +13,12 @@ import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
 import { EmptyState } from "../components/EmptyState";
+import { Icon } from "../components/Icon";
 
 // ListNodes 提供维护状态、到期与 agent 版本，GetSnapshot 提供在线裁决与读数；
 // queryGateAll 等待两者首次到达，避免缺少维护状态时误判节点状态。
 const DETAILS_MS = 10_000;
+const attentionIcons = { offline: "server", expiring: "calendar", lagging: "activity", firing: "bell" } as const;
 
 // Overview 的待办卡使用 ListNodes 的维护、到期与 agent 版本以及 GetSnapshot 的在线裁决；
 // 卡片链接携带同一条件进入节点列表，数字不能另造一套状态口径。
@@ -31,22 +33,24 @@ export function Overview() {
   const now = Number(snapshot.now);
   const live = liveById(snapshot.nodes);
   const cards = attentionCards({ nodes: listed.nodes, live, boundAgentVersion: snapshot.boundAgentVersion, states: rules.data?.states });
+  const online = listed.nodes.filter((node) => liveStatus(node, live.get(node.id)) === "online").length;
   const rows = filterNodes(listed.nodes, search);
   return (
-    <section>
-      <PageHeader title="总览" />
+    <section className="overview">
+      <PageHeader title="总览" description={`${listed.nodes.length} 个节点 · ${online} 个在线`} actions={<Link to="/register" className="primary-button page-action"><Icon name="plus" />添加节点</Link>} />
       {gate.banner}
       {errorBanner(rules.error)}
+      <div className="section-heading"><h2>需要处理</h2></div>
       <ul className="attention" aria-label="需要处理">
         {cards.map((card) => (
           <li key={card.key} data-key={card.key} data-zero={card.count === 0 || undefined}>
-            <Link to={card.to}><strong className="num">{card.count === null ? "—" : card.count}</strong><span>{card.label}</span>{card.note && <small className="muted">{card.note}</small>}</Link>
+            <Link to={card.to}><strong className="num">{card.count === null ? "—" : card.count}</strong><span>{card.label}</span>{card.note && <small className="muted">{card.note}</small>}<span className="attention-icon"><Icon name={attentionIcons[card.key]} /></span></Link>
           </li>
         ))}
       </ul>
+      <div className="section-heading"><h2>实时节点</h2><span className="overview-live muted"><span className="status-dot" data-status="online" />实时 · 每 {POLL_MS / 1000} 秒</span></div>
       <div className="filter-row" role="group" aria-label="筛选">
-        <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} />
-        <span className="muted">实时 · 每 {POLL_MS / 1000} 秒</span>
+        <div className="search-field"><Icon name="search" /><input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
       </div>
       {listed.nodes.length === 0 && <EmptyState title="还没有节点。">去 <Link to="/nodes">节点</Link> 页创建，或用 <Link to="/register">批量添加节点</Link> 一次接入多台。</EmptyState>}
       {listed.nodes.length > 0 && rows.length === 0 && <EmptyState status title="没有匹配的节点。" />}

@@ -110,7 +110,7 @@ export function Channels() {
             {channels.map((c) => {
               const label = withId(c.name, c.id);
               return <tr key={String(c.id)}>
-                <td data-label="名称">{c.name}</td>
+                <td data-label="名称" className="wrap-text">{c.name}</td>
                 <td data-label="类型">{labelOf(CHANNEL_KINDS, c.kind)}</td>
                 <td data-label="目标"><span className="clip-text clip-wide" title={channelTarget(c)}>{channelTarget(c)}</span></td>
                 <td data-label="节奏上限">{rateLabel(c)}</td>

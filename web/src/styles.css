@@ -32,9 +32,9 @@
      不落到系统给 monospace 配的中文字体（字宽、字重都和界面不一致）。 */
   --font-ui: "Inter Variable", system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", monospace;
-  --radius-control: 4px;
-  --radius-card: 6px;
-  --control-h: 32px;
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --control-h: 36px;
   --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.45);
   font-family: var(--font-ui); font-size: 14px; line-height: 1.45; color: var(--fg); background: var(--bg);
 }
@@ -56,12 +56,12 @@ details[open] > summary::before { transform: rotate(45deg); }
 @media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
 * { box-sizing: border-box; }
 body { margin: 0; }
-/* 标题阶梯 20 / 15 / 13，统一 600：页面标题、卡片与分区、分组。.page-header、.node-head、卡片名、弹窗等按需覆盖；
-   没覆盖的标题落到这里而不是浏览器默认（h2 约 21px，比页面标题还大）。 */
+/* 标题阶梯 24 / 16 / 14，统一 600：页面标题、卡片与分区、分组。.page-header、.node-head、卡片名、弹窗等按需覆盖；
+   没覆盖的标题落到这里而不是浏览器默认（h2 约 21px，容易与页面标题争抢层级）。 */
 h1, h2, h3 { font-weight: 600; line-height: 1.35; }
-h1 { font-size: 20px; }
-h2 { font-size: 15px; margin: 0 0 10px; }
-h3 { font-size: 13px; margin: 0 0 8px; }
+h1 { font-size: 24px; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+h3 { font-size: 14px; margin: 0 0 8px; }
 a { color: var(--accent); text-decoration: none; }
 /* 表格与标题里的链接是对象名（节点、任务），满屏蓝色会盖过读数：用前景色，悬停才显示链接色。正文里的链接保持链接色。 */
 :is(table, h1, h2, h3) a { color: var(--fg); }
@@ -78,18 +78,21 @@ a { color: var(--accent); text-decoration: none; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 1rem; }
 .theme-preview { display: block; max-width: 8rem; max-height: 5rem; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
-.login-card { width: min(360px, 100%); padding: 24px; display: grid; gap: 12px; }
+.login-card { width: min(380px, 100%); padding: 32px; display: grid; gap: 16px; }
 .login-card input, .login-card button { width: 100%; min-width: 0; }
 .login-card button { height: var(--control-h); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .login .brand { margin: 0; font-size: 1.75rem; letter-spacing: -0.04em; }
 .login .heron-mark { width: 44px; height: 44px; }
 .login-description { margin: 0 0 0.5rem; color: var(--muted); }
-label { display: grid; gap: 0.25rem; }
-input, select, button, textarea { font: inherit; min-height: var(--control-h); padding: 0 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); color: var(--fg); }
-textarea { min-height: 6rem; padding: 0.4rem 0.6rem; }
+label { display: grid; gap: 0.375rem; }
+input, select, button, textarea { font: inherit; min-height: var(--control-h); padding: 0 0.7rem; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); color: var(--fg); }
+:is(input, select, textarea):hover:not(:disabled) { border-color: var(--line-strong); }
+textarea { min-height: 6rem; padding: 0.55rem 0.7rem; }
 button { cursor: pointer; }
+/* 中性 hover 的主体在 :where 里归零优先级；展开、选中、危险等语义状态必须能直接覆盖这条默认色。 */
+:where(button:not(:disabled):not(.link)):hover { border-color: var(--line-strong); }
 button[disabled] { opacity: 0.5; cursor: default; }
-/* 链接样式的按钮是行文里的文字，不是控件：不继承上面的控件最小高度，否则所在的行（投递记录、「已选择 N 个节点 清空已选」）被撑到 32px。 */
+/* 链接样式的按钮是行文里的文字，不是控件：不继承上面的控件最小高度，否则所在的行（投递记录、「已选择 N 个节点 清空已选」）被撑到控件高度。 */
 button.link { border: none; background: none; color: var(--accent); padding: 0; min-height: 0; }
 /* 可排序列的表头按钮（th 带 aria-sort）：与表头文字同字同色，排序方向用箭头标在文字后；对比表与节点表共用。 */
 th[aria-sort] > .link { font: inherit; color: inherit; }
@@ -290,12 +293,15 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .compare-table [data-level="attention"] { color: var(--status-attention); }
 @media (max-width: 640px) { .compare-table { display: block; overflow-x: auto; } }
 
-/* 列表页页头（components/PageHeader.tsx）：标题 + 主按钮，两端共用。 */
-.page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 0 0 16px; }
-.page-header h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
-.page-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+/* 列表页页头（components/PageHeader.tsx）：标题、摘要与主按钮，两端共用。 */
+.page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 0 0 24px; }
+.page-header h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 650; letter-spacing: -0.02em; }
+.page-header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
 .page-header-actions { display: flex; align-items: center; gap: 8px; }
-.primary-button { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 500; }
+.primary-button { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 550; }
+.primary-button:hover:not(:disabled) { border-color: var(--accent); filter: brightness(.96); }
+.page-action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: var(--control-h); padding: 0 13px; border: 1px solid var(--accent); border-radius: var(--radius-control); white-space: nowrap; }
+.page-action:hover { text-decoration: none; }
 
 /* 自绘单选下拉（components/Select.tsx）。地区 / 标签入口（components/Facet.tsx）沿用同一个触发按钮外观。 */
 .select { position: relative; display: inline-flex; }
@@ -324,10 +330,10 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .suggest-popup [aria-selected="true"] { background: var(--card-hover); }
 
 /* 筛选行（public/FilterRow.tsx 与管理端列表页共用）。 */
-.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
-.filter-row input[type="search"] { width: min(100%, 260px); }
+.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; margin: 0 0 16px; }
+.filter-row input[type="search"] { width: min(100%, 280px); }
 /* 带放大镜与「输入 / 搜索」提示的搜索框（SearchHint）：提示叠在输入框上、不接收指针，输入框有内容时不渲染。 */
-.search-field { position: relative; display: inline-flex; align-items: center; width: min(100%, 260px); }
+.search-field { position: relative; display: inline-flex; align-items: center; width: min(100%, 280px); }
 .filter-row .search-field > input[type="search"] { width: 100%; padding-left: 32px; }
 .search-field > svg { position: absolute; left: 9px; color: var(--muted); pointer-events: none; }
 .search-field > .search-hint { position: absolute; left: 33px; right: 8px; pointer-events: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

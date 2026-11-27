@@ -171,7 +171,7 @@ export function AlertRules() {
           <tbody>{shown.map((r) => {
             const label = withId(r.name, r.id);
             return <tr key={String(r.id)} aria-label={r.name}>
-              <td data-label="名称">{r.name}</td>
+              <td data-label="名称" className="wrap-text">{r.name}</td>
               <td data-label="类型">{labelOf(ALERT_KINDS, r.kind)}</td>
               <td data-label="条件" className="wrap-text">{ruleCondition(r, taskList)}</td>
               <td data-label="作用域" className="wrap-text">{r.allNodes ? "全部节点" : r.selectorTags.length ? `标签：${r.selectorTags.join(" ∩ ")}（当前 ${r.nodeIds.length}）` : r.nodeIds.length ? <span title={r.nodeIds.map(nodeName).join("、")}>{r.nodeIds.length} 个指定节点</span> : <span className="muted">无节点</span>}</td>
